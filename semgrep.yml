@@ -51,9 +51,18 @@ rules:
               - metavariable-regex:
                   metavariable: $PART
                   regex: (?i)^key$
+          - patterns:
+              - pattern-either:
+                  - pattern: $TEXT.format(...)
+                  - pattern: $TEXT % $ARGUMENTS
+              - metavariable-regex:
+                  metavariable: $TEXT
+                  regex: (?i)^["'].*key.*["']$
       - pattern-not-inside: |
-          def route(...):
+          class Reflexer:
               ...
+              def route(...):
+                  ...
   - id: no-dynamic-code
     message: The SDK imports by name and runs no code built at run time.
     languages: [python]
@@ -69,3 +78,15 @@ rules:
       - pattern: exec(...)
       - pattern: compile(...)
       - pattern: getattr(__builtins__, ...)
+  - id: no-module-through-another
+    message: A module reached as another's attribute escapes the import allowlist.
+    languages: [python]
+    severity: ERROR
+    paths: {include: ["reflexer/"]}
+    patterns:
+      - pattern: $OBJECT.$NAME
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: ^(sys|os|subprocess|socket|ssl|builtins|importlib|ctypes|handlers|request|client|shutil|signal|threading)$
+      - pattern-not: threading.$NAME
+

@@ -1,7 +1,8 @@
 """LangChain's classes, through reflexer, on its real packages over the HTTP library's mock transport; values made up.
 Run: python -m unittest tests.test_langchain"""
-import asyncio, json, os, sys, unittest
+import asyncio, gc, json, os, sys, unittest
 from unittest import mock
+from langchain_core.runnables import ConfigurableField
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import httpx, httpx2, openai
@@ -97,6 +98,38 @@ def key_on_the_clients_own_request(real):
         request.headers["reflexer-key"] = KEY
         return real(way, request)
     return broken
+
+
+class Configurable(unittest.TestCase):
+    """LangChain's `configurable_fields` builds the class again from its fields: reflexer's clients among them, not its key."""
+
+    def test_a_field_set_at_run_time_goes_to_reflexer(self):
+        for name, make, body in (("openai", openai_chat, CHAT), ("gemini", gemini_chat, GEMINI)):
+            with self.subTest(name):
+                handler, seen = world(body)
+                chat = make(handler).configurable_fields(temperature=ConfigurableField(id="temperature"))
+                configured = chat.with_config(configurable={"temperature": 0.25})
+                self.assertEqual(configured.invoke("Hi").content, "made up")
+                self.assertEqual(asyncio.run(configured.ainvoke("Hi")).content, "made up")
+                self.assertEqual({request.url.host for request in seen}, {REFLEXER})
+                self.assertTrue(all("0.25" in request.content.decode() for request in seen))
+
+    def test_a_model_built_again_and_dropped_leaves_the_defaults_clients_open(self):
+        """LangChain closes a dropped model's clients; stock, each model built again has its own."""
+        handler, _ = world(GEMINI)
+        chat = gemini_chat(handler)
+        chat.invoke("Hi")
+        chat.configurable_fields(temperature=ConfigurableField(id="temperature")).with_config(configurable={"temperature": 0.25}).invoke("Hi")
+        gc.collect()
+        inner = [made.inner for made in chat.client_args["transport"].made[False].values()]
+        self.assertTrue(inner)
+        self.assertFalse(any(client.is_closed for client in inner))
+
+    def test_without_reflexers_clients_a_missing_key_still_raises(self):
+        for make in (lambda: ChatOpenAI(model="frontier-x", api_key="made-up"),
+                     lambda: ChatGoogleGenerativeAI(model="frontier-z", api_key="made-up")):
+            with self.assertRaisesRegex(Exception, "not a reflexer key"):
+                make()
 
 
 class StreamedUsage(unittest.TestCase):

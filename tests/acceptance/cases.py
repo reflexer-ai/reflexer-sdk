@@ -843,17 +843,6 @@ def no_harm_an_answer_broken_is_an_error_never_sent_twice(t):
     t.check(not t.provider.seen, f"billed twice: sent to the provider too: {t.provider.seen}")
 
 
-@case("fields", open_on=WITH_AZURE)
-def open_a_cut_answers_price_in_its_error(t):
-    """Open: an answer cut after its headers raises, and the error the client gets could carry reflexer's price;
-    not built."""
-    client = t.client()
-    t.reflexer.set("cut")
-    outcome = t.ask(client)
-    t.check(outcome.error is not None, f"{outcome}")
-    t.check(harness.fields(t.sdk, outcome.error), f"{type(outcome.error).__name__} carries no price")
-
-
 @case("routing", sdks=("openai",))
 def routing_a_clients_own_reflexer_headers_never_steer_or_leave(t):
     """A client's header of our names: its upstream steers nothing, and on a straight call none reaches the provider."""

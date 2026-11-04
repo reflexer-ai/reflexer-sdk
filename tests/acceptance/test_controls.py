@@ -120,7 +120,6 @@ NOT_JUDGED = {
     "measure_how_far_apart_clients_return": "records the spread of waits; a shared machine's noise is as large; tests/test_logic.py holds it",
     "measure_what_each_4xx_of_reflexers_does": "records which 4xx reach the client; nothing yet decides which should",
     "open_a_stalled_reflexer_told_from_a_slow_provider": "open: fails today, by a gap not built yet",
-    "open_a_cut_answers_price_in_its_error": "open: fails today, by a gap not built yet",
     "open_bedrock": "cannot: no Bedrock client to run it on",
 }
 

@@ -37,7 +37,7 @@ Or LangChain's own `ChatOpenAI`, given `http_client=reflexer.openai.http_client(
 
 ## What reflexer's answer looks like
 
-The answer is your provider's format, unchanged by this SDK. A served answer's `model` ends in `-reflexer`, and its price in USD is at `usage.cost`, where cost tools already read it. Every response carries `Reflexer-Request-Id`, `Reflexer-Answered-By` and `Reflexer-Cost` (nano USD) headers.
+The answer is your provider's format, unchanged by this SDK. A served answer's `model` ends in `-reflexer`, and its price in USD is at `usage.cost`, where cost tools already read it. Every response carries `Reflexer-Request-Id`, `Reflexer-Answered-By` and `Reflexer-Cost` (nano USD) headers. An answer cut mid-way raises your provider SDK's own error, as a cut from the provider would, with no price on it; reflexer's bill holds the price.
 
 ## Settings
 

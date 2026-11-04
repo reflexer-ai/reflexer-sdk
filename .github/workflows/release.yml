@@ -6,6 +6,7 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:  # a rehearsal: every step but the tag's and the publish, on the commit chosen
 
 permissions:
   contents: read
@@ -28,6 +29,7 @@ jobs:
           enable-cache: false
           version: "0.11.7"
       - name: The tag is the package's version, on a commit of main, and its audit report is here
+        if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -50,6 +52,7 @@ jobs:
 
   publish:
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: pypi

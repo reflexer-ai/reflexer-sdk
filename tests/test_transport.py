@@ -359,6 +359,24 @@ class SharedArguments(unittest.TestCase):
         self.assertTrue(asyncio.run(run()), "a dropped body kept a retired client open")
 
 
+    def test_async_a_retired_client_of_a_finished_loop_does_not_fail_the_next_call(self):
+        """Its close comes due in a loop that ended: what fails closing it is no call's of the next loop."""
+        import gc
+        self.go_on.set()
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        one, other = httpx.AsyncClient(transport=both), httpx.AsyncClient(transport=both)
+
+        async def drop_and_close():
+            await one.send(one.build_request("GET", self.url), stream=True)
+            await other.aclose()
+        asyncio.run(drop_and_close())
+        gc.collect()
+
+        async def next_call():
+            return (await one.get(self.url)).content
+        self.assertEqual(asyncio.run(next_call()), b"made-up!")
+
+
 class Settings(unittest.TestCase):
     def test_the_namespace_holds_through_a_second_round(self):
         """An auth round sends the same request again: the first round must leave it whole."""

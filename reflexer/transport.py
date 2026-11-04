@@ -6,7 +6,7 @@ its proxies, TLS and connections hold. No private name is read, no class of the 
 answer's bytes are touched.
 """
 import copy, functools, threading, weakref
-from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay
+from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay, log
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
 KEPT = ("timeout",)  # of a client's request extensions, what reflexer's request keeps: no callback of theirs sees our key
@@ -162,7 +162,7 @@ class Through:
 @functools.cache
 def landing(library):
     """An answer's body as it came, of the library's own kind. Its call lands on its `Through` once the body is closed,
-    or dropped unclosed: an async client's close, which a finalizer cannot await, is then left to `Both`'s next call."""
+    or dropped unclosed; an async client's close it makes due is awaited by `Both` (`close_overdue`)."""
     class Landing(library.SyncByteStream, library.AsyncByteStream):
         def __init__(self, stream, through, overdue):
             self.stream, self.through = stream, through
@@ -249,8 +249,13 @@ class Both:
         return answer
 
     async def close_overdue(self):
+        """The retired async clients a dropped body left due: closed at this client's next call or close, as stock its
+        own pool would be. One whose loop has ended fails to close, and that is no failure of this call."""
         while self.overdue:
-            await self.overdue.pop().aclose()
+            try:
+                await self.overdue.pop().aclose()
+            except Exception as failure:  # nothing of a call's: a finished loop's connections, which none can use again
+                log.info("a retired client of a finished event loop did not close (%s)", type(failure).__name__)
 
     def out(self, is_async):
         with self.lock:

@@ -12,12 +12,14 @@ import { PACKAGE } from "./checks.js";
 const ALLOWED = {
   "logic.js": ["node:crypto"],
   "index.js": ["./logic.js"],
-  "openai.js": ["openai", "./index.js"],
-  "anthropic.js": ["@anthropic-ai/sdk", "./index.js"],
+  "openai.js": ["openai", "openai/version", "./index.js"],
+  "anthropic.js": ["@anthropic-ai/sdk", "@anthropic-ai/sdk/version", "./index.js"],
   "gemini.js": ["@google/genai", "./index.js"],
 };
-// Ways around the allowlist: to a module, a process, a socket or code made from text
-const BANNED = new Set(["require", "module", "process", "eval", "Function", "WebAssembly", "WebSocket", "EventSource", "Deno", "Bun"]);
+// The globals the source may read: none reaches a module, a process, a socket, or code made from text
+const GLOBALS = new Set(["Array", "ArrayBuffer", "BigInt", "Error", "Headers", "JSON", "Math", "Number", "Object", "RegExp", "Request",
+  "String", "Symbol", "TextDecoder", "TypeError", "URL", "WeakMap", "console", "globalThis", "parseInt", "performance", "undefined"]);
+const REFUSED = new Set(["constructor", "prototype", "__proto__"]); // a way from a value to the code that made it
 
 /** @param {string} root */
 async function sources(root) {
@@ -39,7 +41,12 @@ async function dependencies(root) {
   return [...Object.keys(dependencies), ...Object.keys(peerDependencies).filter((name) => !peerDependenciesMeta[name]?.optional)];
 }
 
-/** @param {string} root */
+/**
+ * Each file's imports outside its allowlist, and each way around it: a dynamic import, a global not listed (a bare `fetch`,
+ * `global`, `process`, `Reflect`, `Function`), `globalThis` but for its `fetch` and Node's dispatcher, a member reached by a
+ * name computed at run time, or a way to the code that made a value.
+ * @param {string} root
+ */
 async function importsNotAllowed(root) {
   const found = [];
   for (const { name, text } of await sources(root)) {
@@ -48,17 +55,22 @@ async function importsNotAllowed(root) {
       found.push(`${name}: a file with no import allowlist`);
       continue;
     }
-    walk.fullAncestor(parse(text), (/** @type {any} */ node, _, /** @type {any[]} */ ancestors) => {
+    const declared = new Set(), read = /** @type {[string, any][]} */ ([]);
+    walk.fullAncestor(parse(text), (/** @type {any} */ node, _, /** @type {any[]} */ ancestors, /** @type {string} */ type) => {
       const parent = ancestors[ancestors.length - 2];
-      if (node.type.endsWith("Declaration") && node.source && !allowed.includes(node.source.value)) found.push(`${name}: ${node.source.value}`); // import, export from
+      if (node.type === "Identifier") (type === "VariablePattern" ? declared.add(node.name) : read.push([node.name, parent]));
+      if (node.type.startsWith("Import") && node.type.endsWith("Specifier")) declared.add(node.local.name);
+      if (node.type.endsWith("Declaration") && node.source && !allowed.includes(node.source.value)) found.push(`${name}: ${node.source.value}`);
       if (node.type === "ImportExpression" || node.type === "MetaProperty") found.push(`${name}: a dynamic import`);
-      if (node.type === "Identifier" && BANNED.has(node.name)) found.push(`${name}: ${node.name}`);
-      if (node.type === "Identifier" && node.name === "globalThis"
-        && !(parent?.type === "MemberExpression" && !parent.computed && parent.property.name === "fetch")) found.push(`${name}: globalThis`);
-      if (node.type === "MemberExpression" && (node.computed ? node.property.value : node.property.name) === "constructor") {
-        found.push(`${name}: a constructor reached`);
-      }
+      if (node.type === "Literal" && REFUSED.has(node.value)) found.push(`${name}: ${node.value}`);
+      if (node.type === "MemberExpression" && !node.computed && REFUSED.has(node.property.name)) found.push(`${name}: ${node.property.name}`);
+      if (node.type === "MemberExpression" && node.computed && node.property.type !== "Literal"
+        && !(node.object.name === "globalThis" && node.property.name === "DISPATCHER")) found.push(`${name}: a member by a computed name`);
     });
+    for (const [global, parent] of read.filter(([global]) => !declared.has(global))) {
+      const member = parent?.type === "MemberExpression" && parent.object.name === global ? parent.property.name : undefined;
+      if (!GLOBALS.has(global) || (global === "globalThis" && !["fetch", "DISPATCHER"].includes(member))) found.push(`${name}: ${global}`);
+    }
   }
   return found;
 }
@@ -158,17 +170,22 @@ describe("Broken", () => {
   });
 
   test("a way around the allowlist turns it red", async () => {
-    for (const [text, problem] of [
-      ['const made = (/** @type {string} */ name) => import(name);', "a dynamic import"],
+    for (const [text, ...problems] of [
+      ["const made = (/** @type {string} */ name) => import(name);", "a dynamic import"],
       ["const made = import.meta.resolve;", "a dynamic import"],
+      ['const made = fetch("https://made-up.example/x");', "fetch"],
       ['const made = process.binding("tcp_wrap");', "process"],
-      ['const made = globalThis["pro" + "cess"];', "globalThis"],
+      ['const made = global.process.getBuiltinModule("child_process");', "global"],
       ["const made = globalThis.process;", "globalThis"],
+      ['const made = globalThis["pro" + "cess"];', "a member by a computed name", "globalThis"],
+      ['const made = Reflect.get(Object.getPrototypeOf(() => {}), "constr" + "uctor")("return 1");', "Reflect"],
+      ['const made = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor");', "constructor"],
       ['const made = eval("1");', "eval"],
-      ['const made = (() => {}).constructor("return 1");', "a constructor reached"],
+      ['const made = new Function("return 1");', "Function"],
+      ['const made = (() => {}).constructor("return 1");', "constructor"],
       ['const made = new WebSocket("wss://made-up.example");', "WebSocket"],
     ]) {
-      assert.deepEqual(await importsNotAllowed(await plant("src/logic.js", text)), [`logic.js: ${problem}`], text);
+      assert.deepEqual(await importsNotAllowed(await plant("src/logic.js", text)), problems.map((problem) => `logic.js: ${problem}`), text);
     }
   });
 

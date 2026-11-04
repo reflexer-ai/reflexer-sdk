@@ -90,3 +90,45 @@ rules:
           regex: ^(sys|os|subprocess|socket|ssl|builtins|importlib|ctypes|handlers|request|client|shutil|signal|threading)$
       - pattern-not: threading.$NAME
 
+  - id: log-only-kinds-js
+    message: The SDK logs what kind of thing happened, never a request's or an answer's content, nor the key.
+    languages: [javascript]
+    severity: ERROR
+    paths: {include: ["/typescript/src/"]}
+    patterns:
+      - pattern-either:
+          - pattern: console.$METHOD(...)
+          - pattern: process.$STREAM.write(...)
+      - pattern-not: console.warn("...")
+      - pattern-not: 'console.warn("...", $FAILURE instanceof Error ? $FAILURE.name : typeof $FAILURE)'
+  - id: key-header-only-in-route-js
+    message: Only `Reflexer.route` names the key's header, so the key reaches only reflexer's address.
+    languages: [javascript]
+    severity: ERROR
+    paths: {include: ["/typescript/src/"]}
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: '"$NAME"'
+                  - pattern: '{..., "$NAME": $VALUE, ...}'
+              - metavariable-regex:
+                  metavariable: $NAME
+                  regex: (?i)^reflexer[-_]key$
+          - patterns:
+              - pattern-either:
+                  - pattern: $PREFIX + "$PART"
+                  - pattern: '`${$PREFIX}$PART`'
+                  - pattern: $PREFIX.concat("$PART")
+                  - pattern: '[..., "$PART"].join(...)'
+              - metavariable-regex:
+                  metavariable: $PART
+                  regex: (?i)^key$
+      - pattern-not-inside: |
+          class Reflexer {
+            ...
+            route(...) {
+              ...
+            }
+            ...
+          }

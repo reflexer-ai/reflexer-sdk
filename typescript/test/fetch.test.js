@@ -1,5 +1,6 @@
 // The `fetch` and the SDK lines, on a mock `fetch`, offline; every value made up.
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { describe, test } from "node:test";
 import * as check from "./checks.js";
 
@@ -143,5 +144,121 @@ describe("Own fetch", () => {
   test("a client made with no reflexer key throws", () => {
     assert.throws(() => new sdk.openai.OpenAI({ apiKey: "made-up" }), /not a reflexer key/);
     assert.throws(() => new sdk.gemini.GoogleGenAI(/** @type {any} */ ({ apiKey: "made-up" })), /not a reflexer key/);
+  });
+});
+
+describe("Gemini's timeouts", () => {
+  const DISPATCHER = Symbol.for("undici.globalDispatcher.1"); // where Node's fetch finds its global dispatcher
+
+  /** What each leg's dispatcher hands Node's global one, with `make(fetch)` making the client on the global `fetch`. */
+  async function dispatched(/** @type {any} */ t, /** @type {(fetch: any) => any} */ make) {
+    const options = /** @type {any[]} */ ([]);
+    new Headers(); // Node makes its global dispatcher on first use
+    const real = /** @type {any} */ (globalThis)[DISPATCHER];
+    assert.ok(real);
+    /** @type {any} */ (globalThis)[DISPATCHER] = { dispatch: (/** @type {any} */ given) => options.push(given) };
+    const own = check.mock(check.busy);
+    const global = t.mock.method(globalThis, "fetch", (/** @type {any} */ input, /** @type {any} */ init) => {
+      init?.dispatcher?.dispatch({ path: "/made-up" }, {});
+      if (!init?.dispatcher) options.push("none");
+      return own.fetch(input, init);
+    });
+    try {
+      await make(own.fetch).models.generateContent({ model: "m", contents: "x" }).catch(() => {});
+    } finally {
+      global.mock.restore();
+      /** @type {any} */ (globalThis)[DISPATCHER] = real;
+    }
+    return { options, hosts: hosts(own.seen) };
+  }
+
+  test("given no fetch, both legs go without undici's own timeouts, as stock google-genai's one does", async (t) => {
+    const stock = await dispatched(t, () => new check.stock.GoogleGenAI({ apiKey: "made-up" }));
+    const ours = await dispatched(t, () => new sdk.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: key }));
+    const byFetch = await dispatched(t, () => new check.stock.GoogleGenAI({ apiKey: "made-up", httpOptions: { fetch: index.gemini.fetch(key) } }));
+    const untimed = { path: "/made-up", headersTimeout: 0, bodyTimeout: 0 };
+    assert.deepEqual(stock.options, [untimed]);
+    assert.deepEqual(ours, { options: [untimed, untimed], hosts: [check.REFLEXER, "generativelanguage.googleapis.com"] });
+    assert.deepEqual(byFetch.options, [untimed, untimed]);
+  });
+
+  test("a fetch of the client's is left as given, as stock leaves it", async (t) => {
+    const ours = await dispatched(t, (fetch) => new sdk.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: key, httpOptions: { fetch } }));
+    assert.deepEqual(ours.options, []); // the client's own fetch, not the global one, carried both legs
+  });
+});
+
+describe("Failures", () => {
+  test("an SDK's own timeout on a hung reflexer still reaches the provider, on its retry", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const seen = /** @type {string[]} */ ([]);
+    const hung = (/** @type {any} */ input, /** @type {any} */ init) => {
+      const url = new URL(input);
+      seen.push(url.host);
+      if (url.host !== check.REFLEXER) return Promise.resolve(check.providers(url));
+      return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
+    };
+    const client = new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, fetch: hung, timeout: 50, maxRetries: 1 });
+    const answer = await client.chat.completions.create({ model: "m", messages: [] });
+    assert.equal(/** @type {any} */ (answer).from, "provider");
+    assert.deepEqual(seen, [check.REFLEXER, "api.openai.com"]);
+  });
+});
+
+describe("Real sockets", () => {
+  /** A server on this machine, answering by `answer`; its address. @param {import("node:http").RequestListener} answer */
+  async function serve(/** @type {any} */ t, answer) {
+    const server = createServer(answer);
+    await new Promise((done) => server.listen(0, "127.0.0.1", () => done(undefined)));
+    t.after(() => server.close());
+    return `http://127.0.0.1:${/** @type {import("node:net").AddressInfo} */ (server.address()).port}`;
+  }
+
+  test("a redirect from reflexer is followed by neither fetch nor a dispatcher of the client's", async (t) => {
+    const keyed = /** @type {string[]} */ ([]);
+    const target = await serve(t, (request, response) => {
+      if (request.headers["reflexer-key"]) keyed.push("the redirect's target");
+      response.end("{}");
+    });
+    const stand = await serve(t, (_, response) => {
+      response.writeHead(307, { location: `${target}/v1`, "reflexer-status-origin": "reflexer" }).end();
+    });
+    const asked = /** @type {unknown[]} */ ([]);
+    const dispatcher = { // as undici's redirect interceptor reads it: no redirect followed when fetch asks for none
+      dispatch: (/** @type {any} */ options, /** @type {any} */ handler) => {
+        asked.push(options.maxRedirections);
+        return /** @type {any} */ (globalThis)[Symbol.for("undici.globalDispatcher.1")].dispatch(options, handler);
+      },
+    };
+    const provider = check.mock(check.providers);
+    const own = (/** @type {any} */ input, /** @type {any} */ init) =>
+      String(input).startsWith(stand) ? globalThis.fetch(input, init) : provider.fetch(input, init);
+    const routed = index.openai.fetch(key, { base: stand, fetch: own });
+    const answer = await routed(check.CHAT, { method: "POST", body: "{}", dispatcher });
+    assert.equal((await answer.json()).from, "provider");
+    assert.deepEqual(keyed, []);
+    assert.deepEqual(asked, [0]);
+  });
+});
+
+describe("Majors", () => {
+  test("a version is supported on a tested major only", () => {
+    index.supported("made-up", "7.99.0", [7]);
+    assert.throws(() => index.supported("made-up", "8.0.0", [7]), /tested on made-up 7, not 8.0.0/);
+  });
+
+  test("an untested major of openai or Anthropic throws at import", async () => {
+    for (const [file, majors] of [["openai.js", "[7]"], ["anthropic.js", "[1]"]]) {
+      await check.planted(file, majors, "[0]", async () => {}).then(() => assert.fail(file), (failure) => assert.match(String(failure), /tested on/));
+    }
+  });
+
+  test("an untested major of google-genai throws at its first call, never misroutes", async () => {
+    await check.planted("gemini.js", "[2]", "[0]", async (faulty) => {
+      const own = check.mock(check.served);
+      const client = new faulty.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: faulty.key, httpOptions: { fetch: own.fetch } });
+      await assert.rejects(client.models.generateContent({ model: "m", contents: "x" }), /tested on/);
+      assert.deepEqual(own.seen, []);
+    });
   });
 });

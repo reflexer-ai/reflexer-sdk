@@ -36,7 +36,7 @@ function through(wire, way) {
   const send = (input, init) => (way.fetch ?? globalThis.fetch)(input, init);
 
   /** @type {Fetch} */
-  async function fetch(input, init = {}) {
+  async function routed(input, init = {}) {
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {
@@ -50,8 +50,8 @@ function through(wire, way) {
     return send(...staysStraight(input, init));
   }
 
-  WAYS.set(fetch, way);
-  return fetch;
+  WAYS.set(routed, way);
+  return routed;
 }
 
 /**
@@ -97,19 +97,40 @@ function staysStraight(input, init) {
 
 /**
  * One provider's `fetch` maker: `openai.fetch(reflexerKey)`, with `{ base, sample, fetch }` as options.
+ * `stock`, the `fetch` its SDK uses when given none, if not the global one.
  * @param {Wire} wire
+ * @param {Fetch} [stock]
  */
-function provider(wire) {
+function provider(wire, stock) {
   return {
     /** @param {string} key @param {Omit<Way, "key">} [options] */
-    fetch: (key, options = {}) => through(wire, { ...options, key }),
+    fetch: (key, options = {}) => through(wire, { ...options, key, fetch: options.fetch ?? stock }),
   };
 }
+
+const DISPATCHER = Symbol.for("undici.globalDispatcher.1"); // where Node's fetch keeps its global dispatcher, as undici documents
+
+/** As google-genai's own, on Node and given no fetch: Node's global dispatcher without undici's 300 s timeouts. */
+const untimed = {
+  /** @param {object} options @param {object} handler */
+  dispatch(options, handler) {
+    new Headers(); // Node makes its global dispatcher on first use
+    return /** @type {any} */ (globalThis)[DISPATCHER].dispatch({ ...options, headersTimeout: 0, bodyTimeout: 0 }, handler);
+  },
+};
 
 export const openai = provider(WIRES.openai);
 export const azure = provider(WIRES.azure);
 export const anthropic = provider(WIRES.anthropic);
-export const gemini = provider(WIRES.gemini);
+export const gemini = provider(WIRES.gemini, (input, init) => globalThis.fetch(input, { dispatcher: /** @type {any} */ (untimed), ...init }));
+
+/**
+ * A provider file runs only on the majors of its SDK it was tested on: a new major throws, never misroutes.
+ * @param {string} name @param {string} version @param {number[]} majors
+ */
+export function supported(name, version, majors) {
+  if (!majors.includes(Number(version.split(".")[0]))) throw new Error(`reflexer is tested on ${name} ${majors}, not ${version}`);
+}
 
 /**
  * @template {abstract new (...args: any) => any} C
@@ -132,9 +153,9 @@ export function client(Stock, wire) {
 
     /** @param {any} options */
     constructor({ reflexerKey, reflexerBase = BASE, sample = 1, ...config } = {}) {
-      const fetch = WAYS.has(config.fetch) ? config.fetch : through(wire, { key: reflexerKey, base: reflexerBase, sample, fetch: config.fetch });
-      super({ ...config, fetch });
-      this.#way = WAYS.get(fetch);
+      const routed = WAYS.has(config.fetch) ? config.fetch : through(wire, { key: reflexerKey, base: reflexerBase, sample, fetch: config.fetch });
+      super({ ...config, fetch: routed });
+      this.#way = WAYS.get(routed);
     }
 
     /** @param {any} options */

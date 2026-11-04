@@ -3,6 +3,9 @@
  * imported from here; or, on the stock class, `new Anthropic({ ...config, fetch: reflexer.anthropic.fetch(reflexerKey) })`.
  */
 import * as stock from "@anthropic-ai/sdk";
-import { WIRES, client } from "./index.js";
+import { VERSION } from "@anthropic-ai/sdk/version";
+import { WIRES, client, supported } from "./index.js";
+
+supported("@anthropic-ai/sdk", VERSION, [1]);
 
 export const Anthropic = client(stock.Anthropic, WIRES.anthropic);

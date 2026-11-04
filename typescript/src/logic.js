@@ -79,8 +79,7 @@ export class Reflexer {
    * @param {unknown} failure
    */
   failed(failure) {
-    const kind = failure instanceof Error ? failure.name : typeof failure;
-    console.warn(`reflexer: the call to reflexer failed (${kind}); it goes straight to the provider`);
+    console.warn("reflexer: the call to reflexer failed (%s); it goes straight to the provider", failure instanceof Error ? failure.name : typeof failure);
     this.breaker.note(FAILED, null);
   }
 }
@@ -255,5 +254,5 @@ const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 export function checksum(text) {
   const bytes = [...createHash("sha256").update(text).digest().subarray(0, 4)];
   const bits = bytes.map((byte) => byte.toString(2).padStart(8, "0")).join("").padEnd(35, "0");
-  return /** @type {string[]} */ (bits.match(/.{5}/g)).map((five) => BASE32[parseInt(five, 2)]).join("");
+  return /** @type {string[]} */ (bits.match(/.{5}/g)).map((five) => BASE32.charAt(parseInt(five, 2))).join("");
 }

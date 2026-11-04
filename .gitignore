@@ -6,3 +6,4 @@ build/
 typescript/node_modules/
 typescript/types/
 typescript/.fault-*/
+typescript/*.tgz

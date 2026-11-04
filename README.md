@@ -29,7 +29,10 @@ On Gemini, give both: with only `httpx_client`, google-genai sends async calls b
 
 ## TypeScript
 
-    npm install reflexer
+Not on npm yet. For now, build it from a clone of this repository and install the archive in your project:
+
+    cd typescript && npm ci && npm pack            # makes reflexer-VERSION.tgz
+    npm install path/to/reflexer-VERSION.tgz       # in your project
 
 One line changes, as in Python; your own options stay as they were.
 

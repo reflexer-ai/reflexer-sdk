@@ -6,18 +6,66 @@ rules:
     paths: {include: ["reflexer/"]}
     patterns:
       - pattern-either:
-          - pattern: log.$METHOD(...)
-          - pattern: logging.$METHOD(...)
+          - patterns:
+              - pattern: $LOG.$METHOD(...)
+              - metavariable-regex:
+                  metavariable: $METHOD
+                  regex: ^(debug|info|warning|warn|error|exception|critical|fatal|log)$
+              - metavariable-regex:
+                  metavariable: $LOG
+                  regex: (?i)log
           - pattern: print(...)
-      - pattern-not: $LOG.$METHOD("...")
-      - pattern-not: $LOG.$METHOD("...", type($X).__name__)
+          - pattern: sys.stderr.write(...)
+          - pattern: sys.stdout.write(...)
+      - pattern-not: $LOG.$KIND("...")
+      - pattern-not: $LOG.$KIND("...", type($X).__name__)
+  - id: no-traceback-in-a-log
+    message: A logged traceback carries the values of the code it went through.
+    languages: [python]
+    severity: ERROR
+    paths: {include: ["reflexer/"]}
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.exception(...)
+          - pattern: $LOG.$METHOD(..., exc_info=$X, ...)
+          - pattern: $LOG.$METHOD(..., stack_info=$X, ...)
+      - metavariable-regex:
+          metavariable: $LOG
+          regex: (?i)log
   - id: key-header-only-in-route
     message: Only `Reflexer.route` names the key's header, so the key reaches only reflexer's address.
     languages: [python]
     severity: ERROR
     paths: {include: ["reflexer/"]}
     patterns:
-      - pattern: '"reflexer-key"'
+      - pattern-either:
+          - patterns:
+              - pattern: '"$NAME"'
+              - metavariable-regex:
+                  metavariable: $NAME
+                  regex: (?i)^reflexer[-_]key$
+          - patterns:
+              - pattern-either:
+                  - pattern: $PREFIX + "$PART"
+                  - pattern: f"{$PREFIX}$PART"
+              - metavariable-regex:
+                  metavariable: $PART
+                  regex: (?i)^key$
       - pattern-not-inside: |
           def route(...):
               ...
+  - id: no-dynamic-code
+    message: The SDK imports by name and runs no code built at run time.
+    languages: [python]
+    severity: ERROR
+    paths: {include: ["reflexer/"]}
+    pattern-either:
+      - pattern: __import__(...)
+      - pattern: importlib.import_module(...)
+      - pattern: importlib.__import__(...)
+      - pattern: entry_points(...)
+      - pattern: importlib.metadata.entry_points(...)
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: compile(...)
+      - pattern: getattr(__builtins__, ...)

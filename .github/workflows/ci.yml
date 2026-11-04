@@ -20,9 +20,13 @@ jobs:
         with:
           enable-cache: false
       - name: Tools
-        run: uv sync --locked --group dev
+        run: uv sync --locked --group dev --group test
       - name: Gates and tests, each gate with its planted fault
         run: uv run --locked python -m unittest discover -s tests -t . -v
+      - name: Acceptance, offline over real sockets, TLS and the provider SDKs
+        run: uv run --locked python tests/acceptance/run.py
+      - name: Acceptance's controls, each a fault planted in the SDK that turns its cases red
+        run: uv run --locked python -m unittest tests.acceptance.test_controls -v
       - name: Workflows
         run: uv run --locked zizmor --min-severity low .github/workflows
       - name: Secrets in any commit
@@ -34,5 +38,6 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
           ./gitleaks git --redact --exit-code 1 .
-          mkdir -p planted && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > planted/key.py
-          if ./gitleaks dir --exit-code 1 planted >/dev/null; then echo "gitleaks missed a planted key"; exit 1; fi
+          git init -q planted && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > planted/key.py
+          git -C planted add key.py && git -C planted -c user.name=ci -c user.email=ci@example.invalid commit -qm planted
+          if ./gitleaks git --exit-code 1 planted >/dev/null; then echo "gitleaks missed a key planted in a commit"; exit 1; fi

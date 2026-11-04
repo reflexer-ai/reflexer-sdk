@@ -8,9 +8,11 @@ dependencies = []  # none, and a gate keeps it so: SECURITY.md
 
 [dependency-groups]
 dev = ["ruff", "semgrep", "zizmor"]
+test = ["openai>=3,<4", "anthropic>=2,<3", "google-genai>=2,<3", "httpx", "httpx2",  # the SDKs a client brings
+        "cryptography"]  # the acceptance suite's certificates, made at run time
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -28,7 +30,8 @@ select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real e
 "pickle".msg = "the SDK loads no code from data"
 "marshal".msg = "the SDK loads no code from data"
 "ctypes".msg = "no native code"
-"importlib".msg = "the SDK imports by name, in plain sight"
+"importlib.import_module".msg = "the SDK imports by name, in plain sight"
+"builtins.__import__".msg = "the SDK imports by name, in plain sight"
 "urllib.request".msg = "the SDK opens no connection of its own"
 "http.client".msg = "the SDK opens no connection of its own"
 
@@ -37,6 +40,6 @@ select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real e
 "tools/**" = ["S"]
 
 [tool.reflexer.budget]  # provisional: grows only in a pull request that says why
-lines = 300
+lines = 320  # was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
 ifs = 35
 private_names = 0

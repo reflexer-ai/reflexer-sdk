@@ -23,7 +23,7 @@ A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` on
 
 ## Known limits
 
-- A call reflexer is slow on: when the client's timeout fires on reflexer's leg, or a load balancer in front of reflexer gives up on it (a 504), the call goes to the provider with the same timeout, so the client may wait up to twice it; if reflexer had already passed the call on, the provider may run it twice.
+- A call reflexer is slow on: when the client's timeout fires on reflexer's leg, or a load balancer in front of reflexer gives up on it (a 504), the call goes to the provider with the same timeout, so the client may wait up to twice it; if reflexer had already passed the call on, the provider may run it twice. `straight_after_timeout=False` gives the client its own timeout error instead, and sends nothing more.
 - A `base_url` on a private name: the SDK cannot tell a private name from a public one, so the call and its headers go to reflexer first, which cannot reach the host and sends the call back; it then goes to the host directly.
 - A replay sent as a streamed body is not seen as one (P11).
 - A tag's commit carries its own release workflow, so the checks above hold as far as who may push a tag to `main` is trusted: PyPI's environment, with its reviewers, is the gate past that.

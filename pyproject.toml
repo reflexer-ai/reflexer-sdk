@@ -42,6 +42,6 @@ select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real e
 "tools/**" = ["S"]
 
 [tool.reflexer.budget]  # provisional: grows only in a pull request that says why
-lines = 340  # was 320: LangChain's two lines; was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
-ifs = 35
+lines = 345  # was 340: the setting after a timeout at reflexer; was 320: LangChain's two lines; was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
+ifs = 36  # was 35: the setting after a timeout at reflexer
 private_names = 0

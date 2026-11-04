@@ -16,15 +16,15 @@ def setup_http_client(stock, wire):
     """What a provider file exports: a function making the HTTP client to give the SDK. `stock`, the SDK's own HTTP
     client when the client has none; `wire`, the provider file's data: see `Reflexer`."""
 
-    def http_client(key, own=None, base=BASE, sample=1.0):
+    def http_client(key, own=None, base=BASE, sample=1.0, straight_after_timeout=True):
         own = own or stock()
         inner = copy.copy(own)  # the client's own object stays as it was, for its other users; they share connections
         inner.event_hooks = {}  # they run once, above, and never see our key
-        outer = type(own)(transport=Through(Reflexer(key, wire, base, sample), inner),  # the rest: what the outer one acts on
+        outer = type(own)(transport=Through(Reflexer(key, wire, base, sample, straight_after_timeout), inner),  # the rest: what the outer one acts on
                           event_hooks=own.event_hooks, auth=own.auth, params=own.params, headers=own.headers,
                           cookies=own.cookies.jar, timeout=own.timeout, follow_redirects=own.follow_redirects,
                           max_redirects=own.max_redirects, base_url=own.base_url)
-        outer.reflexer_through = dict(key=key, base=base, sample=sample)  # what a copy given its own HTTP client is made with
+        outer.reflexer_through = dict(key=key, base=base, sample=sample, straight_after_timeout=straight_after_timeout)  # what a copy given its own HTTP client is made with
         return outer
 
     return http_client
@@ -35,9 +35,11 @@ def setup_client(cls, make_http_client):
     our HTTP client, by its public argument; the SDK's own copies (`with_options`) hand ours back in, with no key."""
 
     class Client(cls):
-        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, http_client=None, **config):
+        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, straight_after_timeout=True, http_client=None,
+                     **config):
             if not hasattr(http_client, "reflexer_through"):
-                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample)
+                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample,
+                                               straight_after_timeout=straight_after_timeout)
             self.reflexer_way = http_client.reflexer_through
             super().__init__(*args, http_client=http_client, **config)
 

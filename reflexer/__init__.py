@@ -22,9 +22,10 @@ class Reflexer:
     for the format; `provider`, the provider's own address, to which no upstream is named; `calls`, the path
     of the calls that return a model's message, the only ones that go to reflexer."""
 
-    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic):
+    def __init__(self, key, wire, base=BASE, sample=1.0, straight_after_timeout=True, clock=time.monotonic):
         check(key)
         self.key, self.base, self.sample = key, checked_base(base), sample
+        self.straight_after_timeout = straight_after_timeout  # False: a timeout on reflexer's leg is the client's, as a slow provider's
         self.reflexer_path, self.provider, self.calls = wire["reflexer_path"], wire.get("provider"), wire["calls"]
         self.breaker = Breaker(clock)
 
@@ -61,7 +62,12 @@ class Reflexer:
         return meaning != ANSWER
 
     def failed(self, failure):
-        """The call to reflexer raised: it goes straight. Only the kind of failure is logged, never its text."""
+        """The call to reflexer raised: it goes straight, but for a timeout when told not to, which the client gets, as
+        from a slow provider: reflexer may have passed the call on, and sending it straight would run it twice there.
+        Only the kind of failure is logged, never its text."""
+        if not self.straight_after_timeout and "TimeoutException" in (kind.__name__ for kind in type(failure).__mro__):
+            self.breaker.note(FAILED, None)
+            raise failure
         log.warning("the call to reflexer failed (%s); it goes straight to the provider", type(failure).__name__)
         self.breaker.note(FAILED, None)
 

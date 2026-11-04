@@ -46,6 +46,7 @@ The answer is your provider's format, unchanged by this SDK. A served answer's `
 - `sample=0.01`: send a share of the calls to reflexer, the rest straight to the provider.
 - One call straight to the provider: `extra_headers={"Reflexer-Pass-Through": "1"}`. The header never leaves your machine.
 - When reflexer fails, calls go straight to the provider for a while, backing off.
+- `straight_after_timeout=False`: when your timeout fires on reflexer's leg, you get your SDK's own timeout error, as from a slow provider, and the call is not sent to the provider: reflexer may already have passed it on, and sending it again would run it twice there. By default it goes straight.
 
 ## Develop
 

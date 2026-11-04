@@ -217,6 +217,49 @@ class GeminisArguments(unittest.TestCase):
             self.assertIsInstance(inner, library.Client, library.__name__)
 
 
+class AfterATimeout(unittest.TestCase):
+    """A timeout on reflexer's leg: straight to the provider by default; the client's own timeout when told not to."""
+
+    def timed_out(self, request):
+        if request.url.host == "api.reflexer.ai":
+            raise httpx2.ReadTimeout("made up", request=request)
+        return httpx2.Response(200, json={"from": "provider"})
+
+    def made(self, answer=None, **way):
+        seen = []
+        own = httpx2.Client(transport=httpx2.MockTransport(lambda r: (seen.append(r.url.host), (answer or self.timed_out)(r))[1]))
+        return setup_http_client(None, WIRE)(KEY, own=own, **way), seen
+
+    def test_by_default_the_call_goes_straight(self):
+        client, seen = self.made()
+        self.assertEqual(client.post(CHAT, content=b"{}").json(), {"from": "provider"})
+        self.assertEqual(seen, ["api.reflexer.ai", "api.openai.com"])
+
+    def test_told_not_to_the_client_gets_its_timeout_and_the_provider_nothing(self):
+        client, seen = self.made(straight_after_timeout=False)
+        with self.assertRaises(httpx2.ReadTimeout):
+            client.post(CHAT, content=b"{}")
+        self.assertEqual(seen, ["api.reflexer.ai"])
+
+    def test_told_not_to_any_other_failure_still_goes_straight(self):
+        def refused(request):
+            if request.url.host == "api.reflexer.ai":
+                raise httpx2.ConnectError("made up", request=request)
+            return httpx2.Response(200, json={"from": "provider"})
+
+        client, seen = self.made(refused, straight_after_timeout=False)
+        self.assertEqual(client.post(CHAT, content=b"{}").json(), {"from": "provider"})
+
+    def test_the_one_line_takes_it(self):
+        import openai, reflexer.openai
+        seen = []
+        own = openai.DefaultHttpxClient(transport=httpx2.MockTransport(lambda r: (seen.append(r.url.host), self.timed_out(r))[1]))
+        client = reflexer.openai.OpenAI(api_key="made-up", reflexer_key=KEY, straight_after_timeout=False, http_client=own, max_retries=0)
+        with self.assertRaises(openai.APITimeoutError):
+            client.chat.completions.create(model="m", messages=[])
+        self.assertEqual(seen, ["api.reflexer.ai"])
+
+
 class Settings(unittest.TestCase):
     def test_the_namespace_holds_through_a_second_round(self):
         """An auth round sends the same request again: the first round must leave it whole."""

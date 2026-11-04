@@ -327,8 +327,9 @@ def breaker_backs_off_doubling(t):
         t.check(later >= earlier * least_ratio * 0.9, f"a wait did not double: {earlier:.2f}, then {later:.2f}")
 
 
-JITTER_RUNS = 4
-JITTER_SPREAD = 0.03  # seconds, under which clients come back together
+JITTER_RUNS = 8
+JITTER_SPREAD = 0.06  # seconds: past a busy machine's noise (about 0.03 seen); the spread of 8 waits jittered by up to
+#                       JITTER falls under it about once in a thousand runs
 
 
 @case("breaker", sdks=("openai",), limit=30.0)

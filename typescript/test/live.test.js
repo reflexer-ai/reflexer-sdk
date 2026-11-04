@@ -46,8 +46,14 @@ describe("Replay", () => {
 });
 
 describe("Endpoint", () => {
-  test("no endpoint is taken by default: REFLEXER_BASE must be given", async (t) => {
-    t.mock.property(process, "env", { REFLEXER_KEY: "made-up" });
-    await assert.rejects(check.main(["openai"]), /set REFLEXER_BASE/);
+  test("no endpoint is taken by default: REFLEXER_BASE must be given", async () => {
+    const given = { REFLEXER_BASE: process.env.REFLEXER_BASE, REFLEXER_KEY: process.env.REFLEXER_KEY };
+    delete process.env.REFLEXER_BASE;
+    process.env.REFLEXER_KEY = "made-up";
+    try {
+      await assert.rejects(check.main(["openai"]), /set REFLEXER_BASE/);
+    } finally {
+      for (const [name, value] of Object.entries(given)) (value === undefined ? delete process.env[name] : (process.env[name] = value));
+    }
   });
 });

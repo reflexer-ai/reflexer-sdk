@@ -25,7 +25,7 @@ Or keep the stock class and give it reflexer's HTTP client:
     client = genai.Client(api_key=gemini_key, http_options={"client_args": reflexer.gemini.client_args(reflexer_key),
                                                             "async_client_args": reflexer.gemini.client_args(reflexer_key)})
 
-On Gemini, give both: with only `httpx_client`, google-genai sends async calls by aiohttp when it is installed, past reflexer. Each `client_args(...)` serves one client: given to several, the first closed cuts the others' calls in flight. Streams pass through as the provider SDKs read them.
+On Gemini, give both: with only `httpx_client`, google-genai sends async calls by aiohttp when it is installed, past reflexer. Streams pass through as the provider SDKs read them.
 
 ## TypeScript
 

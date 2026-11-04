@@ -8,6 +8,7 @@ dependencies = []  # none, and a gate keeps it so: SECURITY.md
 
 [dependency-groups]
 dev = ["ruff", "semgrep", "zizmor"]
+test = ["openai>=3,<4", "anthropic>=2,<3", "google-genai>=2,<3", "httpx", "httpx2"]  # the SDKs a client brings
 
 [build-system]
 requires = ["hatchling"]
@@ -28,7 +29,8 @@ select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real e
 "pickle".msg = "the SDK loads no code from data"
 "marshal".msg = "the SDK loads no code from data"
 "ctypes".msg = "no native code"
-"importlib".msg = "the SDK imports by name, in plain sight"
+"importlib.import_module".msg = "the SDK imports by name, in plain sight"
+"builtins.__import__".msg = "the SDK imports by name, in plain sight"
 "urllib.request".msg = "the SDK opens no connection of its own"
 "http.client".msg = "the SDK opens no connection of its own"
 

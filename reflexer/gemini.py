@@ -1,0 +1,67 @@
+"""google-genai's own client, through reflexer: `genai.Client(**config)` becomes `reflexer.gemini.Client(**config, reflexer_key=key)`.
+
+Public names alone. The transport also goes by itself: `genai.Client(http_options={"httpx_client": reflexer.gemini.http_client(key)})`.
+A served answer's model and id are at `model_version` and `response_id`; reflexer's price, at `sdk_http_response.headers`.
+"""
+import httpx, inspect
+from google import genai
+from . import BASE, Reflexer, supported
+from .transport import Both, Through, setup_http_client
+
+supported("google-genai", [2])
+
+GENERATE = {
+    "reflexer_path": "/gemini",
+    "provider":      "https://generativelanguage.googleapis.com",
+    "calls":         r"/v1(beta)?/models/[^/]+:(stream)?[gG]enerateContent$",
+}
+
+http_client       = setup_http_client(httpx.Client,      GENERATE)
+async_http_client = setup_http_client(httpx.AsyncClient, GENERATE)
+
+
+def own_client(kind, given, arguments):
+    """The HTTP client it would have built, by what it takes: `client_args` may hold what only aiohttp takes."""
+    taken = {name: value for name, value in (arguments or {}).items() if name in inspect.signature(kind).parameters}
+    return given or kind(**{"follow_redirects": True} | taken)
+
+
+ABOVE = ("event_hooks", "auth", "params", "headers", "cookies", "timeout", "follow_redirects", "max_redirects", "base_url")  # what the outer client acts on
+
+
+def client_args(key, own=None, base=BASE, sample=1.0):
+    """What to give as both `client_args` and `async_client_args`, for what builds its own `genai.Client` and takes only
+    those. `own`, the client's own: split as `setup_http_client`
+    splits a client, so its hooks run once, above, and never see our key. A transport given also keeps the SDK off aiohttp."""
+    own, one = own or {}, Reflexer(key, GENERATE, base, sample)
+    below = {name: value for name, value in own.items() if name not in ABOVE}
+    above = {name: value for name, value in own.items() if name in ABOVE}
+    return {"follow_redirects": True} | above | {"transport": Both(Through(one, own_client(httpx.Client, None, below)),
+                                                                   Through(one, own_client(httpx.AsyncClient, None, below)))}
+
+
+class Client(genai.Client):
+    def __init__(self, *, reflexer_key, reflexer_base=BASE, sample=1.0, http_options=None, **config):
+        options, way = genai.types.HttpOptions.model_validate(http_options or {}), dict(base=reflexer_base, sample=sample)
+        self.reflexer_http = http_client(reflexer_key, own_client(httpx.Client, options.httpx_client, options.client_args), **way)
+        self.reflexer_built = options.httpx_client is None
+        self.reflexer_async_built = options.httpx_async_client is None
+        self.reflexer_async_http = async_http_client(reflexer_key, own_client(httpx.AsyncClient, options.httpx_async_client, options.async_client_args), **way)
+        super().__init__(http_options=options.model_copy(update={
+            "httpx_client": self.reflexer_http, "httpx_async_client": self.reflexer_async_http,
+        }), **config)
+        self.aio.aclose = self.closing_async(self.aio.aclose)
+
+    def closing_async(self, aclose):
+        async def closing():
+            await aclose()
+            if self.reflexer_async_built:
+                await self.reflexer_async_http.aclose()
+
+        return closing
+
+    def close(self):
+        """It closes only what it built, and it was handed ours; a client's own stays the client's."""
+        super().close()
+        if self.reflexer_built:
+            self.reflexer_http.close()

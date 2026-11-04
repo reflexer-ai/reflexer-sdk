@@ -119,6 +119,10 @@ class Broken(unittest.TestCase):
         self.plant("__init__.py", "import socket")
         self.assertNotEqual(ruff(self.root), 0)
 
+    def test_a_dynamic_import_turns_ruff_red(self):
+        self.plant("__init__.py", "import importlib\nmade_up = importlib.import_module('made_up')")
+        self.assertNotEqual(ruff(self.root), 0)
+
     def test_an_eval_turns_ruff_red(self):
         self.plant("__init__.py", "def made_up(text):\n    return eval(text)")
         self.assertNotEqual(ruff(self.root), 0)

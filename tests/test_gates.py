@@ -114,14 +114,18 @@ class Broken(unittest.TestCase):
     def setUp(self):
         self.root = pathlib.Path(tempfile.mkdtemp(prefix="reflexer-gates-"))
         self.addCleanup(shutil.rmtree, self.root)
-        for name in ("reflexer", "tools", ".github"):
+        for name in ("reflexer", "tools", ".github", "typescript/src", "typescript/test"):
             shutil.copytree(ROOT / name, self.root / name)
         for name in ("pyproject.toml", "semgrep.yml", "SECURITY.md", "build-constraints.txt"):
             shutil.copy(ROOT / name, self.root / name)
 
-    def plant(self, name, text):
-        with open(self.root / "reflexer" / name, "a") as file:
+    def plant(self, name, text, package="reflexer"):
+        with open(self.root / package / name, "a") as file:
             file.write("\n" + text + "\n")
+
+    def assert_typescript_turns_semgrep_red(self, text):
+        self.plant("index.js", text, package="typescript/src")
+        self.assertNotEqual(semgrep(self.root), 0, text)
 
     def test_a_dependency_turns_it_red(self):
         path = self.root / "pyproject.toml"
@@ -272,10 +276,50 @@ class Broken(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.root), "add", "made_up.txt"], check=True)
         self.assertEqual(local_paths(self.root), ["made_up.txt"])
 
+    def test_typescript_a_logged_body_or_key_turns_semgrep_red(self):
+        self.assert_typescript_turns_semgrep_red("export const made = (init, way) => console.warn(init.body, way.key);")
+
+    def test_typescript_a_log_of_another_kind_turns_semgrep_red(self):
+        self.assert_typescript_turns_semgrep_red('export const made = (body) => console.log("sent %s", body);')
+
+    def test_typescript_a_body_written_to_stderr_turns_semgrep_red(self):
+        self.assert_typescript_turns_semgrep_red("export const made = (body) => process.stderr.write(body);")
+
+    def test_typescript_console_reached_another_way_turns_semgrep_red(self):
+        for text in ('export const made = (body) => console["log"](body);',
+                     "export const made = (body) => { const say = console.warn; say(body); };",
+                     "export const made = (body) => console.warn.call(console, body);"):
+            with self.subTest(text=text):
+                self.setUp()
+                self.assert_typescript_turns_semgrep_red(text)
+
+    def test_typescript_the_keys_header_outside_route_turns_semgrep_red(self):
+        self.assert_typescript_turns_semgrep_red('export const made = (headers, key) => { headers["reflexer-key"] = key; };')
+
+    def test_typescript_the_keys_header_in_an_object_or_other_case_turns_semgrep_red(self):
+        self.assert_typescript_turns_semgrep_red('export const made = (key) => ({ "Reflexer-Key": key });')
+
+    def test_typescript_the_keys_header_built_turns_semgrep_red(self):
+        for text in ('export const made = (headers, key) => { headers[OURS + "Key"] = key; };',
+                     "export const made = (headers, key) => { headers[`${OURS}key`] = key; };",
+                     'export const made = (headers, key) => { headers[OURS.concat("key")] = key; };'):
+            with self.subTest(text=text):
+                self.setUp()
+                self.assert_typescript_turns_semgrep_red(text)
+
+    def test_typescript_the_keys_header_in_another_route_turns_semgrep_red(self):
+        self.assert_typescript_turns_semgrep_red('class MadeUp {\n  route(headers, key) { headers["reflexer-key"] = key; }\n}')
+
     def test_a_promise_with_no_check_turns_it_red(self):
         path = self.root / "SECURITY.md"
         path.write_text(path.read_text() + "\n| **P99** made up | | |\n")
         self.assertIn("P99: held by no check", promises.problems(self.root))
+
+    def test_a_node_test_that_does_not_exist_turns_it_red(self):
+        path, tests = self.root / "SECURITY.md", "node:typescript/test/promises.test.js"
+        path.write_text(path.read_text() + f"\n| **P99** made up | `{tests}::Promises::made up` | `{tests}::Broken::the key reaches only reflexer` |\n")
+        self.assertIn(f"P99: no such check {tests}::Promises::made up", promises.problems(self.root))
+        self.assertIn(f"P99: no such check {tests}::Broken::the key reaches only reflexer", promises.problems(self.root))  # of another suite
 
     def test_a_check_that_does_not_exist_turns_it_red(self):
         path = self.root / "SECURITY.md"

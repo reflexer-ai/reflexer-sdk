@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 dist/
 build/
+typescript/node_modules/
+typescript/types/
+typescript/.fault-*/
+typescript/*.tgz

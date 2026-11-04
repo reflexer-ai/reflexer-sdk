@@ -8,7 +8,8 @@ dependencies = []  # none, and a gate keeps it so: SECURITY.md
 
 [dependency-groups]
 dev = ["ruff", "semgrep", "zizmor"]
-test = ["openai>=3,<4", "anthropic>=2,<3", "google-genai>=2,<3", "httpx", "httpx2"]  # the SDKs a client brings
+test = ["openai>=3,<4", "anthropic>=2,<3", "google-genai>=2,<3", "httpx", "httpx2",  # the SDKs a client brings
+        "cryptography"]  # the acceptance suite's certificates, made at run time
 
 [build-system]
 requires = ["hatchling==1.33.0"]

@@ -58,6 +58,13 @@ Also `AzureOpenAI`, from `reflexer/openai`. Or keep the stock class and give it 
 
 A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have. Tested on openai 7, @anthropic-ai/sdk 1 and @google/genai 2 from 2.29.0: a call made by any other release throws.
 
+## LangChain.js
+
+    // chat = new ChatOpenAI({ model })
+    chat = new ChatOpenAI({ model, configuration: { fetch: reflexer.openai.fetch(reflexerKey) } });
+
+`@langchain/anthropic`'s `ChatAnthropic` takes a `fetch` too, but bundles `@anthropic-ai/sdk` 0.x, a major this SDK is not tested on: its calls throw. `@langchain/google-genai` is built on `@google/generative-ai`, which takes no `fetch`. So neither has a line here.
+
 ## LangChain
 
     # chat = ChatOpenAI(model=model)

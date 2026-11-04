@@ -1,9 +1,10 @@
 """The suite's own test: each fault planted in the SDK turns its cases red, and every judged case is turned red by some
 fault, so a green run means something. Offline. Run: python -m unittest tests.acceptance.test_controls (a few minutes)."""
-import concurrent.futures, json, os, shutil, socket, subprocess, sys, tempfile, unittest
+import concurrent.futures, errno, json, os, re, shutil, socket, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import faults  # noqa: E402 the faults and conditions the controls plant
 CONTROL_JOBS = 4  # cases at a time within one control
 PARALLEL_CONTROLS = 6
 RUN_LIMIT = 300  # seconds a control's run may take
@@ -114,6 +115,20 @@ CONTROLS = {
     "errors_of_our_own": [("kept_a_providers_error_raises_the_sdks_own_class", "openai")],
     "gemini_answer_dressed": [("fields_leave_geminis_object_what_it_was", "gemini")],
 }
+# A slow machine's moment of faults.py's CONDITIONS -> the cases it must leave green: a busy machine turns none red.
+SLOW_MACHINE = {
+    "late_notice": ["timeout_the_clients_holds_on_reflexers_leg", "async_the_clients_timeout_holds_on_reflexers_leg"],
+    "a_stall_on_the_return": ["breaker_outage_trace_at_the_full_share", "breaker_outage_trace_at_the_one_percent_share"],
+    "a_freeze": sorted(faults.FREEZES),  # each `steady` case, frozen where it breaks
+}
+def held_past_the_late_notice(row):
+    import cases
+    held = re.search(r"the client left reflexer after ([0-9.]+)s", row["saw"])
+    return held is not None and float(held.group(1)) >= cases.CLIENT_TIMEOUT + cases.MARGIN / 4  # stock: the timeout itself
+
+
+FIRED = {"late_notice": held_past_the_late_notice, "a_stall_on_the_return": lambda row: "tried again" in row["saw"],
+         "a_freeze": lambda row: "tried again after the machine stalled" in row["saw"]}  # each came about
 # Cases no fault turns red, and why each is kept.
 NOT_JUDGED = {
     "measure_time_added_on_loopback": "records time added per call; no bound to hold",
@@ -124,16 +139,19 @@ NOT_JUDGED = {
 }
 
 
-def run_suite(fault, only, work):
-    """`run.py` on the cases named, with `fault` planted (None: the SDK as it is); its table, as JSON."""
-    out = os.path.join(work, f"{fault}.json")
+def run_suite(fault, only, work, condition=None, more=()):
+    """`run.py` on the cases named, with `fault` planted (None: the SDK as it is), `condition`, and `more` of its
+    arguments; its table, as JSON."""
+    out = os.path.join(work, f"{fault}-{condition}-{'-'.join(more)}.json")
     command = [sys.executable, os.path.join(HERE, "run.py"), "--json", out, "--jobs", str(CONTROL_JOBS)]
     command += ["--fault", fault] if fault else []
+    command += ["--condition", condition] if condition else []
+    command += list(more)
     for name in only:
         command += ["--only", name]
     done = subprocess.run(command, capture_output=True, text=True, timeout=RUN_LIMIT)
     if done.returncode not in (0, 1) or not os.path.exists(out):  # 1: a cell failed, as a fault should make it
-        raise AssertionError(f"run.py could not run {fault}: {done.stderr[-600:]}")
+        raise AssertionError(f"run.py could not run {fault}, {condition}: {done.stderr[-600:]}")
     with open(out) as results:
         return json.load(results)["cases"]
 
@@ -171,6 +189,30 @@ class Controls(unittest.TestCase):
         rows = run_suite(None, ["routing_the_key_never", "no_harm_reflexer_dead", "fields_on_a_served"], work)
         self.assertEqual({row["status"] for row in rows}, {"pass"}, rows)
 
+    def test_each_steady_case_frozen_is_red_on_one_try(self):
+        """So each case that discards a stalled try is seen to need it, and its freeze to land where it breaks it."""
+        import cases
+        self.assertEqual(sorted(case["name"] for case in cases.CASES if case["tries"] > 1), sorted(faults.FREEZES))
+        work = tempfile.mkdtemp(prefix="acceptance-frozen-")
+        self.addCleanup(shutil.rmtree, work, True)
+        rows = [row for row in run_suite(None, sorted(faults.FREEZES), work, "a_freeze", ("--tries", "1")) if row["status"] != "cannot"]
+        self.assertEqual(sorted({row["case"] for row in rows}), sorted(faults.FREEZES))
+        green = [f"{row['case']}/{row['sdk']}: {row['saw'][:200]}" for row in rows if row["status"] != "fail"]
+        self.assertEqual(green, [], "\n".join(green))
+
+    def test_a_slow_machines_moment_turns_no_case_red(self):
+        work = tempfile.mkdtemp(prefix="acceptance-slow-")
+        self.addCleanup(shutil.rmtree, work, True)
+        with concurrent.futures.ThreadPoolExecutor(PARALLEL_CONTROLS) as pool:
+            ran = list(pool.map(lambda condition: (condition, run_suite(None, SLOW_MACHINE[condition], work, condition)), SLOW_MACHINE))
+        red = [f"{condition}: {row['case']}/{row['sdk']} is {row['status']}: {row['saw'][:300]}"
+               for condition, rows in ran for row in rows if row["status"] not in ("pass", "cannot")]
+        self.assertEqual(red, [], "\n".join(red))
+        for condition, rows in ran:
+            self.assertEqual(sorted({row["case"] for row in rows}), sorted(SLOW_MACHINE[condition]), f"{condition}: not every case ran")
+            for row in (row for row in rows if row["status"] == "pass"):
+                self.assertTrue(FIRED[condition](row), f"{condition} did not come about in {row['case']}/{row['sdk']}: {row['saw'][:300]}")
+
     def test_an_unknown_fault_is_refused(self):
         done = subprocess.run([sys.executable, os.path.join(HERE, "run.py"), "--fault", "made_up"], capture_output=True, text=True,
                               timeout=RUN_LIMIT)
@@ -199,6 +241,42 @@ class Offline(unittest.TestCase):
     def test_an_address_off_this_machine_refuses(self):
         with self.assertRaisesRegex(OSError, "offline"):
             socket.create_connection(("192.0.2.1", 443), timeout=2)
+
+
+class DeadStandIn(unittest.TestCase):
+    """A dead stand-in refuses, and keeps its port: another case's stand-in, binding port 0 in a process of its own,
+    would be handed a port let go, and get this case's calls, key included."""
+
+    def setUp(self):
+        from harness import standins
+        self.standin = standins.Standin("runner")  # plain http: the port is the point, not TLS
+        self.port = self.standin.port
+        self.standin.set("dead")
+        self.addCleanup(self.standin.set, "ok")
+
+    def test_its_port_is_refused_to_another_bind(self):
+        other = socket.socket()
+        self.addCleanup(other.close)
+        with self.assertRaises(OSError) as refused:
+            other.bind(("127.0.0.1", self.port))
+        self.assertEqual(refused.exception.errno, errno.EADDRINUSE)
+
+    def test_its_port_is_never_handed_to_bind_0(self):
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as ports:
+            low, high = map(int, ports.read().split())
+        handed = 0
+        for _ in range(high - low + 1):  # the size of the range bind(0) draws from
+            with socket.socket() as other:
+                other.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as another case's stand-in binds
+                other.bind(("127.0.0.1", 0))
+                handed += other.getsockname()[1] == self.port
+        self.assertEqual(handed, 0)
+
+    def test_a_call_is_refused_and_it_comes_back_on_its_port(self):
+        with self.assertRaises(ConnectionRefusedError):
+            socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        self.standin.set("ok")
+        socket.create_connection(("127.0.0.1", self.port), timeout=2).close()
 
 
 if __name__ == "__main__":

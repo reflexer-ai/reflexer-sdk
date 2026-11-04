@@ -1,7 +1,7 @@
 """Faults planted in the SDK one at a time, each breaking one thing it promises, so that each case is seen to fail when
 what it checks breaks (`test_controls.py`). `run.py --fault NAME` plants one in every case's own forked process, where
 it dies with the case. A fault changes the SDK (`reflexer`) or the client's line (`lines.py`), never a case."""
-import builtins, copy, json, types
+import builtins, copy, json, os, subprocess, time, types
 
 import httpx, httpx2
 from google.genai import types as genai_types
@@ -394,3 +394,125 @@ FAULTS = {
     "errors_of_our_own": lambda: on_the_line(errors_of_our_own),
     "gemini_answer_dressed": lambda: on_the_line(gemini_answer_dressed),
 }
+
+
+# A slow machine's moments, planted in the stand-ins, never in the SDK or a case: `run.py --condition NAME`. The cases
+# `test_controls.py` lists for each must stay green under it, so that a busy machine cannot turn them red.
+
+def late_notice(case):
+    """The stand-in's thread, slow to be scheduled: a stalled stand-in notices a client left some time after it did,
+    within the slack a case allows a busy machine."""
+    import cases
+    real_select = standins.select.select
+
+    def slow(readable, writable, broken, timeout):
+        ready = real_select(readable, writable, broken, timeout)
+        if ready[0]:
+            time.sleep(cases.MARGIN / 2)
+        return ready
+    standins.select = types.SimpleNamespace(select=slow)
+
+
+def a_stall_on_the_return(case):
+    """The machine stalled past the client's timeout once, on reflexer's first answer after an outage: the call trying
+    reflexer again pays its timeout and counts a failure, as on a machine frozen at that moment."""
+    import cases
+    real_answer, stalled = standins.Standin.answer, []
+
+    def answer(self, handler, arrival):
+        after_an_outage = any(seen.path is None for seen in self.seen)  # `reset` records its attempts with no path
+        if self.is_reflexer and self.mode == "ok" and after_an_outage and not stalled:
+            stalled.append(arrival)
+            time.sleep(cases.CLIENT_TIMEOUT + cases.MARGIN)
+        return real_answer(self, handler, arrival)
+    standins.Standin.answer = answer
+
+
+# Where a freeze breaks each case judged by real time, as it stands without its steady tries, and for how long. Each
+# freeze starts at the event that opens what the case judges, with no delay of its own, so a machine's timing moves it
+# with the case: `arrival(where, nth, after=(other, n))`, while the nth call to reach `where` is in flight, counted
+# from when `other` had n; `holding()`, as a stalled stand-in starts holding a call; `answering(where)`, as `where` makes
+# its first answer, after any delay it was set. Each length is past its slack.
+THAWED_FIRST = 0.05  # seconds the thread that met the event waits after the freeze: the others thaw first, all at once
+
+
+def arrival(where, nth, after=None):
+    return ("arrival", where, nth, after)
+
+
+def holding():
+    return ("holding",)
+
+
+def answering(where):
+    return ("answering", where)
+
+
+FREEZES = {
+    "breaker_opens_on_a_failure":                              (arrival("provider", 2), 1.0),  # the next call, judged quick
+    "no_harm_with_the_sdks_own_retries":                       (arrival("provider", 1), 1.8),  # the one call, judged quick
+    "breaker_backs_off_doubling":                              (arrival("reflexer", 1), 0.8),  # the first failure, noted late
+    "breaker_an_answer_resets_the_backoff":                    (arrival("provider", 2, after=("reflexer", 4)), 2.2),  # its window
+    "breaker_counts_calls_in_flight_once":                     (arrival("provider", 9), 2.0),  # the first call of its window
+    "breaker_two_straight_headers_are_obeyed_then_it_returns": (arrival("provider", 2), 3.2),  # the first call of its window
+    "timeout_the_clients_holds_on_reflexers_leg":              (holding(), 2.0),  # the leg it holds
+    "async_the_clients_timeout_holds_on_reflexers_leg":        (holding(), 2.0),
+    "kept_with_options_timeout_holds":                         (holding(), 2.0),
+    "stall_reflexer_stalled_provider_at_six_tenths":           (holding(), 2.0),
+    "stall_slow_pass_through_at_seven_tenths":                 (answering("reflexer"), 0.6),  # its slow answer, made later
+}
+
+
+def a_freeze(case):
+    """The whole machine frozen once, where it breaks the case (`FREEZES`): every thread of the case's process stopped
+    and continued by a process of its own, the thread that met the event waiting on it."""
+    if case not in FREEZES:
+        return
+    event, seconds = FREEZES[case]
+    real_init, real_select, real_made = standins.Standin.__init__, standins.select.select, standins.Standin._made
+    frozen, made, counted = [], {}, []
+
+    def freeze():
+        if not frozen:
+            frozen.append(True)
+            here = os.getpid()  # stopped and continued from without; this thread waits out both, so the freeze is in place
+            subprocess.run(["sh", "-c", f"kill -STOP {here}; sleep {seconds}; kill -CONT {here}"], check=True)
+            time.sleep(THAWED_FIRST)
+
+    class Seen(list):
+        def __init__(self, standin):
+            super().__init__()
+            self.standin = standin
+
+        def append(self, arrival_):
+            super().append(arrival_)
+            _, where, nth, after = event
+            if self.standin.name != where:
+                return
+            if after is None or len(made[after[0]].seen) >= after[1]:
+                counted.append(arrival_)
+            if len(counted) >= nth:  # threads append at once
+                freeze()
+
+    def init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        self.seen, made[self.name] = Seen(self), self
+
+    def select(readable, writable, broken, timeout):  # a stalled stand-in's first poll: its hold has begun
+        freeze()
+        return real_select(readable, writable, broken, timeout)
+
+    def answer_made(self, *args):  # `where` makes its answer
+        if self.name == event[1]:
+            freeze()
+        return real_made(self, *args)
+
+    if event[0] == "holding":
+        standins.select = types.SimpleNamespace(select=select)
+    elif event[0] == "answering":
+        standins.Standin._made = answer_made
+    else:
+        standins.Standin.__init__ = init
+
+
+CONDITIONS = {"late_notice": late_notice, "a_stall_on_the_return": a_stall_on_the_return, "a_freeze": a_freeze}

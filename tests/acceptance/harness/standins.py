@@ -8,7 +8,7 @@
     balancer  a load balancer's own answer: a 401 with none of our headers (`status=` for another)
     busy      reflexer's 503, marked its own, with `Retry-After` (`status=529` for Anthropic's)
     redirect  a 307 elsewhere, as relayed from a provider
-    dead      nothing listens: connections are refused
+    dead      nothing listens: connections are refused; the port stays its own, for no other case to take
     reset     accepts, records an arrival with no path, and resets: a dead stand-in whose attempts can be counted
     stall     reads the request and never answers; `Arrival.left_after` records when the client gave up
     drop      reads the request and closes with no answer
@@ -17,7 +17,9 @@
     badcert   TLS with a certificate nobody trusts
 
 Any mode takes `delay=` (seconds before answering), `gzip=True` (compressed when the request accepts it, the SDKs'
-default), `gap=` (seconds between a stream's events), `headers=` (added to the answer), `body=` (replaces it).
+default), `gap=` (seconds between a stream's events), `handshake=` (a `threading.Event`: a stream's first event sent,
+the rest wait until it is set, at most `HANDSHAKE_WAIT`; `Arrival.handed_first` says whether it was), `headers=` (added
+to the answer), `body=` (replaces it).
 A request asking for a stream gets its format's events, unless the mode set a body: that is the stream mode.
 """
 import gzip as gzip_module, http.server, json, select, socket, ssl, struct, threading, time
@@ -130,15 +132,29 @@ def asks_stream(path, body):
         return False
 
 
+HANDSHAKE_WAIT = 5.0  # seconds a stream's rest waits on the client handed its first event; past it, sent anyway
+
+
 class Arrival:
     """One request as it reached a stand-in."""
 
     def __init__(self, host, method, path, headers, body):
         self.host, self.method, self.path, self.headers, self.body = host, method, path, headers, body
-        self.at, self.left_after, self.gzipped = time.monotonic(), None, False
+        self.at, self.left_after, self.gzipped, self.handed_first = time.monotonic(), None, False, None
 
     def __repr__(self):
         return f"{self.method} {self.host}{self.path}"
+
+
+def bound(port):
+    """A socket on this port of the loopback. Bound beside its listener, one that never listens holds the port while the
+    stand-in is dead: a call is refused, and no bind(0) is handed it, so no other case's stand-in takes its calls.
+    `SO_REUSEPORT` lets the two share it for the moment one replaces the other, so the port is never free."""
+    made = socket.socket()
+    made.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    made.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    made.bind(("127.0.0.1", port))
+    return made
 
 
 class Standin:
@@ -158,18 +174,18 @@ class Standin:
         if mode in ("dead", "reset", "badcert"):
             self._cut_connections()
         if mode == "dead" and not was_dead:
+            self.holder = bound(self.port)  # the port stays this stand-in's: a port let go, another case's bind(0) gets
             self._close()
         if mode != "dead" and was_dead:
             self._listen(self.port)
+            self.holder.close()
 
     def message_arrivals(self):
         """The message calls that reached it, and the attempts `reset` counted; not a listing of models."""
         return [a for a in self.seen if a.path is None or wire_of(a.path) in ("chat", "responses", "messages", "gemini", "acme")]
 
     def _listen(self, port):
-        self.listener = socket.socket()
-        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.listener.bind(("127.0.0.1", port))
+        self.listener = bound(port)
         self.listener.listen(256)
         self.port = self.listener.getsockname()[1]
         threading.Thread(target=self._accept, args=(self.listener,), daemon=True).start()
@@ -331,10 +347,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def stream(self, status, headers, events, params):
         self._head(status, dict(headers), SSE)
         self.close_connection = True  # a stream ends with its connection
-        for event in events:
+        for sent, event in enumerate(events, 1):
             self.wfile.write(event)
             self.wfile.flush()
-            if params.get("gap"):
+            if sent == 1 and params.get("handshake"):  # the rest only once the client was handed the first
+                self.arrival.handed_first = params["handshake"].wait(HANDSHAKE_WAIT)
+            elif params.get("gap"):
                 time.sleep(params["gap"])
 
     def cut(self, status, headers, data):

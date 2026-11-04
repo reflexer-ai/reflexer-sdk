@@ -50,7 +50,7 @@ def ruff(root=ROOT):
 
 
 def zizmor(root=ROOT):
-    return tool("zizmor", "--offline", "--min-severity", "low", ".github/workflows", root=root)
+    return tool("zizmor", "--offline", "--min-severity", "low", ".github", root=root)  # the workflows and dependabot
 
 
 def semgrep(root=ROOT):

@@ -5,7 +5,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import httpx, httpx2, openai
-import reflexer, reflexer.transport
+import langchain_openai
+import reflexer, reflexer.openai, reflexer.transport
 from reflexer.langchain_gemini import ChatGoogleGenerativeAI
 from reflexer.langchain_openai import ChatOpenAI
 
@@ -41,6 +42,15 @@ def openai_chat(handler):
     return ChatOpenAI(model="frontier-x", api_key="made-up", max_retries=0, reflexer_key=KEY, **own)
 
 
+def azure_chat(handler):
+    """LangChain's own class, given reflexer's HTTP clients for Azure by its public arguments."""
+    own = dict(http_client=reflexer.openai.azure_http_client(KEY, own=openai.DefaultHttpxClient(transport=httpx2.MockTransport(handler))),
+               http_async_client=reflexer.openai.azure_async_http_client(
+                   KEY, own=openai.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(handler))))
+    return langchain_openai.AzureChatOpenAI(azure_endpoint="https://made-up.openai.azure.com", azure_deployment="made-up",
+                                            api_version="2024-10-21", api_key="made-up", max_retries=0, **own)
+
+
 def gemini_chat(handler):
     return ChatGoogleGenerativeAI(model="frontier-z", api_key="made-up", retries=1, reflexer_key=KEY,
                                   client_args={"transport": httpx.MockTransport(handler)})
@@ -57,7 +67,7 @@ def keyed_hosts(make, body):
 
 class Lines(unittest.TestCase):
     def test_a_call_goes_to_reflexer_and_its_answer_back(self):
-        for name, make, body in (("openai", openai_chat, CHAT), ("gemini", gemini_chat, GEMINI)):
+        for name, make, body in (("openai", openai_chat, CHAT), ("azure", azure_chat, CHAT), ("gemini", gemini_chat, GEMINI)):
             with self.subTest(name):
                 handler, seen = world(body)
                 chat = make(handler)
@@ -66,7 +76,7 @@ class Lines(unittest.TestCase):
                 self.assertEqual({request.url.host for request in seen}, {REFLEXER})
 
     def test_the_key_reaches_only_reflexer_through_langchain(self):
-        for name, make, body in (("openai", openai_chat, CHAT), ("gemini", gemini_chat, GEMINI)):
+        for name, make, body in (("openai", openai_chat, CHAT), ("azure", azure_chat, CHAT), ("gemini", gemini_chat, GEMINI)):
             with self.subTest(name):
                 keyed, hosts = keyed_hosts(make, body)
                 self.assertEqual(keyed, [REFLEXER])
@@ -93,7 +103,7 @@ class Broken(unittest.TestCase):
     def test_the_key_on_the_clients_own_request_turns_it_red(self):
         with mock.patch.object(reflexer.transport, "to_reflexer", key_on_the_clients_own_request(reflexer.transport.to_reflexer)), \
                 mock.patch.object(reflexer.transport, "OURS", "not-ours-"):
-            for make, body in ((openai_chat, CHAT), (gemini_chat, GEMINI)):
+            for make, body in ((openai_chat, CHAT), (azure_chat, CHAT), (gemini_chat, GEMINI)):
                 self.assertNotEqual(keyed_hosts(make, body)[0], [REFLEXER])
 
 

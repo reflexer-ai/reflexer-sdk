@@ -73,6 +73,7 @@ On Gemini the AI SDK names the model you asked for, not the answer's; `result.re
 
     // chat = new ChatOpenAI({ model })
     chat = new ChatOpenAI({ model, configuration: { fetch: reflexer.openai.fetch(reflexerKey) } });
+    chat = new AzureChatOpenAI({ ...azureOptions, configuration: { fetch: reflexer.azure.fetch(reflexerKey) } });
 
 `@langchain/anthropic`'s `ChatAnthropic` takes a `fetch` too, but bundles `@anthropic-ai/sdk` 0.x, a major this SDK is not tested on: its calls throw. `@langchain/google-genai` is built on `@google/generative-ai`, which takes no `fetch`. So neither has a line here.
 
@@ -84,7 +85,7 @@ On Gemini the AI SDK names the model you asked for, not the answer's; `result.re
     # chat = ChatGoogleGenerativeAI(model=model)
     chat = reflexer.langchain_gemini.ChatGoogleGenerativeAI(model=model, reflexer_key=reflexer_key)
 
-Or LangChain's own `ChatOpenAI`, given `http_client=reflexer.openai.http_client(reflexer_key)` and `http_async_client=reflexer.openai.async_http_client(reflexer_key)`. `ChatAnthropic` takes no HTTP client, so it has no line here. `configurable_fields` does not work on reflexer's two classes.
+Or LangChain's own `ChatOpenAI`, given `http_client=reflexer.openai.http_client(reflexer_key)` and `http_async_client=reflexer.openai.async_http_client(reflexer_key)`. `AzureChatOpenAI` the same way, given `reflexer.openai.azure_http_client(reflexer_key)` and `reflexer.openai.azure_async_http_client(reflexer_key)`. `ChatAnthropic` takes no HTTP client, so it has no line here. `configurable_fields` does not work on reflexer's two classes.
 
 ## Pydantic AI
 

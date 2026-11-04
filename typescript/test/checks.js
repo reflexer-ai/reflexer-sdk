@@ -158,6 +158,7 @@ export const stock = {
   GoogleGenAI: (await import("@google/genai")).GoogleGenAI,
   ChatOpenAI: (await import("@langchain/openai")).ChatOpenAI,
   ChatAnthropic: (await import("@langchain/anthropic")).ChatAnthropic,
+  AzureChatOpenAI: (await import("@langchain/openai")).AzureChatOpenAI,
 };
 
 /**
@@ -188,6 +189,9 @@ export function sdkCalls(sdk) {
     ["gemini", (fetch, extra) => generate(new sdk.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: key, httpOptions: { fetch } }), extra)],
     ["langchain openai, by fetch", (fetch, extra) => new stock.ChatOpenAI({ model: "m", apiKey: "made-up", maxRetries: 0, modelKwargs: extra,
       configuration: { fetch: index.openai.fetch(key, { fetch }) } }).invoke("x")],
+    ["langchain azure, by fetch", (fetch, extra) => new stock.AzureChatOpenAI({ azureOpenAIApiKey: "made-up", azureOpenAIApiInstanceName: "made-up",
+      azureOpenAIApiDeploymentName: "made-up", azureOpenAIApiVersion: azure.apiVersion, maxRetries: 0, modelKwargs: extra,
+      configuration: { fetch: index.azure.fetch(key, { fetch }) } }).invoke("x")],
   ];
 }
 

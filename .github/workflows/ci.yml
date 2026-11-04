@@ -30,7 +30,7 @@ jobs:
       - name: Acceptance's controls, each a fault planted in the SDK that turns its cases red
         run: uv run --locked python -m unittest tests.acceptance.test_controls -v
       - name: Workflows
-        run: uv run --locked zizmor --min-severity low .github/workflows
+        run: uv run --locked zizmor --min-severity low .github
       - name: Secrets in any commit
         env:
           GITLEAKS_VERSION: 8.30.1

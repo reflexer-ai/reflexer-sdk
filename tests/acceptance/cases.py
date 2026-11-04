@@ -70,8 +70,11 @@ def next_call_tries_reflexer(t, first):
         began = time.monotonic()
         first(client)
         t.reflexer.set("ok")
-        if time.monotonic() - began < FIRST_BACKOFF / 2:
-            return t.served(t.ask(client))
+        before = len(t.reflexer.seen)
+        outcome = t.ask(client)
+        arrived = [arrival.at for arrival in t.reflexer.seen[before:]]
+        if not arrived or arrived[0] - began < FIRST_BACKOFF / 2:  # judged by when it reached reflexer, not when it began
+            return t.served(outcome)
     t.check(False, f"no try fast enough to judge, in {TRIES_ON_A_SLOW_MACHINE}")
 
 

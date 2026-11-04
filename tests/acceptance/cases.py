@@ -567,7 +567,10 @@ def timeout_the_clients_holds_on_reflexers_leg(t):
     outcome = t.ask(client, timeout=CLIENT_TIMEOUT)
     t.straight(outcome)
     t.check(t.reflexer.seen, "reflexer's leg was not tried")
-    held = t.reflexer.seen[0].left_after
+    arrival, noticed_by = t.reflexer.seen[0], time.monotonic() + MARGIN
+    while arrival.left_after is None and time.monotonic() < noticed_by:  # the stand-in notices the client left a moment later
+        time.sleep(0.01)
+    held = arrival.left_after
     t.note(f"the client left reflexer after {held and round(held, 2)}s")
     t.check(held is not None and held <= CLIENT_TIMEOUT + MARGIN, f"reflexer's leg held {held}s")
 

@@ -936,7 +936,6 @@ def no_harm_a_body_not_read_goes_straight_and_counts_no_failure(t):
 
 # ---- stream
 
-STREAM_GAP = 0.3  # seconds between a stream's events
 
 
 @case("stream")
@@ -948,12 +947,15 @@ def stream_served_through_reflexer(t):
 
 @case("stream")
 def stream_arrives_event_by_event(t):
+    """Reflexer sends the rest of the stream only once the SDK has handed up its first event: an SDK that waits for more
+    than an event holds it back, and whatever the machine's pace, nothing is judged by time."""
     client = t.client()
-    t.reflexer.set("ok", gap=STREAM_GAP)
-    outcome = t.stream(client)
+    handed = threading.Event()
+    t.reflexer.set("ok", handshake=handed)
+    outcome = t.stream(client, handed=handed)
     t.served(outcome)
-    times = [at for _, at in outcome.chunks]
-    t.check(times[-1] - times[0] >= STREAM_GAP * 0.8, f"it arrived in one piece: {times}")
+    held = t.reflexer.seen[0].handed_first
+    t.check(held, f"the first event was not handed up before the rest was sent: it arrived in one piece ({held})")
 
 
 @case("stream")

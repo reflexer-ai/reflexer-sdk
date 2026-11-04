@@ -17,7 +17,9 @@
     badcert   TLS with a certificate nobody trusts
 
 Any mode takes `delay=` (seconds before answering), `gzip=True` (compressed when the request accepts it, the SDKs'
-default), `gap=` (seconds between a stream's events), `headers=` (added to the answer), `body=` (replaces it).
+default), `gap=` (seconds between a stream's events), `handshake=` (a `threading.Event`: a stream's first event sent,
+the rest wait until it is set, at most `HANDSHAKE_WAIT`; `Arrival.handed_first` says whether it was), `headers=` (added
+to the answer), `body=` (replaces it).
 A request asking for a stream gets its format's events, unless the mode set a body: that is the stream mode.
 """
 import gzip as gzip_module, http.server, json, select, socket, ssl, struct, threading, time
@@ -130,12 +132,15 @@ def asks_stream(path, body):
         return False
 
 
+HANDSHAKE_WAIT = 5.0  # seconds a stream's rest waits on the client handed its first event; past it, sent anyway
+
+
 class Arrival:
     """One request as it reached a stand-in."""
 
     def __init__(self, host, method, path, headers, body):
         self.host, self.method, self.path, self.headers, self.body = host, method, path, headers, body
-        self.at, self.left_after, self.gzipped = time.monotonic(), None, False
+        self.at, self.left_after, self.gzipped, self.handed_first = time.monotonic(), None, False, None
 
     def __repr__(self):
         return f"{self.method} {self.host}{self.path}"
@@ -342,10 +347,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def stream(self, status, headers, events, params):
         self._head(status, dict(headers), SSE)
         self.close_connection = True  # a stream ends with its connection
-        for event in events:
+        for sent, event in enumerate(events, 1):
             self.wfile.write(event)
             self.wfile.flush()
-            if params.get("gap"):
+            if sent == 1 and params.get("handshake"):  # the rest only once the client was handed the first
+                self.arrival.handed_first = params["handshake"].wait(HANDSHAKE_WAIT)
+            elif params.get("gap"):
                 time.sleep(params["gap"])
 
     def cut(self, status, headers, data):

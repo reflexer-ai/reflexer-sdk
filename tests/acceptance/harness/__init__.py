@@ -275,11 +275,14 @@ class Test:
     async def skip_async(self, client):
         return await self.ask_async(client, headers=self.skip_headers())
 
-    def stream(self, client, headers=None):
+    def stream(self, client, headers=None, handed=None):
+        """`handed`: a `threading.Event` set as the SDK hands up its first chunk."""
         began, chunks = time.monotonic(), []
         try:
             for chunk in request(self.sdk, client, False, True, per_call(self.sdk, headers)):
                 chunks.append((chunk, time.monotonic() - began))
+                if handed is not None:
+                    handed.set()
             self.last = Outcome(self.sdk, wall=time.monotonic() - began, chunks=chunks)
         except (Fail, Cannot):
             raise

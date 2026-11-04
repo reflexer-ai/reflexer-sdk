@@ -1,5 +1,6 @@
 """The logic on plain values: no SDK, no server, no network. Run: python -m unittest tests.test_logic"""
 import os, sys, unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import reflexer
@@ -11,6 +12,16 @@ WIRE = {"reflexer_path": "/openai", "provider": "https://api.openai.com", "calls
 CHAT = "https://api.openai.com/v1/chat/completions"
 OURS = {"reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "content-type": "application/json"}  # as the HTTP library gives them
 LONG = 10**6  # seconds: past every wait
+
+
+def spread_of_returns(clients=8):
+    """How far apart, in seconds, clients that failed at the same moment try reflexer again."""
+    clock = Clock()
+    breakers = [reflexer.Breaker(clock) for _ in range(clients)]
+    for breaker in breakers:
+        breaker.note(reflexer.FAILED, None)
+    returns = [breaker.open_until for breaker in breakers]
+    return max(returns) - min(returns)
 
 
 class Clock:
@@ -153,6 +164,13 @@ class Breaker(unittest.TestCase):
         self.assertTrue(self.breaker.is_open())
         self.clock.now += 30 * (1 + reflexer.JITTER)
         self.assertFalse(self.breaker.is_open())
+
+    def test_clients_failing_at_once_do_not_return_together(self):
+        self.assertGreater(spread_of_returns(), 0)
+
+    def test_no_jitter_turns_it_red(self):
+        with mock.patch.object(reflexer, "JITTER", 0.0):
+            self.assertEqual(spread_of_returns(), 0)
 
     def test_the_jitter_stays_small_on_a_long_wait(self):
         self.breaker.note(ANSWER, 86400)

@@ -1,0 +1,38 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # gitleaks reads every commit
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: false
+      - name: Tools
+        run: uv sync --locked --group dev
+      - name: Gates and tests, each gate with its planted fault
+        run: uv run --locked python -m unittest discover -s tests -t . -v
+      - name: Workflows
+        run: uv run --locked zizmor --min-severity low .github/workflows
+      - name: Secrets in any commit
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+          ./gitleaks git --redact --exit-code 1 .
+          mkdir -p planted && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > planted/key.py
+          if ./gitleaks dir --exit-code 1 planted >/dev/null; then echo "gitleaks missed a planted key"; exit 1; fi

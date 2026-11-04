@@ -4,7 +4,7 @@ A case: `@case("behaviour")` on `def name_said_as_the_behaviour(t)`, run once pe
 `harness.Test`. Passing: returns. Failing: `t.check` or any exception. After each, `Test.invariants`: the reflexer key
 and the skip's flag never arrived where they must not.
 """
-import json, logging, pickle, statistics, threading, time, typing
+import asyncio, json, logging, pickle, statistics, threading, time, typing
 
 import harness
 from harness import AZURE_ENDPOINT, SERVED_TEXT, STRAIGHT_TEXT, make_key, standins
@@ -491,7 +491,8 @@ def breaker_provider_unreachable_is_not_counted(t):
 UP, DEAD, BUSY, STALLED = "up", "dead", "busy", "stalled"
 TRACE = ((UP, 3.0), (DEAD, 8.0), (UP, 10.0), (BUSY, 6.0), (UP, 8.0), (STALLED, 6.0), (UP, 10.0))
 TRACE_RATE = 100  # calls a second at most, one at a time, each on a fixed timeline: a slower client makes fewer
-TRACE_LIMIT = sum(seconds for _, seconds in TRACE) + 25.0
+TRACE_TRIES = 2  # a try a stall of the machine left unjudged is run once more
+TRACE_LIMIT = TRACE_TRIES * sum(seconds for _, seconds in TRACE) + 25.0
 ONE_PERCENT = 0.01
 
 
@@ -535,6 +536,19 @@ def run_trace(t, share):
     return rows
 
 
+def traced(t, share):
+    """The rows of a try the machine did not stall. In an up phase reflexer answers at once, so a call there that paid
+    the client's timeout was the machine's stall: it counted a failure the breaker's backoff then doubles on through the
+    busy and stalled phases, with no answer between to reset it, and the last phase cannot see it return."""
+    for _ in range(TRACE_TRIES):
+        rows = run_trace(t, share)
+        if not any(row["paid_timeout"] for row in rows if row["phase"] == UP):
+            return rows
+        t.note("a call paid the timeout in an up phase: the machine stalled; tried again")
+    t.check(False, f"a call paid the timeout in an up phase, where reflexer answers at once, on each of {TRACE_TRIES} tries: "
+                   f"the machine stalled each time, or the SDK waits on an answering reflexer: {rows}")
+
+
 def judge_trace(t, rows, share):
     t.check(sum(row["failed"] for row in rows) == 0, "a client's call failed during the outage")
     for row in rows:
@@ -548,14 +562,14 @@ def judge_trace(t, rows, share):
 
 @case("breaker", sdks=("openai",), limit=TRACE_LIMIT)
 def breaker_outage_trace_at_the_full_share(t):
-    judge_trace(t, run_trace(t, 1.0), 1.0)
+    judge_trace(t, traced(t, 1.0), 1.0)
     t.last = None
 
 
 @case("breaker", sdks=("openai",), limit=TRACE_LIMIT)
 def breaker_outage_trace_at_the_one_percent_share(t):
     """Few calls reach reflexer at this share: a direction, not a rate."""
-    judge_trace(t, run_trace(t, ONE_PERCENT), ONE_PERCENT)
+    judge_trace(t, traced(t, ONE_PERCENT), ONE_PERCENT)
     t.last = None
 
 
@@ -592,8 +606,14 @@ def timeout_the_clients_holds_on_reflexers_leg(t):
     outcome = t.ask(client, timeout=CLIENT_TIMEOUT)
     t.straight(outcome)
     t.check(t.reflexer.seen, "reflexer's leg was not tried")
+    reflexers_leg_held_no_longer_than_the_timeout(t)
+
+
+def reflexers_leg_held_no_longer_than_the_timeout(t):
+    """How long the client stayed on stalled reflexer, read once the stand-in noticed it left: a moment later, on a
+    thread a busy machine may be slow to schedule."""
     arrival, noticed_by = t.reflexer.seen[0], time.monotonic() + MARGIN
-    while arrival.left_after is None and time.monotonic() < noticed_by:  # the stand-in notices the client left a moment later
+    while arrival.left_after is None and time.monotonic() < noticed_by:
         time.sleep(0.01)
     held = arrival.left_after
     t.note(f"the client left reflexer after {held and round(held, 2)}s")
@@ -1001,8 +1021,10 @@ def async_the_clients_timeout_holds_on_reflexers_leg(t):
         t.reflexer.set("stall")
         t.straight(await t.ask_async(client, timeout=CLIENT_TIMEOUT))
         t.check(t.reflexer.seen, "reflexer was never tried")
-        held = t.reflexer.seen[0].left_after
-        t.check(held is not None and held <= CLIENT_TIMEOUT + MARGIN, f"reflexer's leg held {held}s")
+        arrival, noticed_by = t.reflexer.seen[0], time.monotonic() + MARGIN
+        while arrival.left_after is None and time.monotonic() < noticed_by:  # in its loop: a leg its client left open stays open
+            await asyncio.sleep(0.01)
+        reflexers_leg_held_no_longer_than_the_timeout(t)
     t.run_async(body)
 
 

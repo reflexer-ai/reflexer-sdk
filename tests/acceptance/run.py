@@ -3,7 +3,7 @@
 
 Each case runs on each SDK in a forked process of its own, with its own stand-ins, and is killed at its limit. Prints a
 table and a line per cell not passed; exits 1 when a cell fails. `--fault NAME` plants a fault of `faults.py` in every
-case, for `test_controls.py`.
+case, and `--condition NAME` a slow machine's moment of its `CONDITIONS`, for `test_controls.py`.
 
 pass: held. fail: broken. cannot: the case cannot apply; it stays in the table with what the client sees. open: a known
 gap, failing on what is not built yet; reported, not failing the run. `-`: that SDK has no such call.
@@ -40,7 +40,7 @@ class HardLimit(BaseException):
     """Past what any SDK catches as an error of its own."""
 
 
-def run_in_child(job, fault, contexts, out_path, log_path, limit):
+def run_in_child(job, fault, condition, contexts, out_path, log_path, limit):
     """The forked process: one case, one world. It never returns."""
     import faults, harness, lines
     os.setsid()
@@ -61,6 +61,8 @@ def run_in_child(job, fault, contexts, out_path, log_path, limit):
         harness.seed_for(f"{case['name']}/{sdk}")
         if fault:
             faults.FAULTS[fault]()
+        if condition:
+            faults.CONDITIONS[condition]()
         test = harness.Test(lines, sdk, harness.World(contexts))
         case["run"](test)
         test.invariants()
@@ -83,7 +85,7 @@ def run_in_child(job, fault, contexts, out_path, log_path, limit):
     os._exit(0)
 
 
-def run_jobs(jobs, fault, contexts, tmp, parallel):
+def run_jobs(jobs, fault, condition, contexts, tmp, parallel):
     """Forks up to `parallel` at a time. A case past its limit is killed with what it started; none stops the run."""
     results, waiting, running = [], list(enumerate(jobs)), {}
     while waiting or running:
@@ -99,7 +101,7 @@ def run_jobs(jobs, fault, contexts, tmp, parallel):
             pid = os.fork()
             if pid == 0:
                 try:
-                    run_in_child(job, fault, contexts, out, log, limit)
+                    run_in_child(job, fault, condition, contexts, out, log, limit)
                 finally:
                     os._exit(1)
             running[pid] = (index, job, out, limit, time.monotonic() + limit, common)
@@ -162,6 +164,7 @@ def main():
     parser.add_argument("--sdk", choices=SDK_COLUMNS)
     parser.add_argument("--jobs", type=int, default=min(MAX_JOBS, os.cpu_count() or 1))
     parser.add_argument("--fault", help="a fault of faults.py, planted in every case")
+    parser.add_argument("--condition", help="a slow machine's moment, of faults.py's CONDITIONS, planted in every case")
     parser.add_argument("--json", help="also write the table, with what each cell saw and measured, to this file")
     arguments = parser.parse_args()
 
@@ -171,6 +174,8 @@ def main():
     from harness import certs
     if arguments.fault and arguments.fault not in faults.FAULTS:
         parser.error(f"no such fault: {arguments.fault}")
+    if arguments.condition and arguments.condition not in faults.CONDITIONS:
+        parser.error(f"no such condition: {arguments.condition}")
     harness.resolver.install()
     tmp = tempfile.mkdtemp(prefix="acceptance-")
     try:
@@ -180,7 +185,7 @@ def main():
         versions = ", ".join(f"{name} {importlib.metadata.version(name)}" for name in VERSIONS)
         began = time.monotonic()
         jobs = jobs_for(cases.CASES, arguments.only, arguments.sdk)
-        rows = run_jobs(jobs, arguments.fault, (authority.context(), authority.untrusted()), tmp, arguments.jobs)
+        rows = run_jobs(jobs, arguments.fault, arguments.condition, (authority.context(), authority.untrusted()), tmp, arguments.jobs)
         seconds = time.monotonic() - began
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -189,7 +194,7 @@ def main():
     print("\n".join(rendered(table, seconds, versions)))
     if arguments.json:
         with open(arguments.json, "w") as out:
-            json.dump({"fault": arguments.fault, "seconds": round(seconds, 1), "versions": versions, "summary": summary(table),
+            json.dump({"fault": arguments.fault, "condition": arguments.condition, "seconds": round(seconds, 1), "versions": versions, "summary": summary(table),
                        "cases": table}, out, indent=1)
     return 1 if summary(table)["fail"] else 0
 

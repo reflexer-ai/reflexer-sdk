@@ -8,7 +8,7 @@
     balancer  a load balancer's own answer: a 401 with none of our headers (`status=` for another)
     busy      reflexer's 503, marked its own, with `Retry-After` (`status=529` for Anthropic's)
     redirect  a 307 elsewhere, as relayed from a provider
-    dead      nothing listens: connections are refused
+    dead      nothing listens: connections are refused; the port stays its own, for no other case to take
     reset     accepts, records an arrival with no path, and resets: a dead stand-in whose attempts can be counted
     stall     reads the request and never answers; `Arrival.left_after` records when the client gave up
     drop      reads the request and closes with no answer
@@ -141,6 +141,17 @@ class Arrival:
         return f"{self.method} {self.host}{self.path}"
 
 
+def bound(port):
+    """A socket on this port of the loopback. Bound beside its listener, one that never listens holds the port while the
+    stand-in is dead: a call is refused, and no bind(0) is handed it, so no other case's stand-in takes its calls.
+    `SO_REUSEPORT` lets the two share it for the moment one replaces the other, so the port is never free."""
+    made = socket.socket()
+    made.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    made.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    made.bind(("127.0.0.1", port))
+    return made
+
+
 class Standin:
     def __init__(self, name, context=None, untrusted=None, is_reflexer=False):
         self.name, self.context, self.untrusted, self.is_reflexer = name, context, untrusted, is_reflexer
@@ -158,18 +169,18 @@ class Standin:
         if mode in ("dead", "reset", "badcert"):
             self._cut_connections()
         if mode == "dead" and not was_dead:
+            self.holder = bound(self.port)  # the port stays this stand-in's: a port let go, another case's bind(0) gets
             self._close()
         if mode != "dead" and was_dead:
             self._listen(self.port)
+            self.holder.close()
 
     def message_arrivals(self):
         """The message calls that reached it, and the attempts `reset` counted; not a listing of models."""
         return [a for a in self.seen if a.path is None or wire_of(a.path) in ("chat", "responses", "messages", "gemini", "acme")]
 
     def _listen(self, port):
-        self.listener = socket.socket()
-        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.listener.bind(("127.0.0.1", port))
+        self.listener = bound(port)
         self.listener.listen(256)
         self.port = self.listener.getsockname()[1]
         threading.Thread(target=self._accept, args=(self.listener,), daemon=True).start()

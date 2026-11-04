@@ -1,7 +1,7 @@
 """Faults planted in the SDK one at a time, each breaking one thing it promises, so that each case is seen to fail when
 what it checks breaks (`test_controls.py`). `run.py --fault NAME` plants one in every case's own forked process, where
 it dies with the case. A fault changes the SDK (`reflexer`) or the client's line (`lines.py`), never a case."""
-import builtins, copy, json, types
+import builtins, copy, json, time, types
 
 import httpx, httpx2
 from google.genai import types as genai_types
@@ -394,3 +394,38 @@ FAULTS = {
     "errors_of_our_own": lambda: on_the_line(errors_of_our_own),
     "gemini_answer_dressed": lambda: on_the_line(gemini_answer_dressed),
 }
+
+
+# A slow machine's moments, planted in the stand-ins, never in the SDK or a case: `run.py --condition NAME`. The cases
+# `test_controls.py` lists for each must stay green under it, so that a busy machine cannot turn them red.
+
+def late_notice():
+    """The stand-in's thread, slow to be scheduled: a stalled stand-in notices a client left some time after it did,
+    within the slack a case allows a busy machine."""
+    import cases
+    real_select = standins.select.select
+
+    def slow(readable, writable, broken, timeout):
+        ready = real_select(readable, writable, broken, timeout)
+        if ready[0]:
+            time.sleep(cases.MARGIN / 2)
+        return ready
+    standins.select = types.SimpleNamespace(select=slow)
+
+
+def a_stall_on_the_return():
+    """The machine stalled past the client's timeout once, on reflexer's first answer after an outage: the call trying
+    reflexer again pays its timeout and counts a failure, as on a machine frozen at that moment."""
+    import cases
+    real_answer, stalled = standins.Standin.answer, []
+
+    def answer(self, handler, arrival):
+        after_an_outage = any(seen.path is None for seen in self.seen)  # `reset` records its attempts with no path
+        if self.is_reflexer and self.mode == "ok" and after_an_outage and not stalled:
+            stalled.append(arrival)
+            time.sleep(cases.CLIENT_TIMEOUT + cases.MARGIN)
+        return real_answer(self, handler, arrival)
+    standins.Standin.answer = answer
+
+
+CONDITIONS = {"late_notice": late_notice, "a_stall_on_the_return": a_stall_on_the_return}

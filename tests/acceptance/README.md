@@ -17,7 +17,7 @@ From the repository's root:
 - `cases.py`: each case, run once per SDK it names: `openai`, `azure`, `anthropic`, `gemini` (async: `client.aio`), and `acme`, a made-up provider (`harness/acme.py`) that shows what adding one takes.
 - `lines.py`: the SDK under test, each client made by the one line a client writes.
 - `harness/`: the stand-ins (`standins.py`, its modes at its top), the resolver, the certificates.
-- `faults.py` and `test_controls.py`: the controls. Each fault breaks one thing the SDK promises; the test checks each turns its cases red, and that every case but those it lists, with their reasons, is turned red by some fault. So a green run means something.
+- `faults.py` and `test_controls.py`: the controls. Each fault breaks one thing the SDK promises; the test checks each turns its cases red, and that every case but those it lists, with their reasons, is turned red by some fault. So a green run means something. Its `CONDITIONS` are a slow machine's moments, planted in the stand-ins (`run.py --condition NAME`): a stand-in slow to notice a client left, a stall on reflexer's return after an outage; the test checks the cases they touch stay green. So a red run means something too.
 
 ## What a case gets
 

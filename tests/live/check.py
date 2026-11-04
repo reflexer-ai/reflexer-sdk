@@ -1,6 +1,6 @@
 """One run against a real reflexer endpoint, through each provider SDK: what the stand-ins cannot show.
 
-    REFLEXER_BASE=https://... REFLEXER_KEY=rfx1_... OPENAI_API_KEY=... python tests/live/check.py [openai anthropic gemini]
+    REFLEXER_BASE=https://... REFLEXER_KEY=rfx1_... OPENAI_API_KEY=... python tests/live/check.py [openai anthropic gemini replay]
 
 Each SDK named, with its provider key in the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) and
 optionally its model (`OPENAI_MODEL`, ...) and base URL (`OPENAI_BASE_URL`, ... : a provider stand-in), makes one call.
@@ -19,6 +19,20 @@ def env(name, default=None):
     if value is None:
         raise SystemExit(f"set {name}")
     return value
+
+
+REPLAY = {"id": "made-up", "object": "chat.completion", "created": 1, "model": "made-up",
+          "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "from the replay"}}],
+          "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+
+
+def replayed(key, base):
+    """A request carrying `replay_response` (OpenAI's format): answered from the field, never by the provider."""
+    import reflexer.openai
+    client = reflexer.openai.OpenAI(api_key=env("OPENAI_API_KEY"), reflexer_key=key, reflexer_base=base, max_retries=0)
+    raw = client.chat.completions.with_raw_response.create(model=env("OPENAI_MODEL", MODELS["openai"]), messages=[
+        {"role": "user", "content": "Say hi"}], extra_body={"replay_response": REPLAY})
+    return raw.headers, raw.parse().choices[0].message.content
 
 
 def call(sdk, key, base):
@@ -56,10 +70,35 @@ def judge(headers, model, cost):
     return []  # no header of reflexer's: the call went straight, which the SDK allows
 
 
+def provider_refusal(error):
+    """A provider's own error, passed through untouched: its headers, read as an answer's would be."""
+    response = getattr(error, "response", None)
+    if response is None:
+        raise error
+    return response.headers, f"(the provider's {response.status_code})", None
+
+
+def replay_broken(headers, text):
+    """A replay is answered by reflexer, or from its field: never by anyone else."""
+    by = headers.get("reflexer-answered-by")
+    return by not in (None, "reflexer") or (by is None and text != "from the replay")
+
+
 def main(sdks):
     key, base, failed = env("REFLEXER_KEY"), env("REFLEXER_BASE", reflexer.BASE), False
+    if "replay" in sdks:
+        sdks = [sdk for sdk in sdks if sdk != "replay"]
+        headers, text = replayed(key, base)
+        print(f"replay: answered by {headers.get('reflexer-answered-by', 'its field')}, text {text!r}, "
+              f"Reflexer-Cost {headers.get('reflexer-cost')}, id {headers.get('reflexer-request-id')}")
+        if replay_broken(headers, text):
+            print("  broken: a replay answered by someone else than reflexer or its field", file=sys.stderr)
+            failed = True
     for sdk in sdks:
-        headers, model, cost = call(sdk, key, base)
+        try:
+            headers, model, cost = call(sdk, key, base)
+        except Exception as error:  # a made-up provider key: the provider's own refusal is a sound pass through
+            headers, model, cost = provider_refusal(error)
         print(f"{sdk}: answered by {headers.get('reflexer-answered-by', 'the provider, straight')}, model {model}, "
               f"Reflexer-Cost {headers.get('reflexer-cost')}, usage.cost {cost}, id {headers.get('reflexer-request-id')}")
         for problem in judge(headers, model, cost):

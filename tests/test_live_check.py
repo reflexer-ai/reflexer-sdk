@@ -20,5 +20,15 @@ class Judge(unittest.TestCase):
         self.assertEqual(check.judge({}, "frontier-x", None), [])
 
 
+class Replay(unittest.TestCase):
+    def test_from_its_field_or_reflexer_passes(self):
+        self.assertFalse(check.replay_broken({}, "from the replay"))
+        self.assertFalse(check.replay_broken({"reflexer-answered-by": "reflexer"}, "anything"))
+
+    def test_from_the_provider_fails(self):
+        self.assertTrue(check.replay_broken({"reflexer-answered-by": "provider"}, "from the replay"))
+        self.assertTrue(check.replay_broken({}, "from the provider"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 """What a case calls: its world of stand-ins, the stock SDKs, one call through an SDK's public method, what reflexer's
 answer says. A case: `cases.py`."""
-import asyncio, base64, hashlib, logging, os, random, time, uuid
+import asyncio, base64, hashlib, logging, os, random, threading, time, uuid
 
 from . import resolver, standins
 from .standins import STRAIGHT_TEXT, SERVED_TEXT, Proxy, Standin
@@ -354,3 +354,27 @@ class Test:
 
 def seed_for(name):
     random.seed(int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "big"))
+
+
+STALL = 0.15  # seconds this process may go unscheduled in a try judged by real time; past it, the try is not judged
+TICK = 0.01
+
+
+class Ticker:
+    """How long this process went unscheduled, at worst, since it began: a thread ticking, its lateness kept. A
+    machine that froze or starved the process shows here; a slow SDK does not."""
+
+    def __init__(self):
+        self.last, self.worst, self.ticking = time.monotonic(), 0.0, True
+        threading.Thread(target=self.tick, daemon=True).start()
+
+    def tick(self):
+        while self.ticking:
+            time.sleep(TICK)
+            now = time.monotonic()
+            self.worst, self.last = max(self.worst, now - self.last - TICK), now
+
+    def stop(self):
+        """Its worst lateness, a stall just ended counted before its thread woke to see it."""
+        self.ticking = False
+        return max(self.worst, time.monotonic() - self.last - TICK)

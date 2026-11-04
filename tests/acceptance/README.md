@@ -17,7 +17,7 @@ From the repository's root:
 - `cases.py`: each case, run once per SDK it names: `openai`, `azure`, `anthropic`, `gemini` (async: `client.aio`), and `acme`, a made-up provider (`harness/acme.py`) that shows what adding one takes.
 - `lines.py`: the SDK under test, each client made by the one line a client writes.
 - `harness/`: the stand-ins (`standins.py`, its modes at its top), the resolver, the certificates.
-- `faults.py` and `test_controls.py`: the controls. Each fault breaks one thing the SDK promises; the test checks each turns its cases red, and that every case but those it lists, with their reasons, is turned red by some fault. So a green run means something. Its `CONDITIONS` are a slow machine's moments, planted in the stand-ins (`run.py --condition NAME`): a stand-in slow to notice a client left, a stall on reflexer's return after an outage; the test checks the cases they touch stay green. So a red run means something too.
+- `faults.py` and `test_controls.py`: the controls. Each fault breaks one thing the SDK promises; the test checks each turns its cases red, and that every case but those it lists, with their reasons, is turned red by some fault. So a green run means something. Its `CONDITIONS` are a slow machine's moments, planted in the stand-ins (`run.py --condition NAME`): a stand-in slow to notice a client left, a stall on reflexer's return after an outage, the case's process frozen where each case judged by real time breaks (`FREEZES`); the test checks the cases they touch stay green, and that each condition came about. So a red run means something too.
 
 ## What a case gets
 
@@ -29,6 +29,6 @@ One process per case and SDK, forked after the SDKs are imported, killed at its 
 
 ## Limits
 
-- Real time: bounds carry a margin for a busy machine. The breaker's cap, minutes of failures away, is checked on a clock of its own in `tests/test_logic.py`.
+- Real time: bounds carry a margin for a busy machine. A case marked `steady` does not judge a try during which its process went unscheduled past `harness.STALL` (a `Ticker` thread sees it): it tries again, afresh, each try in its own limit, and fails when every try stalled (`run.py --tries 1` judges its first). The outage traces try again when a call paid the timeout in an up phase. The breaker's cap, minutes of failures away, is checked on a clock of its own in `tests/test_logic.py`.
 - At the 1% share a trace reaches reflexer a few times: a direction, not a rate.
 - A dead phase in a trace accepts and resets, so its attempts can be counted; `dead` refuses, and counts nothing.

@@ -1,7 +1,7 @@
 """Faults planted in the SDK one at a time, each breaking one thing it promises, so that each case is seen to fail when
 what it checks breaks (`test_controls.py`). `run.py --fault NAME` plants one in every case's own forked process, where
 it dies with the case. A fault changes the SDK (`reflexer`) or the client's line (`lines.py`), never a case."""
-import builtins, copy, json, time, types
+import builtins, copy, json, os, signal, subprocess, threading, time, types
 
 import httpx, httpx2
 from google.genai import types as genai_types
@@ -399,7 +399,7 @@ FAULTS = {
 # A slow machine's moments, planted in the stand-ins, never in the SDK or a case: `run.py --condition NAME`. The cases
 # `test_controls.py` lists for each must stay green under it, so that a busy machine cannot turn them red.
 
-def late_notice():
+def late_notice(case):
     """The stand-in's thread, slow to be scheduled: a stalled stand-in notices a client left some time after it did,
     within the slack a case allows a busy machine."""
     import cases
@@ -413,7 +413,7 @@ def late_notice():
     standins.select = types.SimpleNamespace(select=slow)
 
 
-def a_stall_on_the_return():
+def a_stall_on_the_return(case):
     """The machine stalled past the client's timeout once, on reflexer's first answer after an outage: the call trying
     reflexer again pays its timeout and counts a failure, as on a machine frozen at that moment."""
     import cases
@@ -428,4 +428,50 @@ def a_stall_on_the_return():
     standins.Standin.answer = answer
 
 
-CONDITIONS = {"late_notice": late_notice, "a_stall_on_the_return": a_stall_on_the_return}
+# Where a freeze breaks each case judged by real time, as it stands without its steady tries: (the stand-in, the arrival
+# there that starts it, seconds after it, seconds frozen). Each length is past the slack the case allows its bound.
+FREEZES = {
+    "breaker_opens_on_a_failure":                              ("provider", 2, 0.0, 1.0),  # the next call, quick
+    "no_harm_with_the_sdks_own_retries":                       ("provider", 1, 0.0, 1.8),  # a dead reflexer's call
+    "breaker_backs_off_doubling":                              ("reflexer", 1, 0.9, 0.8),  # the first wait, ended late
+    "breaker_an_answer_resets_the_backoff":                    ("reflexer", 4, 0.5, 1.7),  # the wait after an answer
+    "breaker_counts_calls_in_flight_once":                     ("reflexer", 8, 0.4, 2.0),  # the wait after the failures
+    "breaker_two_straight_headers_are_obeyed_then_it_returns": ("reflexer", 2, 0.1, 3.2),  # straight, then the return
+    "timeout_the_clients_holds_on_reflexers_leg":              ("reflexer", 1, 0.5, 1.5),  # past the client's timeout
+    "async_the_clients_timeout_holds_on_reflexers_leg":        ("reflexer", 1, 0.5, 1.5),
+    "kept_with_options_timeout_holds":                         ("reflexer", 1, 0.5, 1.5),
+    "stall_reflexer_stalled_provider_at_six_tenths":           ("reflexer", 1, 0.5, 1.5),
+    "stall_slow_pass_through_at_seven_tenths":                 ("reflexer", 1, 0.5, 0.6),  # a slow pass through, past the timeout
+}
+
+
+def a_freeze(case):
+    """The whole machine frozen once, where it breaks the case (`FREEZES`): every thread of the case's process stopped
+    by its own stop signal, and continued by a process of its own."""
+    if case not in FREEZES:
+        return
+    where, nth, after, seconds = FREEZES[case]
+    real_init, frozen = standins.Standin.__init__, []
+
+    def freeze():
+        subprocess.Popen(["sh", "-c", f"sleep {seconds}; kill -CONT {os.getpid()}"])
+        os.kill(os.getpid(), signal.SIGSTOP)
+
+    class Seen(list):
+        def __init__(self, standin):
+            super().__init__()
+            self.standin = standin
+
+        def append(self, arrival):
+            super().append(arrival)
+            if self.standin.name == where and len(self) >= nth and not frozen:  # threads append at once
+                frozen.append(arrival)
+                freeze() if not after else threading.Timer(after, freeze).start()  # at once: while its call is in flight
+
+    def init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        self.seen = Seen(self)
+    standins.Standin.__init__ = init
+
+
+CONDITIONS = {"late_notice": late_notice, "a_stall_on_the_return": a_stall_on_the_return, "a_freeze": a_freeze}

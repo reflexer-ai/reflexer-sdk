@@ -24,12 +24,15 @@ FIRST_BACKOFF, JITTER = 1.0, 0.2  # the breaker's first wait and its jitter, rea
 QUICK_CALL = 0.1  # seconds: a call that paid no timeout
 
 
-def case(behaviour, sdks=WITH_AZURE, limit=DEFAULT_LIMIT, open_on=(), na=None, name=None):
+def case(behaviour, sdks=WITH_AZURE, limit=DEFAULT_LIMIT, open_on=(), na=None, name=None, steady=False):
     """`open_on`: SDKs on which a failure is **open**: a known gap, not built yet, reported and not failing the run.
-    `na`: {sdk: why this SDK has no such thing}: stays in the table as cannot."""
+    `na`: {sdk: why this SDK has no such thing}: stays in the table as cannot. `steady`: judged by real time, so a try
+    during which the machine stalled the case's process (`harness.STALL`) is not judged, and is made again, afresh, up to
+    `TRIES_ON_A_SLOW_MACHINE`; `limit` is then each try's."""
     def register(function):
+        tries = TRIES_ON_A_SLOW_MACHINE if steady else 1
         CASES.append({"name": name or function.__name__, "behaviour": behaviour, "sdks": tuple(sdks), "limit": limit,
-                      "open_on": tuple(open_on), "na": na or {}, "run": function})
+                      "tries": tries, "open_on": tuple(open_on), "na": na or {}, "run": function})
         return function
     return register
 
@@ -312,7 +315,7 @@ no_harm("certificate_not_trusted", lambda t: t.reflexer.set("badcert"))
 no_harm("provider_unreachable_from_reflexer", lambda t: reflexer_status(t, 502, origin="connection"))
 
 
-@case("no harm", sdks=("openai", "anthropic", "azure"))
+@case("no harm", sdks=("openai", "anthropic", "azure"), steady=True)
 def no_harm_with_the_sdks_own_retries(t):
     """`max_retries` left to the SDK's default: a dead reflexer costs no retry's wait."""
     t.reflexer.set("dead")
@@ -323,7 +326,7 @@ def no_harm_with_the_sdks_own_retries(t):
 # ---- breaker: a failure sends the call straight and backs off, doubling, with jitter, in flight counted once;
 #      `Reflexer-Straight` obeyed after two in a row; a provider's status never trips it
 
-@case("breaker")
+@case("breaker", steady=True)
 def breaker_opens_on_a_failure(t):
     client = t.client()
     t.reflexer.set("reset")
@@ -348,7 +351,7 @@ def attempts_while_dead(t, client, seconds):
 DOUBLING_WINDOW = 9.0  # seconds: 1, 2 and 4 with jitter end inside it
 
 
-@case("breaker", sdks=("openai",))
+@case("breaker", sdks=("openai",), steady=True)
 def breaker_backs_off_doubling(t):
     """The cap is in `tests/test_logic.py`, on a clock: reaching it here would take minutes."""
     times = attempts_while_dead(t, t.client(), DOUBLING_WINDOW)
@@ -381,7 +384,7 @@ def measure_how_far_apart_clients_return(t):
     t.data["spread"] = round(max(waits) - min(waits), 3)
 
 
-@case("breaker", sdks=("openai",))
+@case("breaker", sdks=("openai",), steady=True)
 def breaker_an_answer_resets_the_backoff(t):
     """Two failures double the wait; one answer; the next failure waits the first wait again, not the next double."""
     client = t.client()
@@ -403,7 +406,7 @@ def breaker_an_answer_resets_the_backoff(t):
 FLIGHT = 8  # calls in flight when reflexer fails
 
 
-@case("breaker", sdks=("openai",))
+@case("breaker", sdks=("openai",), steady=True)
 def breaker_counts_calls_in_flight_once(t):
     client = t.client()
     t.reflexer.set("busy", delay=0.3)
@@ -450,7 +453,7 @@ def breaker_one_straight_header_is_not_obeyed(t):
 STRAIGHT_SECONDS = 1
 
 
-@case("breaker", sdks=MESSAGE_SDKS)
+@case("breaker", sdks=MESSAGE_SDKS, steady=True)
 def breaker_two_straight_headers_are_obeyed_then_it_returns(t):
     client = t.client()
     t.reflexer.set("ok", headers={"Reflexer-Straight": str(STRAIGHT_SECONDS)})
@@ -599,7 +602,7 @@ def grace_a_key_expired_over_a_day_raises_to_the_client(t):
 
 # ---- timeout: the client's per-call timeout holds on reflexer's leg. Stall's cases, a client's timeout of 1 s.
 
-@case("timeout")
+@case("timeout", steady=True)
 def timeout_the_clients_holds_on_reflexers_leg(t):
     client = t.client()
     t.reflexer.set("stall")
@@ -629,7 +632,7 @@ def stock_wall(t, slow):
     return wall, outcome
 
 
-@case("timeout")
+@case("timeout", steady=True)
 def stall_reflexer_stalled_provider_at_six_tenths(t):
     """Stock answers it in 0.6 s. The SDK waits out the client's timeout on a stalled reflexer, then goes straight:
     the cost is bounded here; telling a stalled reflexer from a slow provider is open, below."""
@@ -644,7 +647,7 @@ def stall_reflexer_stalled_provider_at_six_tenths(t):
     t.check(outcome.wall <= CLIENT_TIMEOUT + SLOW_PROVIDER + MARGIN, f"waited {outcome.wall:.2f}s")
 
 
-@case("timeout")
+@case("timeout", steady=True)
 def stall_slow_pass_through_at_seven_tenths(t):
     """Stock answers it in 0.7 s; reflexer's leg must not be given up on, nor the provider called too."""
     stock, outcome = stock_wall(t, SLOW_PASS_THROUGH)
@@ -1014,7 +1017,7 @@ def async_skip_goes_straight(t):
     t.run_async(body)
 
 
-@case("async")
+@case("async", steady=True)
 def async_the_clients_timeout_holds_on_reflexers_leg(t):
     async def body():
         client = t.client(is_async=True)
@@ -1089,7 +1092,7 @@ def kept_with_options_stays_on_reflexer(t):
     t.served(t.ask(client))
 
 
-@case("kept", na={"gemini": NO_RAW}, sdks=RAW_SDKS)
+@case("kept", na={"gemini": NO_RAW}, sdks=RAW_SDKS, steady=True)
 def kept_with_options_timeout_holds(t):
     client = t.client()
     t.reflexer.set("stall")

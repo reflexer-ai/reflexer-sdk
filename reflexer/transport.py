@@ -3,9 +3,9 @@
 Two clients. The outer one is what the SDK holds: the client's hooks, auth, cookies and redirects, on the client's own
 request, which never holds our key. Under it, `Through` sends each exchange by the inner one, a copy of the client's, so
 its proxies, TLS and connections hold. No private name is read, no class of the SDK's or the library's changes, and no
-answer is touched.
+answer's bytes are touched.
 """
-import copy, functools, threading
+import copy, functools, threading, weakref
 from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
@@ -94,13 +94,23 @@ class Through:
     def __init__(self, reflexer, inner):
         self.reflexer, self.inner = reflexer, inner
         self.send = functools.partial(inner.send, stream=True, follow_redirects=False, auth=None)
-        self.flying, self.closing, self.lock = 0, False, threading.Lock()  # its calls in flight, counted when shared (`Both`)
+        self.flying, self.closing, self.closed, self.lock = 0, False, False, threading.Lock()  # counted when shared (`Both`)
 
-    def landed(self, calls=-1):
-        """Its calls in flight counted; whether its close, held for them, is now due."""
+    def due(self, calls=-1, closing=False):
+        """Its calls in flight counted, or its close asked: whether its client's close, held for them, is now due, once."""
         with self.lock:
-            self.flying += calls
-            return self.closing and not self.flying
+            self.flying, self.closing = self.flying + calls, self.closing or closing
+            due = self.closing and not self.flying and not self.closed
+            self.closed = self.closed or due
+            return due
+
+    def land(self):
+        if self.due():
+            self.inner.close()
+
+    async def aland(self):
+        if self.due():
+            await self.inner.aclose()
 
     def handle_request(self, request):
         try:
@@ -129,13 +139,11 @@ class Through:
 
     def close(self):
         """Its client's close, held until no call is in flight."""
-        self.closing = True
-        if self.landed(0):
+        if self.due(0, closing=True):
             self.inner.close()
 
     async def aclose(self):
-        self.closing = True
-        if self.landed(0):
+        if self.due(0, closing=True):
             await self.inner.aclose()
 
     def __enter__(self):
@@ -151,27 +159,45 @@ class Through:
         await self.aclose()
 
 
-def landing(library, stream, through):
-    """An answer's body as it came, of the library's own kind; its call landed on `through` once it is closed."""
+@functools.cache
+def landing(library):
+    """An answer's body as it came, of the library's own kind. Its call lands on its `Through` once the body is closed,
+    or dropped unclosed: an async client's close, which a finalizer cannot await, is then left to `Both`'s next call."""
     class Landing(library.SyncByteStream, library.AsyncByteStream):
+        def __init__(self, stream, through, overdue):
+            self.stream, self.through = stream, through
+            self.dropped = weakref.finalize(self, dropped, through, overdue)
+
         def __iter__(self):
-            return iter(stream)
+            return iter(self.stream)
 
         def __aiter__(self):
-            return stream.__aiter__()
+            return self.stream.__aiter__()
 
         def close(self):
             try:
-                stream.close()
+                self.stream.close()
             finally:
-                through.landed() and through.inner.close()
+                if self.dropped.detach():
+                    self.through.land()
 
         async def aclose(self):
             try:
-                await stream.aclose()
+                await self.stream.aclose()
             finally:
-                through.landed() and await through.inner.aclose()
-    return Landing()
+                if self.dropped.detach():
+                    await self.through.aland()
+    return Landing
+
+
+def dropped(through, overdue):
+    """A body dropped unclosed: its call landed. An async client's close, due then, is left for `Both` to await."""
+    if not through.due():
+        return
+    if hasattr(through.inner, "aclose"):
+        overdue.append(through.inner)
+    else:
+        through.inner.close()
 
 
 def without_its_cookie(answer):
@@ -190,13 +216,15 @@ class Both:
     def __init__(self, library_of, make, make_async):
         self.library_of, self.makers, self.made = library_of, {False: make, True: make_async}, {False: {}, True: {}}
         self.lock = threading.Lock()  # threads at first use share one client
+        self.overdue = []  # async clients whose close came due in a finalizer, which cannot await it
 
     def through(self, request, is_async=False):
-        library, made = self.library_of(request), self.made[is_async]
-        with self.lock:
+        library = self.library_of(request)
+        with self.lock:  # one closing hands its clients out under this lock: a call never gets one handed out
+            made = self.made[is_async]
             if library not in made:
                 made[library] = self.makers[is_async](library)
-            made[library].landed(+1)
+            made[library].due(+1)
             return made[library]
 
     def handle_request(self, request):
@@ -204,24 +232,29 @@ class Both:
         try:
             answer = through.handle_request(request)
         except BaseException:
-            landing(self.library_of(request), [], through).close()
+            through.land()
             raise
-        answer.stream = landing(self.library_of(request), answer.stream, through)
+        answer.stream = landing(self.library_of(request))(answer.stream, through, self.overdue)
         return answer
 
     async def handle_async_request(self, request):
+        await self.close_overdue()
         through = self.through(request, is_async=True)
         try:
             answer = await through.handle_async_request(request)
         except BaseException:
-            await landing(self.library_of(request), [], through).aclose()
+            await through.aland()
             raise
-        answer.stream = landing(self.library_of(request), answer.stream, through)
+        answer.stream = landing(self.library_of(request))(answer.stream, through, self.overdue)
         return answer
+
+    async def close_overdue(self):
+        while self.overdue:
+            await self.overdue.pop().aclose()
 
     def out(self, is_async):
         with self.lock:
-            out, self.made[is_async] = self.made[is_async].values(), {}
+            out, self.made[is_async] = list(self.made[is_async].values()), {}
         return out
 
     def close(self):
@@ -229,6 +262,7 @@ class Both:
             through.close()
 
     async def aclose(self):
+        await self.close_overdue()
         for through in self.out(True):
             await through.aclose()
 

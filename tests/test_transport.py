@@ -228,6 +228,8 @@ class SharedArguments(unittest.TestCase):
 
         class Slow(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == "/hold":  # no headers until let go
+                    go_on.wait(10)
                 self.send_response(200)
                 self.send_header("content-length", "8")
                 self.end_headers()
@@ -275,6 +277,86 @@ class SharedArguments(unittest.TestCase):
             return body, bool(shared) and all(made.inner.is_closed for made in shared)
 
         self.assertEqual(asyncio.run(run()), (b"made-up!", True))
+
+
+    def dead_port(self):
+        import socket
+        with socket.socket() as free:
+            free.bind(("127.0.0.1", 0))
+            return f"http://127.0.0.1:{free.getsockname()[1]}/"  # closed again: nothing listens
+
+    def test_a_failed_call_raises_its_own_error(self):
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        with self.assertRaises(httpx.ConnectError):
+            httpx.Client(transport=both).get(self.dead_port())
+
+        async def run():
+            await httpx.AsyncClient(transport=both).get(self.dead_port())
+        with self.assertRaises(httpx.ConnectError):
+            asyncio.run(run())
+
+    def test_a_cancelled_call_stays_cancelled(self):
+        async def run():
+            task = asyncio.ensure_future(httpx.AsyncClient(transport=reflexer.gemini.client_args(KEY)["transport"]).get(self.url.replace("/slow", "/hold")))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            await task
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(run())
+
+    def test_a_call_racing_a_close_is_sent_on_an_open_client(self):
+        import threading
+        self.go_on.set()
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        one, other = httpx.Client(transport=both), httpx.Client(transport=both)
+        one.get(self.url)  # its HTTP clients made
+        real, paused, resume = both.lock, threading.Event(), threading.Event()
+
+        class Held:  # the racing call held at the lock until the other client has closed
+            def __enter__(self):
+                if threading.current_thread().name == "racing":
+                    paused.set()
+                    resume.wait(10)
+                return real.__enter__()
+
+            def __exit__(self, *failure):
+                return real.__exit__(*failure)
+        both.lock, got = Held(), []
+        racing = threading.Thread(target=lambda: got.append(one.get(self.url).content), name="racing")
+        racing.start()
+        paused.wait(10)
+        other.close()
+        resume.set()
+        racing.join(10)
+        self.assertEqual(got, [b"made-up!"])
+
+    def test_a_body_dropped_unclosed_lets_the_retired_client_close(self):
+        import gc
+        self.go_on.set()
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        one, other = httpx.Client(transport=both), httpx.Client(transport=both)
+        answer = one.send(one.build_request("GET", self.url), stream=True)
+        shared = list(both.made[False].values())
+        other.close()
+        del answer
+        gc.collect()
+        self.assertTrue(shared and all(made.inner.is_closed for made in shared), "a dropped body kept a retired client open")
+
+    def test_async_a_body_dropped_unclosed_lets_the_retired_client_close(self):
+        import gc
+        self.go_on.set()
+
+        async def run():
+            both = reflexer.gemini.client_args(KEY)["transport"]
+            one, other = httpx.AsyncClient(transport=both), httpx.AsyncClient(transport=both)
+            answer = await one.send(one.build_request("GET", self.url), stream=True)
+            shared = list(both.made[True].values())
+            await other.aclose()
+            del answer
+            gc.collect()
+            await one.get(self.url)  # the next call closes what a dropped body left due
+            return bool(shared) and all(made.inner.is_closed for made in shared)
+        self.assertTrue(asyncio.run(run()), "a dropped body kept a retired client open")
 
 
 class Settings(unittest.TestCase):

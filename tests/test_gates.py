@@ -7,7 +7,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import budget, majors, promises
 
 STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata", "ipaddress", "json", "logging", "random", "re",
-               "time", "urllib.parse"}
+               "time", "urllib.parse", "weakref"}
 ALLOWED = {  # what each file may import: the standard library, and the provider SDK the client already has, in its own file
     "__init__.py": STDLIB_CORE,
     "transport.py": STDLIB_CORE,

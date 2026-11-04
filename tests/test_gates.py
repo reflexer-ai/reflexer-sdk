@@ -6,7 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 import budget, promises
 
-STDLIB_CORE = {"base64", "copy", "functools", "hashlib", "importlib.metadata", "ipaddress", "json", "logging", "random", "re",
+STDLIB_CORE = {"base64", "copy", "functools", "sys", "hashlib", "importlib.metadata", "ipaddress", "json", "logging", "random", "re",
                "time", "urllib.parse"}
 ALLOWED = {  # what each file may import: the standard library, and the provider SDK the client already has, in its own file
     "__init__.py": STDLIB_CORE,
@@ -55,9 +55,16 @@ def semgrep(root=ROOT):
     return tool("semgrep", "scan", "--quiet", "--error", "--metrics=off", "--no-git-ignore", "--config", "semgrep.yml", ".", root=root)  # the rules pick their own paths
 
 
+def unpinned_build(root):
+    return [name for name in tomllib.loads((root / "pyproject.toml").read_text())["build-system"]["requires"] if "==" not in name]
+
+
 class Gates(unittest.TestCase):
     def test_no_dependency(self):
         self.assertEqual(dependencies(ROOT), [])
+
+    def test_the_build_backend_is_pinned(self):
+        self.assertEqual(unpinned_build(ROOT), [])
 
     def test_imports_are_allowed(self):
         self.assertEqual(imports_not_allowed(ROOT), [])
@@ -98,6 +105,11 @@ class Broken(unittest.TestCase):
         path = self.root / "pyproject.toml"
         path.write_text(path.read_text().replace("dependencies = []", 'dependencies = ["made-up-package"]'))
         self.assertNotEqual(dependencies(self.root), [])
+
+    def test_an_unpinned_build_backend_turns_it_red(self):
+        path = self.root / "pyproject.toml"
+        path.write_text(path.read_text().replace('requires = ["hatchling==', 'requires = ["made-up", "hatchling=='))
+        self.assertEqual(unpinned_build(self.root), ["made-up"])
 
     def test_an_import_outside_the_allowlist_turns_it_red(self):
         self.plant("__init__.py", "import made_up_module")
@@ -140,6 +152,35 @@ class Broken(unittest.TestCase):
         path = self.root / ".github" / "workflows" / "ci.yml"
         path.write_text(path.read_text().replace("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v7"))
         self.assertNotEqual(zizmor(self.root), 0)
+
+    def test_a_logged_body_by_another_logger_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import logging\nlogger = logging.getLogger("x")\ndef made_up(body):\n    logger.warning(body)')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_logged_exception_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import logging\nlog = logging.getLogger("x")\ndef made_up():\n    log.exception("failed")')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_printed_body_turns_semgrep_red(self):
+        self.plant("__init__.py", 'def made_up(body):\n    print(body)')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_the_keys_header_in_other_case_turns_semgrep_red(self):
+        self.plant("__init__.py", 'def made_up(headers, key):\n    headers["Reflexer-Key"] = key')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_the_keys_header_built_turns_semgrep_red(self):
+        self.plant("__init__.py", 'OURS = "reflexer-"\ndef made_up(headers, key):\n    headers[OURS + "key"] = key')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_builtin_import_turns_semgrep_red(self):
+        self.plant("__init__.py", 'made_up = __import__("socket")')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_row_not_of_the_form_turns_it_red(self):
+        path = self.root / "SECURITY.md"
+        path.write_text(path.read_text().replace("| **P1** ", "| P1 ", 1))
+        self.assertTrue(any(p.startswith("a promise row not of the form: | P1 ") for p in promises.problems(self.root)))
 
     def test_a_promise_with_no_check_turns_it_red(self):
         path = self.root / "SECURITY.md"

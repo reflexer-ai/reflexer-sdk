@@ -88,9 +88,19 @@ def a_plain_http_address_for_reflexer_was_taken():
         return False
 
 
+def extensions_sent_to_reflexer():
+    """What of the client's request extensions reach the request for reflexer, where a callback would see the key."""
+    client, seen = through(busy)
+    client.post(CHAT, content=b"{}", extensions={"trace": lambda name, info: None})
+    return sorted(set().union(*(request.extensions for request in seen if request.url.host == REFLEXER)))
+
+
 class Promises(unittest.TestCase):
     def test_the_key_reaches_only_reflexer(self):
         self.assertEqual(hosts_given_the_key(), [REFLEXER])
+
+    def test_no_callback_of_the_clients_sees_reflexers_request(self):
+        self.assertEqual(extensions_sent_to_reflexer(), ["timeout"])
 
     def test_a_replay_never_reaches_the_provider(self):
         self.assertFalse(a_replay_reached_the_provider())
@@ -131,6 +141,10 @@ class Broken(unittest.TestCase):
 
         with mock.patch.object(sys.modules[__name__], "setup_http_client", keeps_hooks_below):
             self.assertIn("a hook", hosts_given_the_key())
+
+    def test_the_clients_callbacks_on_reflexers_request_turns_it_red(self):
+        with mock.patch.object(reflexer.transport, "KEPT", ("timeout", "trace")):
+            self.assertIn("trace", extensions_sent_to_reflexer())
 
     def test_no_replay_guard_turns_it_red(self):
         with mock.patch.object(reflexer.transport, "is_replay", lambda body: False):

@@ -34,5 +34,6 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
           ./gitleaks git --redact --exit-code 1 .
-          mkdir -p planted && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > planted/key.py
-          if ./gitleaks dir --exit-code 1 planted >/dev/null; then echo "gitleaks missed a planted key"; exit 1; fi
+          git init -q planted && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > planted/key.py
+          git -C planted add key.py && git -C planted -c user.name=ci -c user.email=ci@example.invalid commit -qm planted
+          if ./gitleaks git --exit-code 1 planted >/dev/null; then echo "gitleaks missed a key planted in a commit"; exit 1; fi

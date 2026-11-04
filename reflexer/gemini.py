@@ -36,8 +36,8 @@ def client_args(key, own=None, base=BASE, sample=1.0):
     own, one = own or {}, Reflexer(key, GENERATE, base, sample)
     below = {name: value for name, value in own.items() if name not in ABOVE}
     above = {name: value for name, value in own.items() if name in ABOVE}
-    return {"follow_redirects": True} | above | {"transport": Both(Through(one, own_client(httpx.Client, None, below)),
-                                                                   Through(one, own_client(httpx.AsyncClient, None, below)))}
+    return {"follow_redirects": True} | above | {"transport": Both(lambda library: Through(one, own_client(library.Client, None, below)),
+                                                                   lambda library: Through(one, own_client(library.AsyncClient, None, below)))}
 
 
 class Client(genai.Client):

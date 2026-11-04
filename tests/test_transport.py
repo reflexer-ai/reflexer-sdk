@@ -107,6 +107,9 @@ class Replay(unittest.TestCase):
             sdk.chat.completions.create(model="frontier-x", messages=[], extra_body={"replay_response": {"id": "made-up"}})
         self.assertEqual(self.hosts(seen), ["api.reflexer.ai"])
 
+    def test_an_escaped_field_name_is_a_replay(self):
+        self.assertTrue(reflexer.is_replay(b'{"replay\\u005fresponse": {"id": "made-up"}}'))
+
     def test_only_the_field_itself_is_a_replay(self):
         for body in (b'{"messages": [{"content": "\\"replay_response\\": 1"}]}', b'{"metadata": {"replay_response": 1}}',
                      b'"replay_response"', b'not json "replay_response"', b"", b"{}"):
@@ -117,6 +120,33 @@ class Replay(unittest.TestCase):
         client, seen, _ = wrapped(busy)
         self.assertEqual(client.post(CHAT, content=b"{}").json(), {"from": "provider"})
         self.assertEqual(self.hosts(seen), ["api.reflexer.ai", "api.openai.com"])
+
+
+class Copies(unittest.TestCase):
+    """The SDK's own copy, `with_options(http_client=...)`, keeps working and keeps going through reflexer."""
+
+    def test_a_copy_given_its_own_http_client_goes_through_reflexer(self):
+        import anthropic, openai
+        import reflexer.anthropic, reflexer.openai
+        for module, made, stock in ((reflexer.openai, lambda c: c.chat.completions.create(model="m", messages=[]), openai),
+                                    (reflexer.anthropic, lambda c: c.messages.create(model="m", max_tokens=1, messages=[]), anthropic)):
+            seen = []
+            own = stock.DefaultHttpxClient(transport=httpx2.MockTransport(lambda r: (seen.append(r), served(r))[1]))
+            cls = module.OpenAI if module is reflexer.openai else module.Anthropic
+            copy = cls(api_key="made-up", reflexer_key=KEY, max_retries=0).with_options(http_client=own)
+            try:
+                made(copy)
+            except Exception:
+                pass  # the made-up body is no real answer; where it went is what is checked
+            self.assertEqual([r.url.host for r in seen], ["api.reflexer.ai"], module.__name__)
+
+
+class GeminisArguments(unittest.TestCase):
+    def test_either_http_library_of_geminis_gets_its_own_kind_of_client(self):
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        for library in (httpx, httpx2):
+            inner = both.through(library.Request("POST", "https://example.invalid/")).inner
+            self.assertIsInstance(inner, library.Client, library.__name__)
 
 
 class Settings(unittest.TestCase):

@@ -38,9 +38,16 @@ def exists(check, root=ROOT):
     return False
 
 
+def rows_not_of_the_form(text):
+    """A row of the promises' table that `promises` would skip."""
+    table = text.split("| Promise |", 1)[1].split("\n\n", 1)[0].splitlines()[2:] if "| Promise |" in text else []
+    return [f"a promise row not of the form: {line[:40]}" for line in table if line.startswith("|") and not ROW.match(line)]
+
+
 def problems(root=ROOT):
-    table = promises((root / "SECURITY.md").read_text())
-    found = [] if table else ["SECURITY.md lists no promise"]
+    text = (root / "SECURITY.md").read_text()
+    table = promises(text)
+    found = ([] if table else ["SECURITY.md lists no promise"]) + rows_not_of_the_form(text)
     for promise, (held_by, broken_by) in table.items():
         if not held_by:
             found.append(f"{promise}: held by no check")

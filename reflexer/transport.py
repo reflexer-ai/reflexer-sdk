@@ -5,10 +5,11 @@ request, which never holds our key. Under it, `Through` sends each exchange by t
 its proxies, TLS and connections hold. No private name is read, no class of the SDK's or the library's changes, and no
 answer is touched.
 """
-import copy, functools
+import copy, functools, sys
 from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
+KEPT = ("timeout",)  # of a client's request extensions, what reflexer's request keeps: no callback of theirs sees our key
 
 
 def setup_http_client(stock, wire):
@@ -23,7 +24,7 @@ def setup_http_client(stock, wire):
                           event_hooks=own.event_hooks, auth=own.auth, params=own.params, headers=own.headers,
                           cookies=own.cookies.jar, timeout=own.timeout, follow_redirects=own.follow_redirects,
                           max_redirects=own.max_redirects, base_url=own.base_url)
-        outer.reflexer_through = True
+        outer.reflexer_through = dict(key=key, base=base, sample=sample)  # what a copy given its own HTTP client is made with
         return outer
 
     return http_client
@@ -37,7 +38,16 @@ def setup_client(cls, make_http_client):
         def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, http_client=None, **config):
             if not hasattr(http_client, "reflexer_through"):
                 http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample)
+            self.reflexer_way = http_client.reflexer_through
             super().__init__(*args, http_client=http_client, **config)
+
+        def copy(self, *args, http_client=None, **config):
+            """The SDK's own copy. Given an HTTP client of the client's, it goes through reflexer the same way."""
+            if http_client is not None and not hasattr(http_client, "reflexer_through"):
+                http_client = make_http_client(**self.reflexer_way, own=http_client)
+            return super().copy(*args, http_client=http_client, **config)
+
+        with_options = copy
 
     Client.__name__ = Client.__qualname__ = cls.__name__
     return Client
@@ -72,8 +82,8 @@ def to_reflexer(reflexer, request):
         return None
     url, headers = route
     same_library_request = type(request)  # httpx's or httpx2's: the client's own, never imported here
-    return same_library_request(request.method, url, headers=headers, content=body,
-                                extensions=request.extensions)  # the client's per-call timeout among them
+    kept = {name: value for name, value in request.extensions.items() if name in KEPT}  # the client's per-call timeout
+    return same_library_request(request.method, url, headers=headers, content=body, extensions=kept)
 
 
 class Through:
@@ -136,11 +146,31 @@ def without_its_cookie(answer):
 
 
 class Both:
-    """One transport for both of an SDK's HTTP clients, for what takes one set of arguments for the two (`client_args`)."""
+    """One transport for both of an SDK's HTTP clients, for what takes one set of arguments for the two (`client_args`).
+    Its HTTP clients are made on first use, of the HTTP library the request is of: the SDK picks it, not this."""
 
-    def __init__(self, through, through_async):
-        self.handle_request, self.handle_async_request = through.handle_request, through_async.handle_async_request
-        self.close, self.aclose = through.close, through_async.aclose
+    def __init__(self, make, make_async):
+        self.makers, self.made = {False: make, True: make_async}, {False: {}, True: {}}
+
+    def through(self, request, is_async=False):
+        library, made = sys.modules[type(request).__module__.partition(".")[0]], self.made[is_async]
+        if library not in made:
+            made[library] = self.makers[is_async](library)
+        return made[library]
+
+    def handle_request(self, request):
+        return self.through(request).handle_request(request)
+
+    async def handle_async_request(self, request):
+        return await self.through(request, is_async=True).handle_async_request(request)
+
+    def close(self):
+        for made in self.made[False].values():
+            made.close()
+
+    async def aclose(self):
+        for made in self.made[True].values():
+            await made.aclose()
 
     def __repr__(self):  # what holds it may build a cache's key from its text
         return "reflexer.Both"

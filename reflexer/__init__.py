@@ -74,8 +74,8 @@ class ReplayNotTaken(Exception):
 
 
 def is_replay(body):
-    """Whether a request's body holds the field at its top. Only a body that names it is parsed, so a plain call pays nothing."""
-    if REPLAY.encode() not in body:
+    """Whether a request's body holds the field at its top. Only a body that may name it, plainly or escaped, is parsed."""
+    if REPLAY.encode() not in body and b"\\u" not in body:
         return False
     try:
         data = json.loads(body)

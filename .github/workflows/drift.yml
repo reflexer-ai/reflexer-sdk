@@ -45,8 +45,42 @@ jobs:
       - name: No major of a provider SDK newer than those tested
         run: python3 tools/majors.py
 
+  typescript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        releases: [newest, oldest]
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: The TypeScript SDK's tests on these provider SDK releases, and no newer major untested
+        env:
+          RELEASES: ${{ matrix.releases }}
+        run: |  # zizmor: ignore[adhoc-packages] drift installs releases outside the lockfile, on purpose
+          npm ci --ignore-scripts
+          grep -oE '\{ name: "[^"]+", majors: \[[0-9]+' src/index.js | sed -E 's/\{ name: "([^"]+)", majors: \[/\1 /' > ../tested.txt
+          while read -r name major; do
+            versions="$(npm view "$name@$major" version --json | tr -d '[]" ' | tr ',' ' ')"
+            pick="$(for v in $versions; do echo "$v"; done | awk 'NF && !/-/' | sort -V | { [ "$RELEASES" = oldest ] && head -1 || tail -1; })"
+            npm install --no-save --ignore-scripts "$name@$pick"
+            newest="$(npm view "$name" version)"
+            if [ "${newest%%.*}" -gt "$major" ]; then echo "untested major: $name $newest"; exit 1; fi
+          done < ../tested.txt
+          npm ls openai @anthropic-ai/sdk @google/genai
+          npm test
+
   report:
-    needs: [releases, majors]
+    needs: [releases, majors, typescript]
     if: failure()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -10,6 +10,10 @@ supported("langchain-openai", [1])
 class ChatOpenAI(langchain_openai.ChatOpenAI):
     def __init__(self, *, reflexer_key, reflexer_base=BASE, sample=1.0, **config):
         way = dict(base=reflexer_base, sample=sample)
+        # given an HTTP client, LangChain stops asking a stream for its usage: the stock class's choice is kept. Without
+        # model_kwargs, which its choice does not read and LangChain changes in place
+        stock = langchain_openai.ChatOpenAI(**{name: value for name, value in config.items() if name != "model_kwargs"})
+        config["stream_usage"] = stock.stream_usage
         if config.get("http_client") is None and config.get("http_async_client") is None:
             # LangChain refuses its proxy beside an HTTP client, so the proxy goes in the client's own, under ours
             proxy = dict(proxy=config.pop("openai_proxy", os.environ.get("OPENAI_PROXY")) or None)

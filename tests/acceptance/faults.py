@@ -362,7 +362,6 @@ FAULTS = {
     # the breaker
     "no_backoff": setter(reflexer.Breaker, "open_for", lambda self, seconds: None),
     "no_doubling": setter(reflexer, "BACKOFF_CAP", reflexer.BACKOFF),
-    "no_jitter": setter(reflexer, "JITTER", 0.0),
     "obeys_one": setter(reflexer, "OBEYED_AFTER", 1),
     "never_obeys": setter(reflexer, "OBEYED_AFTER", 10**9),
     "reads_any_straight": setter(reflexer, "whole", lambda value: 30 if value else None),

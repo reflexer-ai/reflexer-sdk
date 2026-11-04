@@ -78,7 +78,6 @@ CONTROLS = {
     "no_grace_warning": [("grace_a_key_expired_under_a_day_goes_straight_with_a_warning", "*")],
     "no_backoff": [("breaker_opens_on_a_failure", "*"), ("breaker_backs_off_doubling", "openai"), ("breaker_outage_trace_at_the_full_share", "openai")],
     "no_doubling": [("breaker_backs_off_doubling", "openai")],
-    "no_jitter": [("breaker_jitters_so_clients_do_not_return_together", "openai")],
     "obeys_one": [("breaker_one_straight_header_is_not_obeyed", "*")],
     "never_obeys": [("breaker_two_straight_headers_are_obeyed_then_it_returns", "*")],
     "reads_any_straight": [("breaker_a_straight_header_it_does_not_know_is_ignored", "openai")],
@@ -118,6 +117,7 @@ CONTROLS = {
 # Cases no fault turns red, and why each is kept.
 NOT_JUDGED = {
     "measure_time_added_on_loopback": "records time added per call; no bound to hold",
+    "measure_how_far_apart_clients_return": "records the spread of waits; a shared machine's noise is as large; tests/test_logic.py holds it",
     "measure_what_each_4xx_of_reflexers_does": "records which 4xx reach the client; nothing yet decides which should",
     "open_a_stalled_reflexer_told_from_a_slow_provider": "open: fails today, by a gap not built yet",
     "open_a_cut_answers_price_in_its_error": "open: fails today, by a gap not built yet",

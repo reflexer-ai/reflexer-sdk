@@ -41,6 +41,25 @@ describe("The wire", () => {
   });
 });
 
+describe("Azure", () => {
+  test("each message call's path reaches reflexer, the dated Responses one too", async () => {
+    for (const path of ["/openai/deployments/made-up/chat/completions", "/openai/deployments/made-up/responses", "/openai/v1/responses", "/openai/responses"]) {
+      const own = check.mock(check.served);
+      await index.azure.fetch(key, { fetch: own.fetch })(`https://made-up.openai.azure.com${path}?api-version=made-up`, { method: "POST", body: "{}" });
+      assert.deepEqual(hosts(own.seen), [check.REFLEXER], path);
+    }
+  });
+
+  test("the calls beside them go straight", async () => {
+    for (const path of ["/openai/responses/resp-made-up", "/openai/responses/resp-made-up/cancel", "/openai/responses/resp-made-up/input_items",
+      "/openai/responses/compact", "/openai/v1/responses/resp-made-up", "/openai/deployments/made-up/responses/resp-made-up", "/openai/files"]) {
+      const own = check.mock(check.served);
+      await index.azure.fetch(key, { fetch: own.fetch })(`https://made-up.openai.azure.com${path}?api-version=made-up`, { method: "POST", body: "{}" });
+      assert.deepEqual(hosts(own.seen), ["made-up.openai.azure.com"], path);
+    }
+  });
+});
+
 describe("Headers", () => {
   test("no header of ours leaves for the provider, and the pass-through header leaves for no one", async () => {
     const { fetch, seen } = made(check.served);

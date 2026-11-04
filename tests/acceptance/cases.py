@@ -181,6 +181,13 @@ def routing_openai_responses_reach_reflexer(t):
     t.check(t.reflexer.seen[0].path == "/openai/v1/responses", t.reflexer.seen[0].path)
 
 
+@case("routing", sdks=("azure",))
+def routing_azure_responses_reach_reflexer(t):
+    answer = t.client().responses.create(model="frontier-d", input="Hi")
+    t.check(answer.output_text == SERVED_TEXT, answer.output_text)
+    t.check(t.reflexer.seen[0].path == f"/azure/openai/responses?api-version={harness.AZURE_VERSION}", t.reflexer.seen[0].path)
+
+
 @case("routing")
 def routing_a_stream_call_reaches_reflexer(t):
     t.served(t.stream(t.client()))

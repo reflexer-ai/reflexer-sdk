@@ -13,7 +13,7 @@ CHAT = {
 }
 AZURE = {  # each client's resource is its own host, always named as the upstream
     "reflexer_path": "/azure",
-    "calls":         r"/openai/(deployments/[^/]+|v1)/(chat/completions|responses)$",
+    "calls":         r"/openai/((deployments/[^/]+|v1)/(chat/completions|responses)|responses)$",  # the last, Azure's dated Responses
 }
 
 http_client             = setup_http_client(openai.DefaultHttpxClient,      CHAT)

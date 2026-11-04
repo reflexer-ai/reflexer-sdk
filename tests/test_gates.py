@@ -14,6 +14,8 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "openai.py": {"openai"},
     "anthropic.py": {"anthropic"},
     "gemini.py": {"httpx", "httpx2", "inspect", "google"},
+    "langchain_openai.py": {"langchain_openai", "openai", "os"},  # os: LangChain's own proxy variable, read as LangChain does
+    "langchain_gemini.py": {"langchain_google_genai"},
 }
 
 

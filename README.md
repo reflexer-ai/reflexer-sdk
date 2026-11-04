@@ -25,6 +25,16 @@ Or keep the stock class and give it reflexer's HTTP client:
     client = genai.Client(api_key=gemini_key, http_options={"client_args": reflexer.gemini.client_args(reflexer_key),
                                                             "async_client_args": reflexer.gemini.client_args(reflexer_key)})
 
+## LangChain
+
+    # chat = ChatOpenAI(model=model)
+    chat = reflexer.langchain_openai.ChatOpenAI(model=model, reflexer_key=reflexer_key)
+
+    # chat = ChatGoogleGenerativeAI(model=model)
+    chat = reflexer.langchain_gemini.ChatGoogleGenerativeAI(model=model, reflexer_key=reflexer_key)
+
+Or LangChain's own `ChatOpenAI`, given `http_client=reflexer.openai.http_client(reflexer_key)` and `http_async_client=reflexer.openai.async_http_client(reflexer_key)`. `ChatAnthropic` takes no HTTP client, so it has no line here. `configurable_fields` does not work on reflexer's two classes.
+
 ## What reflexer's answer looks like
 
 The answer is your provider's format, unchanged by this SDK. A served answer's `model` ends in `-reflexer`, and its price in USD is at `usage.cost`, where cost tools already read it. Every response carries `Reflexer-Request-Id`, `Reflexer-Answered-By` and `Reflexer-Cost` (nano USD) headers.

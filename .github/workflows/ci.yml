@@ -41,3 +41,26 @@ jobs:
           git init -q planted && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > planted/key.py
           git -C planted add key.py && git -C planted -c user.name=ci -c user.email=ci@example.invalid commit -qm planted
           if ./gitleaks git --exit-code 1 planted >/dev/null; then echo "gitleaks missed a key planted in a commit"; exit 1; fi
+
+  python-versions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: false
+      - name: The SDK's tests on each Python it supports
+        env:
+          PYTHON: ${{ matrix.python }}
+        run: |
+          uv sync --locked --no-default-groups --group test --python "$PYTHON"
+          uv run --locked --no-default-groups --group test python -m unittest tests.test_logic tests.test_transport tests.test_promises
+          uv run --locked --no-default-groups --group test python tests/acceptance/run.py
+

@@ -1,0 +1,64 @@
+name: drift
+# The provider SDKs move under the client: each day, the SDK's tests on their newest and their oldest supported releases,
+# and a check that no new major has come out untested. A red run opens an issue.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  releases:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        resolution: [highest, lowest-direct]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: false
+      - name: The SDK's tests on these releases
+        env:
+          RESOLUTION: ${{ matrix.resolution }}
+        run: |
+          uv venv drift
+          uv pip install --python drift --resolution "$RESOLUTION" --group test -e .
+          uv pip list --python drift | grep -E "^(openai|anthropic|google-genai|httpx|httpx2) "
+          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises
+          drift/bin/python tests/acceptance/run.py
+
+  majors:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: No major of a provider SDK newer than those tested
+        run: python3 tools/majors.py
+
+  report:
+    needs: [releases, majors]
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue, once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Drift: the SDK fails on a new provider SDK release"
+          if [ -z "$(gh issue list -R "$REPO" --state open --search "$title in:title" --json number --jq '.[].number')" ]; then
+            gh issue create -R "$REPO" --title "$title" --body "Run: $RUN"
+          fi

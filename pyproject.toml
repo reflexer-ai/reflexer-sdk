@@ -10,7 +10,8 @@ dependencies = []  # none, and a gate keeps it so: SECURITY.md
 dev = ["ruff", "semgrep", "zizmor"]
 test = ["openai>=3,<4", "anthropic>=2,<3", "google-genai>=2,<3", "httpx>=0.28", "httpx2>=2.14",  # the SDKs a client brings
         "cryptography>=44",  # the acceptance suite's certificates, made at run time
-        "langchain-openai>=1,<2", "langchain-google-genai>=4,<5"]  # for the LangChain lines
+        "langchain-openai>=1,<2", "langchain-google-genai>=4,<5",  # for the LangChain lines
+        "aiohttp>=3.10"]  # google-genai prefers it for async when installed: reflexer must still be on the way
 
 [build-system]
 requires = ["hatchling==1.33.0"]

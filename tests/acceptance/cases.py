@@ -19,6 +19,7 @@ NO_RAW = "google-genai has no such method on its client"
 # Stalls: a client's timeout, a slow provider, a slow pass through, in seconds
 CLIENT_TIMEOUT, SLOW_PROVIDER, SLOW_PASS_THROUGH = 1.0, 0.6, 0.7
 MARGIN = 0.6  # seconds of scheduling allowed on a real-time bound, on a machine running other cases
+TRIES_ON_A_SLOW_MACHINE = 5  # a case bound to real time tries again when the machine was too slow to judge it
 FIRST_BACKOFF, JITTER = 1.0, 0.2  # the breaker's first wait and its jitter, read only by the cases on doubling
 QUICK_CALL = 0.1  # seconds: a call that paid no timeout
 
@@ -58,6 +59,21 @@ def reflexer_status(t, status, origin="reflexer", more=None, body=None):
 
 def provider_key_at(arrival, sdk):
     return any(harness.PROVIDER_KEY[sdk] in value for value in arrival.headers.values())
+
+
+def not_counted(t, failing):
+    """A response that sends the call straight without counting against reflexer: had it counted, the client's breaker
+    would hold its next call for the first backoff. So the next call goes well within it; a try on a machine too slow for
+    that is made again with a fresh client, so slowness cannot pass a counted failure."""
+    for _ in range(TRIES_ON_A_SLOW_MACHINE):
+        client = t.client()  # each a breaker of its own
+        failing()
+        began = time.monotonic()
+        t.straight(t.ask(client))
+        t.reflexer.set("ok")
+        if time.monotonic() - began < FIRST_BACKOFF / 2:
+            return t.served(t.ask(client))
+    t.check(False, f"no try fast enough to judge, in {TRIES_ON_A_SLOW_MACHINE}")
 
 
 def spam_until(condition, seconds, call, pause=0.005):
@@ -446,20 +462,12 @@ def breaker_a_straight_header_it_does_not_know_is_ignored(t):
 
 @case("breaker", sdks=MESSAGE_SDKS)
 def breaker_busy_with_straight_goes_straight_uncounted(t):
-    client = t.client()
-    reflexer_status(t, overloaded(t.sdk), more={"Reflexer-Straight": "30"})
-    t.straight(t.ask(client))
-    t.reflexer.set("ok")
-    t.served(t.ask(client))
+    not_counted(t, lambda: reflexer_status(t, overloaded(t.sdk), more={"Reflexer-Straight": "30"}))
 
 
 @case("breaker", sdks=MESSAGE_SDKS)
 def breaker_provider_unreachable_is_not_counted(t):
-    client = t.client()
-    reflexer_status(t, 502, origin="connection")
-    t.straight(t.ask(client))
-    t.reflexer.set("ok")
-    t.served(t.ask(client))
+    not_counted(t, lambda: reflexer_status(t, 502, origin="connection"))
 
 
 # The outage trace. A dead phase resets connections, so that its attempts are counted.

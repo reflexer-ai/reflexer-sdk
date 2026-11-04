@@ -99,6 +99,24 @@ def key_on_the_clients_own_request(real):
     return broken
 
 
+class StreamedUsage(unittest.TestCase):
+    """LangChain asks a stream for its usage, so its price, unless it was given an HTTP client: reflexer's class gives
+    one, and keeps the choice the stock class makes for the client's own settings."""
+
+    def settings(self):  # made anew for each class: LangChain edits what it is given
+        return ({}, {"stream_usage": False}, {"stream_usage": None}, {"base_url": "https://gateway.example/v1"},
+                {"openai_proxy": "http://proxy.example:3128"}, {"model_kwargs": {"made_up": 1}, "also_made_up": 2},
+                {"model_kwargs": {"temperature": 0.5}})
+
+    def test_reflexers_class_streams_usage_as_the_stock_class_would(self):
+        for stock_settings, settings in zip(self.settings(), self.settings()):
+            with self.subTest(settings):
+                stock = langchain_openai.ChatOpenAI(model="frontier-x", api_key="made-up", **stock_settings)
+                ours = ChatOpenAI(model="frontier-x", api_key="made-up", reflexer_key=KEY, **settings)
+                self.assertEqual(ours._should_stream_usage(), stock._should_stream_usage())
+                self.assertEqual((ours.model_kwargs, ours.temperature), (stock.model_kwargs, stock.temperature))
+
+
 class Broken(unittest.TestCase):
     def test_the_key_on_the_clients_own_request_turns_it_red(self):
         with mock.patch.object(reflexer.transport, "to_reflexer", key_on_the_clients_own_request(reflexer.transport.to_reflexer)), \

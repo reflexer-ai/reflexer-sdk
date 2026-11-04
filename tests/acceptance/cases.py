@@ -61,19 +61,26 @@ def provider_key_at(arrival, sdk):
     return any(harness.PROVIDER_KEY[sdk] in value for value in arrival.headers.values())
 
 
-def not_counted(t, failing):
-    """A response that sends the call straight without counting against reflexer: had it counted, the client's breaker
-    would hold its next call for the first backoff. So the next call goes well within it; a try on a machine too slow for
-    that is made again with a fresh client, so slowness cannot pass a counted failure."""
+def next_call_tries_reflexer(t, first):
+    """`first(client)` makes a call that must not count against reflexer: had it counted, the client's breaker would
+    hold its next call for the first backoff. So the next call goes well within it; a try on a machine too slow for that
+    is made again with a fresh client, so slowness cannot pass a counted failure."""
     for _ in range(TRIES_ON_A_SLOW_MACHINE):
         client = t.client()  # each a breaker of its own
-        failing()
         began = time.monotonic()
-        t.straight(t.ask(client))
+        first(client)
         t.reflexer.set("ok")
         if time.monotonic() - began < FIRST_BACKOFF / 2:
             return t.served(t.ask(client))
     t.check(False, f"no try fast enough to judge, in {TRIES_ON_A_SLOW_MACHINE}")
+
+
+def not_counted(t, failing):
+    """A response that sends the call straight without counting against reflexer."""
+    def first(client):
+        failing()
+        t.straight(t.ask(client))
+    next_call_tries_reflexer(t, first)
 
 
 def spam_until(condition, seconds, call, pause=0.005):
@@ -888,10 +895,10 @@ def kept_geminis_own_options_as_stock_takes_them(t):
 @case("no harm", sdks=("openai",))
 def no_harm_a_body_not_read_goes_straight_and_counts_no_failure(t):
     """A raw upload's generator could not be sent twice: straight, and the next call still tries reflexer."""
-    client = t.client()
-    client.post("/chat/completions", content=(part for part in [b"{}"]), cast_to=object)
-    t.check(not t.reflexer.seen, f"reflexer got it: {t.reflexer.seen}")
-    t.served(t.ask(client))
+    def first(client):
+        client.post("/chat/completions", content=(part for part in [b"{}"]), cast_to=object)
+        t.check(not t.reflexer.seen, f"reflexer got it: {t.reflexer.seen}")
+    next_call_tries_reflexer(t, first)
 
 
 # ---- stream

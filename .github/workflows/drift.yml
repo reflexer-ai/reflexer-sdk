@@ -30,9 +30,11 @@ jobs:
           RESOLUTION: ${{ matrix.resolution }}
         run: |
           uv venv drift
-          uv pip install --python drift --resolution "$RESOLUTION" --group test -e .
-          uv pip list --python drift | grep -E "^(openai|anthropic|google-genai|httpx|httpx2|langchain-openai|langchain-google-genai) "
-          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain
+          groups="--group test" frameworks=""
+          if [ "$RESOLUTION" = highest ]; then groups="$groups --group frameworks" frameworks=tests.test_pydantic_ai; fi  # their floors of the provider SDKs are above ours
+          uv pip install --python drift --resolution "$RESOLUTION" $groups -e .
+          uv pip list --python drift | grep -E "^(openai|anthropic|google-genai|httpx|httpx2|langchain-openai|langchain-google-genai|pydantic-ai-slim) "
+          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain $frameworks
           drift/bin/python tests/acceptance/run.py
 
   majors:

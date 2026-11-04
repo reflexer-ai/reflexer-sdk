@@ -29,34 +29,34 @@ On Gemini, give both: with only `httpx_client`, google-genai sends async calls b
 
 ## TypeScript
 
-Not on npm yet. For now, build it from a clone of this repository and install the archive in your project:
+The package is `@reflexer-ai/sdk`, not published yet. For now, build it from a clone of this repository and install the archive in your project:
 
-    cd typescript && npm ci && npm pack            # makes reflexer-VERSION.tgz
-    npm install path/to/reflexer-VERSION.tgz       # in your project
+    cd typescript && npm ci && npm pack            # makes reflexer-ai-sdk-VERSION.tgz
+    npm install path/to/reflexer-ai-sdk-VERSION.tgz  # in your project
 
 One line changes, as in Python; your own options stay as they were.
 
     // client = new OpenAI({ apiKey: openaiKey })
-    import { OpenAI } from "reflexer/openai";
+    import { OpenAI } from "@reflexer-ai/sdk/openai";
     const client = new OpenAI({ apiKey: openaiKey, reflexerKey });
 
     // client = new Anthropic({ apiKey: anthropicKey })
-    import { Anthropic } from "reflexer/anthropic";
+    import { Anthropic } from "@reflexer-ai/sdk/anthropic";
     const client = new Anthropic({ apiKey: anthropicKey, reflexerKey });
 
     // client = new GoogleGenAI({ apiKey: geminiKey })
-    import { GoogleGenAI } from "reflexer/gemini";
+    import { GoogleGenAI } from "@reflexer-ai/sdk/gemini";
     const client = new GoogleGenAI({ apiKey: geminiKey, reflexerKey });
 
-Also `AzureOpenAI`, from `reflexer/openai`. Or keep the stock class and give it reflexer's `fetch`:
+Also `AzureOpenAI`, from `@reflexer-ai/sdk/openai`. Or keep the stock class and give it reflexer's `fetch`:
 
-    import * as reflexer from "reflexer";
+    import * as reflexer from "@reflexer-ai/sdk";
     new OpenAI({ apiKey: openaiKey, fetch: reflexer.openai.fetch(reflexerKey) });
     new AzureOpenAI({ ...azureOptions, fetch: reflexer.azure.fetch(reflexerKey) });
     new Anthropic({ apiKey: anthropicKey, fetch: reflexer.anthropic.fetch(reflexerKey) });
     new GoogleGenAI({ apiKey: geminiKey, httpOptions: { fetch: reflexer.gemini.fetch(reflexerKey) } });
 
-A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have. Tested on openai 7, @anthropic-ai/sdk 1 and @google/genai 2 from 2.29.0: a call made by any other release throws.
+A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have. Tested on openai 7, @anthropic-ai/sdk 1 and @google/genai 2 from 2.29.0: a call made by any other release throws, where the stock SDK would answer; on google-genai 2.23 to 2.28 too, which stock runs with undici's own timeouts.
 
 ## LangChain.js
 

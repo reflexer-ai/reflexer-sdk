@@ -26,7 +26,7 @@ What this SDK promises, for Python and for TypeScript, and what holds each promi
 
 ## What ships
 
-A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` only after its audit report is in `audits/`, every check of CI passes again, and two builds from a fresh checkout, with nothing installed but build dependencies pinned by hash, come out byte for byte the same. It is published by PyPI's trusted publishing, with no stored token, and PyPI's attestations tie each file to that workflow. The source archive holds the tests, so a client can run every check on its own machine.
+A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` only after its audit report is in `audits/`, every check of CI passes again, and two builds from a fresh checkout, with nothing installed but build dependencies pinned by hash, come out byte for byte the same. It is published by PyPI's trusted publishing, with no stored token, and PyPI's attestations tie each file to that workflow. The TypeScript package, on a `typescript-v` tag, the same way: its two `npm pack` builds each in a checkout of its own, published by npm's trusted publishing with provenance (not published yet). The source archive holds the tests, so a client can run every check on its own machine.
 
 ## Known limits
 
@@ -40,6 +40,7 @@ A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` on
 - TypeScript: a client's cancel during reflexer's leg counts as reflexer's failure, and sends the next calls straight for a while. The provider SDKs abort on their own timeout the same way, with no reason given, and a reflexer that hangs must still fall back.
 - TypeScript: `fetch` asks the dispatcher to follow no redirect on reflexer's leg (`maxRedirections: 0`, which undici's redirect interceptor honours); a dispatcher of the client's that follows redirects regardless would carry the key to the redirect's target.
 - A tag's commit carries its own release workflow, so the checks above hold as far as who may push a tag to `main` is trusted: PyPI's environment, with its reviewers, is the gate past that.
+- TypeScript: the same holds for npm's leg: a `typescript-v` tag's commit carries its own workflow, and the gate past it would be the `npm` environment with its reviewers, bound to npm's trusted publisher. Neither is set up, and the package, `@reflexer-ai/sdk`, is not published yet.
 - Ruff's inline `noqa` can silence a finding; the package holds three, each with its reason, for a header's name and for random numbers that guard no secret.
 
 ## Reporting a vulnerability

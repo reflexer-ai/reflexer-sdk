@@ -68,8 +68,7 @@ jobs:
           RELEASES: ${{ matrix.releases }}
         run: |  # zizmor: ignore[adhoc-packages] drift installs releases outside the lockfile, on purpose
           npm ci --ignore-scripts
-          grep -oE '\{ name: "[^"]+", majors: \[[0-9]+\], floor: "[0-9.]+"' src/index.js \
-            | sed -E 's/\{ name: "([^"]+)", majors: \[([0-9]+)\], floor: "([0-9.]+)"/\1 \2 \3/' > ../tested.txt
+          node tools/tested.js > ../tested.txt  # every provider SDK the source names, or a failure
           while read -r name major floor; do
             versions="$(npm view "$name@$major" version --json | tr -d '[]" ' | tr ',' ' ')"
             pick="$(for v in $versions; do echo "$v"; done | awk 'NF && !/-/' | sort -V | tail -1)"

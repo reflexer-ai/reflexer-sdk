@@ -123,6 +123,10 @@ describe("Gates", () => {
     assert.deepEqual(await dependencies(PACKAGE), []);
   });
 
+  test("the package's name is in the scope of the repository's organisation", async () => {
+    assert.equal((await manifest(PACKAGE)).name, "@reflexer-ai/sdk");
+  });
+
   test("imports are allowed", async () => {
     assert.deepEqual(await importsNotAllowed(PACKAGE), []);
   });

@@ -44,3 +44,10 @@ describe("Replay", () => {
     assert.ok(check.replayBroken(headers({}), "from the provider"));
   });
 });
+
+describe("Endpoint", () => {
+  test("no endpoint is taken by default: REFLEXER_BASE must be given", async (t) => {
+    t.mock.property(process, "env", { REFLEXER_KEY: "made-up" });
+    await assert.rejects(check.main(["openai"]), /set REFLEXER_BASE/);
+  });
+});

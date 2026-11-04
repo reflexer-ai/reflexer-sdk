@@ -146,7 +146,7 @@ export const gemini = provider(WIRES.gemini, (input, init) => globalThis.fetch(i
  * Each provider SDK's majors this is tested on, its oldest release tested, and how its calls name its version, in their
  * user agent. google-genai takes a `fetch` from 2.23.0, and adds its untimed dispatcher, which reflexer's line keeps, from 2.29.0.
  */
-const SDKS = [
+export const SDKS = [
   { name: "openai", majors: [7], floor: "7.0.0", label: /OpenAI\/JS ([0-9.]+)/ },
   { name: "@anthropic-ai/sdk", majors: [1], floor: "1.0.0", label: /Anthropic\/JS ([0-9.]+)/ },
   { name: "@google/genai", majors: [2], floor: "2.29.0", label: /\bgoogle-genai-sdk\/([0-9.]+)/ },

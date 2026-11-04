@@ -35,6 +35,18 @@ def replayed(key, base):
     return raw.headers, raw.parse().choices[0].message.content
 
 
+def replayed_stream(key, base):
+    """The same, streamed: the field a stream's text, whose events the SDK reads as the provider's."""
+    import json
+    import reflexer.openai
+    chunk = REPLAY | {"object": "chat.completion.chunk", "choices": [{"index": 0, "finish_reason": None, "delta": {
+        "role": "assistant", "content": "from the replay"}}]}
+    client = reflexer.openai.OpenAI(api_key=env("OPENAI_API_KEY"), reflexer_key=key, reflexer_base=base, max_retries=0)
+    raw = client.chat.completions.with_raw_response.create(model=env("OPENAI_MODEL", MODELS["openai"]), stream=True, messages=[
+        {"role": "user", "content": "Say hi"}], extra_body={"replay_response": f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n"})
+    return raw.headers, "".join(event.choices[0].delta.content or "" for event in raw.parse() if event.choices)
+
+
 def call(sdk, key, base):
     model = env(f"{sdk.upper()}_MODEL", MODELS[sdk])
     provider_key, provider_base = env(f"{sdk.upper()}_API_KEY"), os.environ.get(f"{sdk.upper()}_BASE_URL")
@@ -88,12 +100,13 @@ def main(sdks):
     key, base, failed = env("REFLEXER_KEY"), env("REFLEXER_BASE", reflexer.BASE), False
     if "replay" in sdks:
         sdks = [sdk for sdk in sdks if sdk != "replay"]
-        headers, text = replayed(key, base)
-        print(f"replay: answered by {headers.get('reflexer-answered-by', 'its field')}, text {text!r}, "
-              f"Reflexer-Cost {headers.get('reflexer-cost')}, id {headers.get('reflexer-request-id')}")
-        if replay_broken(headers, text):
-            print("  broken: a replay answered by someone else than reflexer or its field", file=sys.stderr)
-            failed = True
+        for way, replay in (("replay", replayed), ("replay, streamed", replayed_stream)):
+            headers, text = replay(key, base)
+            print(f"{way}: answered by {headers.get('reflexer-answered-by', 'its field')}, text {text!r}, "
+                  f"Reflexer-Cost {headers.get('reflexer-cost')}, id {headers.get('reflexer-request-id')}")
+            if replay_broken(headers, text):
+                print("  broken: a replay answered by someone else than reflexer or its field", file=sys.stderr)
+                failed = True
     for sdk in sdks:
         try:
             headers, model, cost = call(sdk, key, base)

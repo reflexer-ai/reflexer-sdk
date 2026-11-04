@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
+
+// Offline: a call to anywhere but this machine fails, so a provider SDK that ignores the `fetch` it is given reaches no one
+const realFetch = globalThis.fetch;
+globalThis.fetch = (input, init) => new URL(input instanceof Request ? input.url : input).hostname === "127.0.0.1"
+  ? realFetch(input, init) : Promise.reject(new TypeError("offline: the tests call no one but this machine"));
 export const REFLEXER = "api.reflexer.ai";
 export const CHAT = "https://api.openai.com/v1/chat/completions";
 export const REPLAY = '{"model": "made-up", "replay_response": {"id": "made-up"}}';

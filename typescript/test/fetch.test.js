@@ -274,7 +274,21 @@ describe("Real sockets", () => {
 describe("Majors", () => {
   test("a version is supported on a tested major only", () => {
     index.supported("openai", "7.99.0");
-    assert.throws(() => index.supported("openai", "8.0.0"), /tested on openai 7, not 8.0.0/);
+    assert.throws(() => index.supported("openai", "8.0.0"), /tested on openai 7 from 7\.0\.0, not 8.0.0/);
+  });
+
+  test("a version below its SDK's tested floor throws, as an untested major does", () => {
+    index.supported("@google/genai", "2.29.0");
+    index.supported("@google/genai", "2.30.0");
+    for (const version of ["2.28.0", "2.23.0", "2.9.9"]) assert.throws(() => index.supported("@google/genai", version), /tested on/, version);
+  });
+
+  test("a call that names a google-genai below its floor throws, and nothing is sent", async () => {
+    const own = check.mock(check.served);
+    const call = index.gemini.fetch(key, { fetch: own.fetch })("https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+      { method: "POST", body: "{}", headers: { "user-agent": "google-genai-sdk/2.28.0 gl-node/v24.0.0" } });
+    await assert.rejects(call, /tested on @google\/genai 2 from 2\.29\.0, not 2\.28\.0/);
+    assert.deepEqual(own.seen, []);
   });
 
   test("an untested major of openai or Anthropic throws at import", async () => {

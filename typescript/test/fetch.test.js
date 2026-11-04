@@ -326,6 +326,14 @@ describe("Majors", () => {
     assert.deepEqual(own.seen, []);
   });
 
+  test("LangChain's ChatAnthropic, on the Anthropic SDK's major 0, throws on reflexer's fetch, never misroutes", async () => {
+    const own = check.mock(check.served);
+    const chat = new check.stock.ChatAnthropic({ model: "m", apiKey: "made-up", maxRetries: 0,
+      clientOptions: { fetch: index.anthropic.fetch(key, { fetch: own.fetch }) } });
+    await assert.rejects(chat.invoke("x"), (/** @type {any} */ failure) => /tested on @anthropic-ai\/sdk 1/.test(`${failure} ${failure.cause}`));
+    assert.deepEqual(own.seen, []);
+  });
+
   test("a call through the fetch form that names no provider SDK goes as before", async () => {
     const { fetch, seen } = made(check.served);
     await fetch(check.CHAT, { method: "POST", body: "{}", headers: { "user-agent": "made-up-app/1.0" } });

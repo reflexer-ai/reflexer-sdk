@@ -56,7 +56,7 @@ Also `AzureOpenAI`, from `reflexer/openai`. Or keep the stock class and give it 
     new Anthropic({ apiKey: anthropicKey, fetch: reflexer.anthropic.fetch(reflexerKey) });
     new GoogleGenAI({ apiKey: geminiKey, httpOptions: { fetch: reflexer.gemini.fetch(reflexerKey) } });
 
-A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have.
+A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have. Tested on openai 7, @anthropic-ai/sdk 1 and @google/genai 2 from 2.29.0: a call made by any other release throws.
 
 ## LangChain
 

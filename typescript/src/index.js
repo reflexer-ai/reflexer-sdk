@@ -142,20 +142,25 @@ export const azure = provider(WIRES.azure);
 export const anthropic = provider(WIRES.anthropic);
 export const gemini = provider(WIRES.gemini, (input, init) => globalThis.fetch(input, { dispatcher: /** @type {any} */ (untimed), ...init }));
 
-/** Each provider SDK's majors this is tested on, and how its calls name its version, in their user agent. */
+/**
+ * Each provider SDK's majors this is tested on, its oldest release tested, and how its calls name its version, in their
+ * user agent. google-genai takes a `fetch` from 2.23.0, and adds its untimed dispatcher, which reflexer's line keeps, from 2.29.0.
+ */
 const SDKS = [
-  { name: "openai", majors: [7], label: /OpenAI\/JS ([0-9.]+)/ },
-  { name: "@anthropic-ai/sdk", majors: [1], label: /Anthropic\/JS ([0-9.]+)/ },
-  { name: "@google/genai", majors: [2], label: /\bgoogle-genai-sdk\/([0-9.]+)/ },
+  { name: "openai", majors: [7], floor: "7.0.0", label: /OpenAI\/JS ([0-9.]+)/ },
+  { name: "@anthropic-ai/sdk", majors: [1], floor: "1.0.0", label: /Anthropic\/JS ([0-9.]+)/ },
+  { name: "@google/genai", majors: [2], floor: "2.29.0", label: /\bgoogle-genai-sdk\/([0-9.]+)/ },
 ];
 
 /**
- * A provider SDK runs only on the majors it was tested on: a new major throws, never misroutes.
+ * A provider SDK runs only on the majors it was tested on, from its floor: a new major, or an older release, throws, never misroutes.
  * @param {string} name @param {string} version
  */
 export function supported(name, version) {
-  const { majors } = /** @type {typeof SDKS[0]} */ (SDKS.find((sdk) => sdk.name === name));
-  if (!majors.includes(Number(version.split(".")[0]))) throw new Error(`reflexer is tested on ${name} ${majors}, not ${version}`);
+  const { majors, floor } = /** @type {typeof SDKS[0]} */ (SDKS.find((sdk) => sdk.name === name));
+  const sortable = (/** @type {string} */ text) => text.split(".").map((part) => part.padStart(9, "0")).join("."); // in text order as in version order
+  const fails = !majors.includes(Number(version.split(".")[0])) || sortable(version) < sortable(floor);
+  if (fails) throw new Error(`reflexer is tested on ${name} ${majors} from ${floor}, not ${version}`);
 }
 
 /**

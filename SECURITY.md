@@ -36,6 +36,7 @@ A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` on
 - TypeScript: a call given as a `Request`, or with a streamed body, goes straight; a replay sent that way is not seen as one (P19).
 - TypeScript: the client's timeout covers both legs. When it fires on reflexer's leg, the call fails as a timeout, and the provider SDK's own retry goes straight; if reflexer had already passed the call on, the provider may run it twice.
 - TypeScript: openai's X.509 workload identity takes no custom `fetch`, so a client using it cannot go through reflexer.
+- TypeScript: google-genai before 2.23.0 takes no `fetch`, so its calls go to Google as stock does: reflexer is never used, the key never sent, and the check of its tested floor (2.29.0) cannot run. The package's peer range asks for that floor at install.
 - TypeScript: a client's cancel during reflexer's leg counts as reflexer's failure, and sends the next calls straight for a while. The provider SDKs abort on their own timeout the same way, with no reason given, and a reflexer that hangs must still fall back.
 - TypeScript: `fetch` asks the dispatcher to follow no redirect on reflexer's leg (`maxRedirections: 0`, which undici's redirect interceptor honours); a dispatcher of the client's that follows redirects regardless would carry the key to the redirect's target.
 - A tag's commit carries its own release workflow, so the checks above hold as far as who may push a tag to `main` is trusted: PyPI's environment, with its reviewers, is the gate past that.

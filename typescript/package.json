@@ -35,7 +35,7 @@
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
-    "@google/genai": "^2.0.0",
+    "@google/genai": "^2.29.0",
     "openai": "^7.0.0"
   },
   "peerDependenciesMeta": {
@@ -61,7 +61,7 @@
   },
   "reflexer": {
     "budget": {
-      "lines": 280,
+      "lines": 285,
       "ifs": 41,
       "privateNames": 0
     }

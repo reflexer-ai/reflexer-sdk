@@ -1,0 +1,42 @@
+[project]
+name = "reflexer"
+version = "0.1.0"
+description = "Sends a client's LLM calls through reflexer, on the provider SDK the client already uses."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []  # none, and a gate keeps it so: SECURITY.md
+
+[dependency-groups]
+dev = ["ruff", "semgrep", "zizmor"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reflexer"]
+
+[tool.ruff]
+line-length = 130
+
+[tool.ruff.lint]
+select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real errors
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"socket".msg = "the SDK opens no connection of its own: the client's HTTP client does"
+"subprocess".msg = "the SDK runs nothing"
+"pickle".msg = "the SDK loads no code from data"
+"marshal".msg = "the SDK loads no code from data"
+"ctypes".msg = "no native code"
+"importlib".msg = "the SDK imports by name, in plain sight"
+"urllib.request".msg = "the SDK opens no connection of its own"
+"http.client".msg = "the SDK opens no connection of its own"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "TID251"]
+"tools/**" = ["S"]
+
+[tool.reflexer.budget]  # provisional: grows only in a pull request that says why
+lines = 300
+ifs = 35
+private_names = 0

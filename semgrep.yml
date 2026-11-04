@@ -1,0 +1,23 @@
+rules:
+  - id: log-only-kinds
+    message: The SDK logs what kind of thing happened, never a request's or an answer's content, nor the key.
+    languages: [python]
+    severity: ERROR
+    paths: {include: ["reflexer/"]}
+    patterns:
+      - pattern-either:
+          - pattern: log.$METHOD(...)
+          - pattern: logging.$METHOD(...)
+          - pattern: print(...)
+      - pattern-not: $LOG.$METHOD("...")
+      - pattern-not: $LOG.$METHOD("...", type($X).__name__)
+  - id: key-header-only-in-route
+    message: Only `Reflexer.route` names the key's header, so the key reaches only reflexer's address.
+    languages: [python]
+    severity: ERROR
+    paths: {include: ["reflexer/"]}
+    patterns:
+      - pattern: '"reflexer-key"'
+      - pattern-not-inside: |
+          def route(...):
+              ...

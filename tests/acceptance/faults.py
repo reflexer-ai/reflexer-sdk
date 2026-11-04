@@ -1,7 +1,7 @@
 """Faults planted in the SDK one at a time, each breaking one thing it promises, so that each case is seen to fail when
 what it checks breaks (`test_controls.py`). `run.py --fault NAME` plants one in every case's own forked process, where
 it dies with the case. A fault changes the SDK (`reflexer`) or the client's line (`lines.py`), never a case."""
-import builtins, copy, json, os, signal, subprocess, threading, time, types
+import builtins, copy, json, os, subprocess, time, types
 
 import httpx, httpx2
 from google.genai import types as genai_types
@@ -428,50 +428,91 @@ def a_stall_on_the_return(case):
     standins.Standin.answer = answer
 
 
-# Where a freeze breaks each case judged by real time, as it stands without its steady tries: (the stand-in, the arrival
-# there that starts it, seconds after it, seconds frozen). Each length is past the slack the case allows its bound.
+# Where a freeze breaks each case judged by real time, as it stands without its steady tries, and for how long. Each
+# freeze starts at the event that opens what the case judges, with no delay of its own, so a machine's timing moves it
+# with the case: `arrival(where, nth, after=(other, n))`, while the nth call to reach `where` is in flight, counted
+# from when `other` had n; `holding()`, as a stalled stand-in starts holding a call; `answering(where)`, as `where` makes
+# its first answer, after any delay it was set. Each length is past its slack.
+THAWED_FIRST = 0.05  # seconds the thread that met the event waits after the freeze: the others thaw first, all at once
+
+
+def arrival(where, nth, after=None):
+    return ("arrival", where, nth, after)
+
+
+def holding():
+    return ("holding",)
+
+
+def answering(where):
+    return ("answering", where)
+
+
 FREEZES = {
-    "breaker_opens_on_a_failure":                              ("provider", 2, 0.0, 1.0),  # the next call, quick
-    "no_harm_with_the_sdks_own_retries":                       ("provider", 1, 0.0, 1.8),  # a dead reflexer's call
-    "breaker_backs_off_doubling":                              ("reflexer", 1, 0.9, 0.8),  # the first wait, ended late
-    "breaker_an_answer_resets_the_backoff":                    ("reflexer", 4, 0.5, 1.7),  # the wait after an answer
-    "breaker_counts_calls_in_flight_once":                     ("reflexer", 8, 0.4, 2.0),  # the wait after the failures
-    "breaker_two_straight_headers_are_obeyed_then_it_returns": ("reflexer", 2, 0.1, 3.2),  # straight, then the return
-    "timeout_the_clients_holds_on_reflexers_leg":              ("reflexer", 1, 0.5, 1.5),  # past the client's timeout
-    "async_the_clients_timeout_holds_on_reflexers_leg":        ("reflexer", 1, 0.5, 1.5),
-    "kept_with_options_timeout_holds":                         ("reflexer", 1, 0.5, 1.5),
-    "stall_reflexer_stalled_provider_at_six_tenths":           ("reflexer", 1, 0.5, 1.5),
-    "stall_slow_pass_through_at_seven_tenths":                 ("reflexer", 1, 0.5, 0.6),  # a slow pass through, past the timeout
+    "breaker_opens_on_a_failure":                              (arrival("provider", 2), 1.0),  # the next call, judged quick
+    "no_harm_with_the_sdks_own_retries":                       (arrival("provider", 1), 1.8),  # the one call, judged quick
+    "breaker_backs_off_doubling":                              (arrival("reflexer", 1), 0.8),  # the first failure, noted late
+    "breaker_an_answer_resets_the_backoff":                    (arrival("provider", 2, after=("reflexer", 4)), 2.2),  # its window
+    "breaker_counts_calls_in_flight_once":                     (arrival("provider", 9), 2.0),  # the first call of its window
+    "breaker_two_straight_headers_are_obeyed_then_it_returns": (arrival("provider", 2), 3.2),  # the first call of its window
+    "timeout_the_clients_holds_on_reflexers_leg":              (holding(), 2.0),  # the leg it holds
+    "async_the_clients_timeout_holds_on_reflexers_leg":        (holding(), 2.0),
+    "kept_with_options_timeout_holds":                         (holding(), 2.0),
+    "stall_reflexer_stalled_provider_at_six_tenths":           (holding(), 2.0),
+    "stall_slow_pass_through_at_seven_tenths":                 (answering("reflexer"), 0.6),  # its slow answer, made later
 }
 
 
 def a_freeze(case):
     """The whole machine frozen once, where it breaks the case (`FREEZES`): every thread of the case's process stopped
-    by its own stop signal, and continued by a process of its own."""
+    and continued by a process of its own, the thread that met the event waiting on it."""
     if case not in FREEZES:
         return
-    where, nth, after, seconds = FREEZES[case]
-    real_init, frozen = standins.Standin.__init__, []
+    event, seconds = FREEZES[case]
+    real_init, real_select, real_made = standins.Standin.__init__, standins.select.select, standins.Standin._made
+    frozen, made, counted = [], {}, []
 
     def freeze():
-        subprocess.Popen(["sh", "-c", f"sleep {seconds}; kill -CONT {os.getpid()}"])
-        os.kill(os.getpid(), signal.SIGSTOP)
+        if not frozen:
+            frozen.append(True)
+            here = os.getpid()  # stopped and continued from without; this thread waits out both, so the freeze is in place
+            subprocess.run(["sh", "-c", f"kill -STOP {here}; sleep {seconds}; kill -CONT {here}"], check=True)
+            time.sleep(THAWED_FIRST)
 
     class Seen(list):
         def __init__(self, standin):
             super().__init__()
             self.standin = standin
 
-        def append(self, arrival):
-            super().append(arrival)
-            if self.standin.name == where and len(self) >= nth and not frozen:  # threads append at once
-                frozen.append(arrival)
-                freeze() if not after else threading.Timer(after, freeze).start()  # at once: while its call is in flight
+        def append(self, arrival_):
+            super().append(arrival_)
+            _, where, nth, after = event
+            if self.standin.name != where:
+                return
+            if after is None or len(made[after[0]].seen) >= after[1]:
+                counted.append(arrival_)
+            if len(counted) >= nth:  # threads append at once
+                freeze()
 
     def init(self, *args, **kwargs):
         real_init(self, *args, **kwargs)
-        self.seen = Seen(self)
-    standins.Standin.__init__ = init
+        self.seen, made[self.name] = Seen(self), self
+
+    def select(readable, writable, broken, timeout):  # a stalled stand-in's first poll: its hold has begun
+        freeze()
+        return real_select(readable, writable, broken, timeout)
+
+    def answer_made(self, *args):  # `where` makes its answer
+        if self.name == event[1]:
+            freeze()
+        return real_made(self, *args)
+
+    if event[0] == "holding":
+        standins.select = types.SimpleNamespace(select=select)
+    elif event[0] == "answering":
+        standins.Standin._made = answer_made
+    else:
+        standins.Standin.__init__ = init
 
 
 CONDITIONS = {"late_notice": late_notice, "a_stall_on_the_return": a_stall_on_the_return, "a_freeze": a_freeze}

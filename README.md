@@ -58,6 +58,17 @@ Also `AzureOpenAI`, from `@reflexer-ai/sdk/openai`. Or keep the stock class and 
 
 A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have. Tested on openai 7, @anthropic-ai/sdk 1 and @google/genai 2 from 2.29.0: a call made by any other release throws, where the stock SDK would answer; on google-genai 2.23 to 2.28 too, which stock runs with undici's own timeouts.
 
+## The AI SDK
+
+Its providers take a `fetch`; give them reflexer's, nothing else changes:
+
+    // openai = createOpenAI({ apiKey: openaiKey })
+    openai = createOpenAI({ apiKey: openaiKey, fetch: reflexer.openai.fetch(reflexerKey) });
+    anthropic = createAnthropic({ apiKey: anthropicKey, fetch: reflexer.anthropic.fetch(reflexerKey) });
+    google = createGoogleGenerativeAI({ apiKey: geminiKey, fetch: reflexer.gemini.fetch(reflexerKey) });
+
+On Gemini the AI SDK names the model you asked for, not the answer's; `result.response.headers["reflexer-answered-by"]` says who answered, on every provider.
+
 ## LangChain.js
 
     // chat = new ChatOpenAI({ model })
@@ -74,6 +85,14 @@ A `fetch` of your own carries both reflexer's leg and the provider's: give it as
     chat = reflexer.langchain_gemini.ChatGoogleGenerativeAI(model=model, reflexer_key=reflexer_key)
 
 Or LangChain's own `ChatOpenAI`, given `http_client=reflexer.openai.http_client(reflexer_key)` and `http_async_client=reflexer.openai.async_http_client(reflexer_key)`. `ChatAnthropic` takes no HTTP client, so it has no line here. `configurable_fields` does not work on reflexer's two classes.
+
+## Pydantic AI
+
+Its providers take the provider SDK's client; give them reflexer's:
+
+    OpenAIProvider(openai_client=reflexer.openai.AsyncOpenAI(api_key=openai_key, reflexer_key=reflexer_key))
+    AnthropicProvider(anthropic_client=reflexer.anthropic.AsyncAnthropic(api_key=anthropic_key, reflexer_key=reflexer_key))
+    GoogleProvider(client=reflexer.gemini.Client(api_key=gemini_key, reflexer_key=reflexer_key))
 
 ## What reflexer's answer looks like
 

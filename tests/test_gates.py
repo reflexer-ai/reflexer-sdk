@@ -56,7 +56,10 @@ def semgrep(root=ROOT):
 
 
 def unpinned_build(root):
-    return [name for name in tomllib.loads((root / "pyproject.toml").read_text())["build-system"]["requires"] if "==" not in name]
+    """The build backend, as pyproject.toml names it, unless pinned there and hashed in build-constraints.txt."""
+    constraints = (root / "build-constraints.txt").read_text()
+    return [name for name in tomllib.loads((root / "pyproject.toml").read_text())["build-system"]["requires"]
+            if "==" not in name or f"{name} \\\n    --hash=sha256:" not in constraints]
 
 
 class Gates(unittest.TestCase):
@@ -97,7 +100,7 @@ class Broken(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         for name in ("reflexer", "tools", ".github"):
             shutil.copytree(ROOT / name, self.root / name)
-        for name in ("pyproject.toml", "semgrep.yml", "SECURITY.md"):
+        for name in ("pyproject.toml", "semgrep.yml", "SECURITY.md", "build-constraints.txt"):
             shutil.copy(ROOT / name, self.root / name)
 
     def plant(self, name, text):
@@ -113,6 +116,11 @@ class Broken(unittest.TestCase):
         path = self.root / "pyproject.toml"
         path.write_text(path.read_text().replace('requires = ["hatchling==', 'requires = ["made-up", "hatchling=='))
         self.assertEqual(unpinned_build(self.root), ["made-up"])
+
+    def test_a_build_backend_unhashed_turns_it_red(self):
+        path = self.root / "build-constraints.txt"
+        path.write_text(path.read_text().replace("hatchling==", "made-up=="))
+        self.assertEqual(unpinned_build(self.root), ["hatchling==1.33.0"])
 
     def test_an_import_outside_the_allowlist_turns_it_red(self):
         self.plant("__init__.py", "import made_up_module")

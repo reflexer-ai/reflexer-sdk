@@ -1,7 +1,8 @@
 name: release
 # A tag `v<version>` on a commit of main ships the Python package, `typescript-v<version>` the TypeScript one: only after
-# its audit report is in the tree, every check of ci.yml passes again, and two builds from a fresh checkout, with build
-# dependencies pinned by hash and nothing else installed, come out byte for byte the same. Published with PyPI's and
+# its audit report is in the tree, every check of ci.yml passes again, and two builds come out byte for byte the same:
+# Python's from a fresh checkout, with build dependencies pinned by hash and nothing else installed; npm's each from a
+# checkout of its own, with its own install from the lockfile. Published with PyPI's and
 # npm's trusted publishing, no stored token; PyPI's attestations and npm's provenance tie the files to this workflow.
 on:
   push:
@@ -71,38 +72,42 @@ jobs:
     if: github.event_name != 'push' || startsWith(github.ref_name, 'typescript-v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: typescript
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+          path: first
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          path: second
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
       - name: The tag is the package's version, on a commit of main, and its audit report is here
         if: github.event_name == 'push'
+        working-directory: first/typescript
         env:
           TAG: ${{ github.ref_name }}
         run: |
           test "typescript-v$(node -p 'require("./package.json").version')" = "$TAG"
           git merge-base --is-ancestor HEAD origin/main
           test -s "../audits/$TAG.md"
-      - name: Two builds, the same bytes
+      - name: Two builds, each in a checkout of its own with its own install, the same bytes; and a difference planted is seen
         run: |
-          npm ci --ignore-scripts
-          mkdir ../../first dist
-          npm pack --pack-destination ../../first
-          npm pack --pack-destination dist
-          (cd ../../first && sha256sum ./*) > ../../first.sha256
-          (cd dist && sha256sum -c ../../../first.sha256)
+          for build in first second; do
+            (cd "$build/typescript" && npm ci --ignore-scripts && mkdir dist && npm pack --pack-destination dist)
+          done
+          (cd first/typescript/dist && sha256sum ./*) > first.sha256
+          (cd second/typescript/dist && sha256sum -c ../../../first.sha256)
+          cp -r second/typescript/dist planted && for archive in planted/*.tgz; do printf x >> "$archive"; done
+          if (cd planted && sha256sum -c ../first.sha256 > /dev/null 2>&1); then echo "the comparison missed a planted difference"; exit 1; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: npm
-          path: typescript/dist/
+          path: second/typescript/dist/
           if-no-files-found: error
 
   npm-publish:
@@ -124,4 +129,4 @@ jobs:
           name: npm
           path: dist/
       - name: Publish, with provenance
-        run: npm publish dist/reflexer-*.tgz --provenance --access public
+        run: npm publish dist/reflexer-ai-sdk-*.tgz --provenance --access public

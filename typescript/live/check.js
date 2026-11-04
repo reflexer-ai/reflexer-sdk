@@ -37,16 +37,16 @@ async function call(/** @type {string} */ sdk, /** @type {string} */ key, /** @t
   const own = recorded(), on = { reflexerKey: key, reflexerBase: base, fetch: own.fetch, maxRetries: 0 };
   try {
     if (sdk === "openai") {
-      const { OpenAI } = await import("reflexer/openai");
+      const { OpenAI } = await import("@reflexer-ai/sdk/openai");
       const made = await new OpenAI({ apiKey, baseURL, ...on }).chat.completions.create({ model, messages: [{ role: "user", content: "Say hi" }] });
       return [own.headers(), made.model, /** @type {any} */ (made.usage)?.cost];
     }
     if (sdk === "anthropic") {
-      const { Anthropic } = await import("reflexer/anthropic");
+      const { Anthropic } = await import("@reflexer-ai/sdk/anthropic");
       const made = await new Anthropic({ apiKey, baseURL, ...on }).messages.create({ model, max_tokens: 16, messages: [{ role: "user", content: "Say hi" }] });
       return [own.headers(), made.model, /** @type {any} */ (made.usage)?.cost];
     }
-    const { GoogleGenAI } = await import("reflexer/gemini");
+    const { GoogleGenAI } = await import("@reflexer-ai/sdk/gemini");
     const httpOptions = { fetch: own.fetch, ...(baseURL && { baseUrl: baseURL }) };
     const made = await new GoogleGenAI({ apiKey, reflexerKey: key, reflexerBase: base, httpOptions }).models.generateContent({ model, contents: "Say hi" });
     return [own.headers(), made.modelVersion, undefined]; // gemini's object holds no price: its headers do
@@ -96,7 +96,7 @@ export function replayBroken(headers, text) {
 
 /** A request carrying `replay_response` (OpenAI's format), plain or streamed: [its headers, its text]. */
 async function replayed(/** @type {string} */ key, /** @type {string} */ base, streamed = false) {
-  const { OpenAI } = await import("reflexer/openai");
+  const { OpenAI } = await import("@reflexer-ai/sdk/openai");
   const own = recorded();
   const client = new OpenAI({ apiKey: env("OPENAI_API_KEY"), reflexerKey: key, reflexerBase: base, fetch: own.fetch, maxRetries: 0 });
   const asked = { model: env("OPENAI_MODEL", MODELS.openai), messages: [{ role: /** @type {const} */ ("user"), content: "Say hi" }] };
@@ -114,7 +114,7 @@ async function replayed(/** @type {string} */ key, /** @type {string} */ base, s
 
 /** @param {string[]} sdks */
 export async function main(sdks) {
-  const key = env("REFLEXER_KEY"), base = env("REFLEXER_BASE", "https://api.reflexer.ai");
+  const key = env("REFLEXER_KEY"), base = env("REFLEXER_BASE"); // no default: a key goes to the endpoint named
   let failed = false;
   if (sdks.includes("replay")) {
     for (const [way, streamed] of /** @type {[string, boolean][]} */ ([["replay", false], ["replay, streamed", true]])) {

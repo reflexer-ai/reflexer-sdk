@@ -97,7 +97,7 @@ def replay_broken(headers, text):
 
 
 def main(sdks):
-    key, base, failed = env("REFLEXER_KEY"), env("REFLEXER_BASE", reflexer.BASE), False
+    key, base, failed = env("REFLEXER_KEY"), env("REFLEXER_BASE"), False  # no default: a key goes to the endpoint named
     if "replay" in sdks:
         sdks = [sdk for sdk in sdks if sdk != "replay"]
         for way, replay in (("replay", replayed), ("replay, streamed", replayed_stream)):

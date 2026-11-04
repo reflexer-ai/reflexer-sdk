@@ -1,5 +1,6 @@
 """The live check's own verdicts, on made-up headers: it must fail on a broken wire and pass a sound one."""
 import os, sys, unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "live"))
 import check
@@ -18,6 +19,13 @@ class Judge(unittest.TestCase):
 
     def test_a_straight_call_passes(self):
         self.assertEqual(check.judge({}, "frontier-x", None), [])
+
+
+class Endpoint(unittest.TestCase):
+    def test_no_endpoint_is_taken_by_default(self):
+        with mock.patch.dict(os.environ, {"REFLEXER_KEY": "made-up"}, clear=True), self.assertRaises(SystemExit) as raised:
+            check.main(["openai"])
+        self.assertEqual(str(raised.exception), "set REFLEXER_BASE")
 
 
 class Replay(unittest.TestCase):

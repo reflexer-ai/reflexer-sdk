@@ -1,0 +1,34 @@
+# Acceptance
+
+What the SDK must do, checked through the real provider SDKs over real sockets and real TLS, with no mock transport. Offline: stand-ins play reflexer and the providers on this machine, and nothing here can reach a real one. Every key, model and answer is made up.
+
+## Run
+
+From the repository's root:
+
+    uv run --locked python tests/acceptance/run.py                       # a table, about a minute
+    uv run --locked python tests/acceptance/run.py --only stall --sdk openai
+    uv run --locked python -m unittest tests.acceptance.test_controls    # the controls, a few minutes
+
+`pass`: held. `fail`: broken; the run exits 1. `cannot`: the case cannot apply, and says what the client sees. `open`: a known gap, failing on what is not built yet; reported, not failing the run. `-`: that SDK has no such call. `--json PATH` also writes what each cell saw and measured; the outage traces' phases are under `data`.
+
+## The files
+
+- `cases.py`: each case, run once per SDK it names: `openai`, `azure`, `anthropic`, `gemini` (async: `client.aio`), and `acme`, a made-up provider (`harness/acme.py`) that shows what adding one takes.
+- `lines.py`: the SDK under test, each client made by the one line a client writes.
+- `harness/`: the stand-ins (`standins.py`, its modes at its top), the resolver, the certificates.
+- `faults.py` and `test_controls.py`: the controls. Each fault breaks one thing the SDK promises; the test checks each turns its cases red, and that every case but those it lists, with their reasons, is turned red by some fault. So a green run means something.
+
+## What a case gets
+
+One process per case and SDK, forked after the SDKs are imported, killed at its limit with all it started: its patches and environment die with it, and a hang or a crash fails that case only. Nothing of the caller's environment reaches it (`AMBIENT` in `run.py`).
+
+`t.reflexer`, `t.provider`, `t.elsewhere` (a redirect's target), `t.runner` (plain http, as a model runner on the client's machine) and `t.proxy`. Each stand-in records what reached it in `.seen`: host, path, headers, body. After every case the suite checks that the reflexer key reached no one but reflexer, and that the header skipping reflexer for a call never left the machine.
+
+`harness/resolver.py` makes `api.reflexer.ai`, `api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.groq.com`, `made-up.openai.azure.com`, `api.acme.example`, `elsewhere.example` and `runner.example` (plain http) reach their stand-ins; any other name fails to resolve, and any address off this machine refuses. The certificate authority is made per run and trusted through `SSL_CERT_FILE`.
+
+## Limits
+
+- Real time: bounds carry a margin for a busy machine. The breaker's cap, minutes of failures away, is checked on a clock of its own in `tests/test_logic.py`.
+- At the 1% share a trace reaches reflexer a few times: a direction, not a rate.
+- A dead phase in a trace accepts and resets, so its attempts can be counted; `dead` refuses, and counts nothing.

@@ -39,3 +39,5 @@ The answer is your provider's format, unchanged by this SDK. A served answer's `
 
     uv sync --group dev --group test
     uv run python -m unittest discover -s tests -t .
+    uv run python tests/acceptance/run.py                     # acceptance: tests/acceptance/README.md
+    uv run python -m unittest tests.acceptance.test_controls  # each fault planted in the SDK turns its cases red

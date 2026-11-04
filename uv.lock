@@ -1559,10 +1559,10 @@ dev = [
 ]
 test = [
     { name = "anthropic", specifier = ">=2,<3" },
-    { name = "cryptography" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "google-genai", specifier = ">=2,<3" },
-    { name = "httpx" },
-    { name = "httpx2" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "httpx2", specifier = ">=2.14" },
     { name = "openai", specifier = ">=3,<4" },
 ]
 

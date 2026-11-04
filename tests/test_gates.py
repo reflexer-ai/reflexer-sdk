@@ -4,7 +4,7 @@ import ast, pathlib, shutil, subprocess, sys, tempfile, tomllib, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
-import budget, promises
+import budget, majors, promises
 
 STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata", "ipaddress", "json", "logging", "random", "re",
                "time", "urllib.parse"}
@@ -81,6 +81,9 @@ class Gates(unittest.TestCase):
 
     def test_workflows_clean(self):
         self.assertEqual(zizmor(), 0)
+
+    def test_the_majors_check_reads_every_provider_file(self):
+        self.assertEqual(majors.tested(ROOT), {"openai": [3], "anthropic": [2], "google-genai": [2]})
 
     def test_every_promise_is_held_and_can_fail(self):
         self.assertEqual(promises.problems(ROOT), [])
@@ -214,6 +217,10 @@ class Broken(unittest.TestCase):
         path = self.root / "SECURITY.md"
         path.write_text(path.read_text() + "\n- **P99** made up\n")
         self.assertIn("a promise outside the table: P99", promises.problems(self.root))
+
+    def test_a_new_major_turns_the_majors_check_red(self):
+        self.assertEqual(majors.untested({"openai": [3]}, {"openai": "4.0.0"}), ["openai 4.0.0: tested on majors [3]"])
+        self.assertEqual(majors.untested({"openai": [3]}, {"openai": "3.99.0"}), [])
 
     def test_a_promise_with_no_check_turns_it_red(self):
         path = self.root / "SECURITY.md"

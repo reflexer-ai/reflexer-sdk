@@ -103,8 +103,12 @@ class Replay(unittest.TestCase):
         import openai
         client, seen, _ = wrapped(busy)
         sdk = openai.OpenAI(api_key="made-up", http_client=client, max_retries=0)
-        with self.assertRaises(reflexer.ReplayNotTaken):
+        with self.assertRaises(Exception) as raised:  # openai 3.0 wraps it in its connection error; later releases do not
             sdk.chat.completions.create(model="frontier-x", messages=[], extra_body={"replay_response": {"id": "made-up"}})
+        chain, error = [], raised.exception
+        while error is not None:
+            chain, error = chain + [type(error)], error.__cause__
+        self.assertIn(reflexer.ReplayNotTaken, chain)
         self.assertEqual(self.hosts(seen), ["api.reflexer.ai"])
 
     def test_an_escaped_field_name_is_a_replay(self):

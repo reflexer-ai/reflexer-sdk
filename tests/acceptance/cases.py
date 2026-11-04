@@ -786,7 +786,7 @@ def fields_leave_a_responses_bytes_untouched(t):
 @case("fields", sdks=("openai", "azure"))
 def fields_an_object_with_no_room_keeps_its_answer(t):
     client = t.client()
-    made = client.post("/chat/completions", body={"model": harness.MODEL[t.sdk], "messages": harness.MESSAGES}, cast_to=dict)
+    made = client.post("/chat/completions", body={"model": harness.MODEL[t.sdk], "messages": harness.MESSAGES}, cast_to=dict[str, object])  # a bare `dict` raises in openai 3.0
     t.check(made.get("model") == "frontier-x-reflexer", f"got {made}")
 
 

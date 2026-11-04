@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_call:  # the release runs every check again, from this one definition
 
+concurrency:  # a newer push to a pull request stops the run it replaces
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -50,7 +54,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "22", "24"]
+        # a pull request runs the oldest and newest; main and a release, all
+        node: ${{ github.event_name == 'pull_request' && fromJSON('["20", "24"]') || fromJSON('["20", "22", "24"]') }}
     defaults:
       run:
         working-directory: typescript
@@ -80,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.10", "3.14"]') || fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

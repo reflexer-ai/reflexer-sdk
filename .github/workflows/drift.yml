@@ -1,9 +1,9 @@
 name: drift
-# The provider SDKs move under the client: each day, the SDK's tests on their newest and their oldest supported releases,
+# The provider SDKs move under the client: each week while the repository is private (each day once public), the SDK's tests on their newest and their oldest supported releases,
 # and a check that no new major has come out untested. A red run opens an issue.
 on:
   schedule:
-    - cron: "17 6 * * *"
+    - cron: "17 6 * * 1"  # weekly while the repository is private, for its CI minutes
   workflow_dispatch:
 
 permissions:

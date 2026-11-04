@@ -1,8 +1,10 @@
 """LangChain's ChatOpenAI, through reflexer: `ChatOpenAI(**config)` becomes
 `reflexer.langchain_openai.ChatOpenAI(**config, reflexer_key=key)`. Its public arguments alone."""
 import langchain_openai, openai, os
-from . import BASE
+from . import BASE, supported
 from .openai import async_http_client, http_client
+
+supported("langchain-openai", [1])
 
 
 class ChatOpenAI(langchain_openai.ChatOpenAI):

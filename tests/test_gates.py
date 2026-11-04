@@ -1,6 +1,6 @@
 """The static promises, and a planted fault for each that shows its gate can fail. Offline, no network.
 Run: uv run --group dev python -m unittest tests.test_gates"""
-import ast, pathlib, shutil, subprocess, sys, tempfile, tomllib, unittest
+import ast, pathlib, re, shutil, subprocess, sys, tempfile, tomllib, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -64,7 +64,20 @@ def unpinned_build(root):
             if "==" not in name or f"{name} \\\n    --hash=sha256:" not in constraints]
 
 
+HOME, MAC, AGENT = "/" + "home/", "/" + "Users/", "." + "claude/"  # in parts, so this file does not name them whole
+LOCAL = re.compile("|".join(re.escape(part) for part in (HOME, MAC, AGENT)) + r"|[A-Z]:\\\\Users\\\\")  # a person's machine
+
+
+def local_paths(root):
+    """Every tracked file naming a path on someone's machine: it would ship in the source archive."""
+    names = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True).stdout.split("\0")
+    return [name for name in names if name and (root / name).is_file() and LOCAL.search((root / name).read_text(errors="replace"))]
+
+
 class Gates(unittest.TestCase):
+    def test_no_local_path_in_any_file(self):
+        self.assertEqual(local_paths(ROOT), [])
+
     def test_no_dependency(self):
         self.assertEqual(dependencies(ROOT), [])
 
@@ -88,7 +101,8 @@ class Gates(unittest.TestCase):
         self.assertEqual(zizmor(), 0)
 
     def test_the_majors_check_reads_every_provider_file(self):
-        self.assertEqual(majors.tested(ROOT), {"openai": [3], "anthropic": [2], "google-genai": [2]})
+        self.assertEqual(majors.tested(ROOT), {"openai": [3], "anthropic": [2], "google-genai": [2], "langchain-openai": [1],
+                                               "langchain-google-genai": [4]})
 
     def test_every_promise_is_held_and_can_fail(self):
         self.assertEqual(promises.problems(ROOT), [])
@@ -231,6 +245,32 @@ class Broken(unittest.TestCase):
     def test_a_new_major_turns_the_majors_check_red(self):
         self.assertEqual(majors.untested({"openai": [3]}, {"openai": "4.0.0"}), ["openai 4.0.0: tested on majors [3]"])
         self.assertEqual(majors.untested({"openai": [3]}, {"openai": "3.99.0"}), [])
+
+    def test_a_module_reached_through_another_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import logging\nmade_up = logging.sys.modules["socket"]')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_socket_handler_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import logging.handlers\nmade_up = logging.handlers.SocketHandler("made-up", 1)')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_command_through_another_module_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import inspect\ndef made_up():\n    inspect.os.system("made-up")')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_the_keys_header_formatted_turns_semgrep_red(self):
+        self.plant("__init__.py", 'OURS = "reflexer-"\ndef made_up(headers, key):\n    headers["{}key".format(OURS)] = key')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_the_keys_header_in_another_route_turns_semgrep_red(self):
+        self.plant("__init__.py", 'class MadeUp:\n    def route(self, headers, key):\n        headers["reflexer-key"] = key')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_local_path_turns_it_red(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "made_up.txt").write_text(f"# made from {HOME}made-up/notes.in\n")
+        subprocess.run(["git", "-C", str(self.root), "add", "made_up.txt"], check=True)
+        self.assertEqual(local_paths(self.root), ["made_up.txt"])
 
     def test_a_promise_with_no_check_turns_it_red(self):
         path = self.root / "SECURITY.md"

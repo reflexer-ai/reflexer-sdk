@@ -153,6 +153,13 @@ class GeminisArguments(unittest.TestCase):
         both = reflexer.gemini.client_args(KEY)["transport"]
         self.assertIsInstance(both.through(Mine("POST", "https://example.invalid/")).inner, httpx2.Client)
 
+    def test_its_clients_closed_by_one_genai_client_are_made_again_for_the_next(self):
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        request = httpx.Request("POST", "https://example.invalid/")
+        both.through(request)
+        both.close()  # what one genai client does on its way out, when several share these arguments
+        self.assertFalse(both.through(request).inner.is_closed)
+
     def test_threads_at_first_use_share_one_client(self):
         import threading
         both, made = reflexer.gemini.client_args(KEY)["transport"], []

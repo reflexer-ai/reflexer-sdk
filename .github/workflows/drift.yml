@@ -24,14 +24,15 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: false
+          version: "0.11.7"
       - name: The SDK's tests on these releases
         env:
           RESOLUTION: ${{ matrix.resolution }}
         run: |
           uv venv drift
           uv pip install --python drift --resolution "$RESOLUTION" --group test -e .
-          uv pip list --python drift | grep -E "^(openai|anthropic|google-genai|httpx|httpx2) "
-          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises
+          uv pip list --python drift | grep -E "^(openai|anthropic|google-genai|httpx|httpx2|langchain-openai|langchain-google-genai) "
+          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain
           drift/bin/python tests/acceptance/run.py
 
   majors:

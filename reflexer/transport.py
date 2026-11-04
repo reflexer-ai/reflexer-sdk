@@ -156,8 +156,8 @@ class Both:
 
     def through(self, request, is_async=False):
         library, made = self.library_of(request), self.made[is_async]
-        with self.lock:
-            if library not in made:
+        with self.lock:  # one SDK client closing them, when several share these arguments, closes them for the next only
+            if library not in made or made[library].inner.is_closed:
                 made[library] = self.makers[is_async](library)
         return made[library]
 

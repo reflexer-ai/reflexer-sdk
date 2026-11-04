@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:  # the release runs every check again, from this one definition
 
 permissions:
   contents: read
@@ -19,6 +20,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: false
+          version: "0.11.7"
       - name: Tools
         run: uv sync --locked --group dev --group test
       - name: Gates and tests, each gate with its planted fault
@@ -56,11 +58,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: false
+          version: "0.11.7"
       - name: The SDK's tests on each Python it supports
         env:
           PYTHON: ${{ matrix.python }}
         run: |
           uv sync --locked --no-default-groups --group test --python "$PYTHON"
-          uv run --locked --no-default-groups --group test python -m unittest tests.test_logic tests.test_transport tests.test_promises
+          uv run --locked --no-default-groups --group test python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain
           uv run --locked --no-default-groups --group test python tests/acceptance/run.py
 

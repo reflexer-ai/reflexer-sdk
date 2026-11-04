@@ -4,7 +4,7 @@ What this SDK promises, and what holds each promise. Every promise names a check
 
 | Promise | Held by | Shown able to fail by |
 |---|---|---|
-| **P1** No dependency: the package requires nothing, and its build backend is pinned. | `test:tests/test_gates.py::Gates::test_no_dependency`, `test:tests/test_gates.py::Gates::test_the_build_backend_is_pinned` | `test:tests/test_gates.py::Broken::test_a_dependency_turns_it_red`, `test:tests/test_gates.py::Broken::test_an_unpinned_build_backend_turns_it_red` |
+| **P1** No dependency: the package requires nothing, and its build backend is pinned and hashed, with what it pulls in. | `test:tests/test_gates.py::Gates::test_no_dependency`, `test:tests/test_gates.py::Gates::test_the_build_backend_is_pinned` | `test:tests/test_gates.py::Broken::test_a_dependency_turns_it_red`, `test:tests/test_gates.py::Broken::test_an_unpinned_build_backend_turns_it_red`, `test:tests/test_gates.py::Broken::test_a_build_backend_unhashed_turns_it_red` |
 | **P2** Each file imports only the standard library, and a provider file only that provider's SDK, which the client already has. | `test:tests/test_gates.py::Gates::test_imports_are_allowed` | `test:tests/test_gates.py::Broken::test_an_import_outside_the_allowlist_turns_it_red`, `test:tests/test_gates.py::Broken::test_a_file_with_no_allowlist_turns_it_red`, `test:tests/test_gates.py::Broken::test_a_module_reached_through_sys_turns_it_red` |
 | **P3** No connection, process, native code or code loaded from data of the SDK's own: every call goes by the client's HTTP client. | `ruff:S`, `ruff:TID251`, `semgrep:no-dynamic-code` | `test:tests/test_gates.py::Broken::test_a_socket_turns_ruff_red`, `test:tests/test_gates.py::Broken::test_a_dynamic_import_turns_ruff_red`, `test:tests/test_gates.py::Broken::test_an_eval_turns_ruff_red`, `test:tests/test_gates.py::Broken::test_a_builtin_import_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_importlibs_import_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_an_entry_point_loaded_turns_semgrep_red` |
 | **P4** Nothing a request or an answer holds is logged, printed or written out, nor the key, nor a traceback: only what kind of thing happened. A finding cannot be silenced inline. | `semgrep:log-only-kinds`, `semgrep:no-traceback-in-a-log` | `test:tests/test_gates.py::Broken::test_a_logged_body_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_a_logged_body_by_another_logger_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_a_printed_body_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_a_logged_exception_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_a_body_written_to_stderr_turns_semgrep_red`, `test:tests/test_gates.py::Broken::test_a_suppressed_finding_turns_semgrep_red` |
@@ -17,12 +17,15 @@ What this SDK promises, and what holds each promise. Every promise names a check
 | **P11** A request carrying `replay_response`, which bypasses the provider by design, never reaches it: it goes to reflexer or raises. For a body sent as bytes, as the provider SDKs send it. | `test:tests/test_promises.py::Promises::test_a_replay_never_reaches_the_provider` | `test:tests/test_promises.py::Broken::test_no_replay_guard_turns_it_red` |
 | **P12** Each promise here is held and shown able to fail. | `test:tests/test_gates.py::Gates::test_every_promise_is_held_and_can_fail` | `test:tests/test_gates.py::Broken::test_a_promise_with_no_check_turns_it_red`, `test:tests/test_gates.py::Broken::test_a_check_that_does_not_exist_turns_it_red`, `test:tests/test_gates.py::Broken::test_a_row_not_of_the_form_turns_it_red`, `test:tests/test_gates.py::Broken::test_a_promise_written_elsewhere_turns_it_red` |
 
+## What ships
+
+A release (`.github/workflows/release.yml`) ships only after its audit report is in `audits/`, every check passes again, and two builds come out byte for byte the same, from build dependencies pinned by hash. It is published by PyPI's trusted publishing, with no stored token, and PyPI's attestations tie each file to that workflow. The source archive holds the tests, so a client can run every check on its own machine.
+
 ## Known limits
 
 - A call reflexer is slow on: when the client's timeout fires on reflexer's leg, or a load balancer in front of reflexer gives up on it (a 504), the call goes to the provider with the same timeout, so the client may wait up to twice it; if reflexer had already passed the call on, the provider may run it twice.
 - A `base_url` on a private name: the SDK cannot tell a private name from a public one, so the call and its headers go to reflexer first, which cannot reach the host and sends the call back; it then goes to the host directly.
 - A replay sent as a streamed body is not seen as one (P11).
-- The build backend is pinned by version, not yet by hash, nor are its own dependencies; release builds will take them from a hashed constraints file.
 - Ruff's inline `noqa` can silence a finding; the package holds three, each with its reason, for a header's name and for random numbers that guard no secret.
 
 ## Reporting a vulnerability

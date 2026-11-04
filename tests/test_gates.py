@@ -6,14 +6,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 import budget, promises
 
-STDLIB_CORE = {"base64", "copy", "functools", "sys", "hashlib", "importlib.metadata", "ipaddress", "json", "logging", "random", "re",
+STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata", "ipaddress", "json", "logging", "random", "re",
                "time", "urllib.parse"}
 ALLOWED = {  # what each file may import: the standard library, and the provider SDK the client already has, in its own file
     "__init__.py": STDLIB_CORE,
     "transport.py": STDLIB_CORE,
     "openai.py": {"openai"},
     "anthropic.py": {"anthropic"},
-    "gemini.py": {"httpx", "inspect", "google"},
+    "gemini.py": {"httpx", "httpx2", "inspect", "google"},
 }
 
 
@@ -52,7 +52,7 @@ def zizmor(root=ROOT):
 
 
 def semgrep(root=ROOT):
-    return tool("semgrep", "scan", "--quiet", "--error", "--metrics=off", "--no-git-ignore", "--config", "semgrep.yml", ".", root=root)  # the rules pick their own paths
+    return tool("semgrep", "scan", "--quiet", "--error", "--metrics=off", "--no-git-ignore", "--disable-nosem", "--config", "semgrep.yml", ".", root=root)  # the rules pick their own paths
 
 
 def unpinned_build(root):
@@ -181,6 +181,39 @@ class Broken(unittest.TestCase):
         path = self.root / "SECURITY.md"
         path.write_text(path.read_text().replace("| **P1** ", "| P1 ", 1))
         self.assertTrue(any(p.startswith("a promise row not of the form: | P1 ") for p in promises.problems(self.root)))
+
+    def test_a_module_reached_through_sys_turns_it_red(self):
+        self.plant("__init__.py", 'import sys\nmade_up = sys.modules["socket"]')
+        self.assertIn("__init__.py: sys", imports_not_allowed(self.root))
+
+    def test_importlibs_import_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import importlib\nmade_up = importlib.__import__("socket")')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_an_entry_point_loaded_turns_semgrep_red(self):
+        self.plant("__init__.py", 'from importlib.metadata import entry_points\nmade_up = [e.load() for e in entry_points(group="x")]')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_body_written_to_stderr_turns_semgrep_red(self):
+        self.plant("__init__.py", 'import sys\ndef made_up(body):\n    sys.stderr.write(body)')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_suppressed_finding_turns_semgrep_red(self):
+        self.plant("__init__.py", 'def made_up(body):\n    print(body)  # nosemgrep')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_the_keys_header_built_in_other_case_turns_semgrep_red(self):
+        self.plant("__init__.py", 'OURS = "reflexer-"\ndef made_up(headers, key):\n    headers[OURS + "Key"] = key')
+        self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_harmless_log_or_exception_of_anothers_stays_green(self):
+        self.plant("__init__.py", "import math\nmade_up = math.log(2)\ndef other(task):\n    return task.exception()")
+        self.assertEqual(semgrep(self.root), 0)
+
+    def test_a_promise_written_elsewhere_turns_it_red(self):
+        path = self.root / "SECURITY.md"
+        path.write_text(path.read_text() + "\n- **P99** made up\n")
+        self.assertIn("a promise outside the table: P99", promises.problems(self.root))
 
     def test_a_promise_with_no_check_turns_it_red(self):
         path = self.root / "SECURITY.md"

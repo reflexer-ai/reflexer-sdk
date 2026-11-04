@@ -5,7 +5,7 @@ request, which never holds our key. Under it, `Through` sends each exchange by t
 its proxies, TLS and connections hold. No private name is read, no class of the SDK's or the library's changes, and no
 answer is touched.
 """
-import copy, functools, sys
+import copy, functools, threading
 from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
@@ -147,15 +147,18 @@ def without_its_cookie(answer):
 
 class Both:
     """One transport for both of an SDK's HTTP clients, for what takes one set of arguments for the two (`client_args`).
-    Its HTTP clients are made on first use, of the HTTP library the request is of: the SDK picks it, not this."""
+    Its HTTP clients are made on first use, of the HTTP library the request is of: the SDK picks it, not this.
+    `library_of(request)`, that library; `make(library)` and `make_async(library)`, a `Through` over a client of it."""
 
-    def __init__(self, make, make_async):
-        self.makers, self.made = {False: make, True: make_async}, {False: {}, True: {}}
+    def __init__(self, library_of, make, make_async):
+        self.library_of, self.makers, self.made = library_of, {False: make, True: make_async}, {False: {}, True: {}}
+        self.lock = threading.Lock()  # threads at first use share one client
 
     def through(self, request, is_async=False):
-        library, made = sys.modules[type(request).__module__.partition(".")[0]], self.made[is_async]
-        if library not in made:
-            made[library] = self.makers[is_async](library)
+        library, made = self.library_of(request), self.made[is_async]
+        with self.lock:
+            if library not in made:
+                made[library] = self.makers[is_async](library)
         return made[library]
 
     def handle_request(self, request):

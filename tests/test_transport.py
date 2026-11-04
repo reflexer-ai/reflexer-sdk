@@ -142,6 +142,24 @@ class Copies(unittest.TestCase):
 
 
 class GeminisArguments(unittest.TestCase):
+    def test_a_request_of_a_subclass_finds_its_library(self):
+        class Mine(httpx2.Request):
+            pass
+
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        self.assertIsInstance(both.through(Mine("POST", "https://example.invalid/")).inner, httpx2.Client)
+
+    def test_threads_at_first_use_share_one_client(self):
+        import threading
+        both, made = reflexer.gemini.client_args(KEY)["transport"], []
+        threads = [threading.Thread(target=lambda: made.append(both.through(httpx2.Request("POST", "https://example.invalid/"))))
+                   for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len({id(through) for through in made}), 1)
+
     def test_either_http_library_of_geminis_gets_its_own_kind_of_client(self):
         both = reflexer.gemini.client_args(KEY)["transport"]
         for library in (httpx, httpx2):

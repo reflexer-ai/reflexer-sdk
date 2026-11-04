@@ -5,6 +5,11 @@ A served answer's model and id are at `model_version` and `response_id`; reflexe
 """
 import httpx, inspect
 from google import genai
+try:
+    import httpx2
+    LIBRARIES = (httpx2, httpx)  # either, as google-genai is set to use
+except ImportError:
+    LIBRARIES = (httpx,)
 from . import BASE, Reflexer, supported
 from .transport import Both, Through, setup_http_client
 
@@ -29,6 +34,10 @@ def own_client(kind, given, arguments):
 ABOVE = ("event_hooks", "auth", "params", "headers", "cookies", "timeout", "follow_redirects", "max_redirects", "base_url")  # what the outer client acts on
 
 
+def library_of(request):
+    return next((library for library in LIBRARIES if isinstance(request, library.Request)), httpx)
+
+
 def client_args(key, own=None, base=BASE, sample=1.0):
     """What to give as both `client_args` and `async_client_args`, for what builds its own `genai.Client` and takes only
     those. `own`, the client's own: split as `setup_http_client`
@@ -36,7 +45,7 @@ def client_args(key, own=None, base=BASE, sample=1.0):
     own, one = own or {}, Reflexer(key, GENERATE, base, sample)
     below = {name: value for name, value in own.items() if name not in ABOVE}
     above = {name: value for name, value in own.items() if name in ABOVE}
-    return {"follow_redirects": True} | above | {"transport": Both(lambda library: Through(one, own_client(library.Client, None, below)),
+    return {"follow_redirects": True} | above | {"transport": Both(library_of, lambda library: Through(one, own_client(library.Client, None, below)),
                                                                    lambda library: Through(one, own_client(library.AsyncClient, None, below)))}
 
 

@@ -47,7 +47,9 @@ def rows_not_of_the_form(text):
 def problems(root=ROOT):
     text = (root / "SECURITY.md").read_text()
     table = promises(text)
-    found = ([] if table else ["SECURITY.md lists no promise"]) + rows_not_of_the_form(text)
+    outside = [f"a promise outside the table: {name}" for line in text.splitlines() if not ROW.match(line)
+               for name in re.findall(r"\*\*(P\d+)\*\*", line)]
+    found = ([] if table else ["SECURITY.md lists no promise"]) + rows_not_of_the_form(text) + outside
     for promise, (held_by, broken_by) in table.items():
         if not held_by:
             found.append(f"{promise}: held by no check")

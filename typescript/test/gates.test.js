@@ -1,6 +1,7 @@
 // The package's static promises, and a planted fault for each that shows its gate can fail. Offline.
 import * as acorn from "acorn";
 import * as walk from "acorn-walk";
+import * as scope from "eslint-scope";
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,9 +17,14 @@ const ALLOWED = {
   "anthropic.js": ["@anthropic-ai/sdk", "@anthropic-ai/sdk/version", "./index.js"],
   "gemini.js": ["@google/genai", "./index.js"],
 };
-// The globals the source may read: none reaches a module, a process, a socket, or code made from text
-const GLOBALS = new Set(["Array", "ArrayBuffer", "BigInt", "Error", "Headers", "JSON", "Math", "Number", "Object", "RegExp", "Request",
-  "String", "Symbol", "TextDecoder", "TypeError", "URL", "WeakMap", "console", "globalThis", "parseInt", "performance", "undefined"]);
+// The globals the source may read, and of some only these members: none reaches a module, a process, a socket, or code made from text
+const GLOBALS = new Map(Object.entries({
+  AbortController: null, AbortSignal: ["any"], Array: null, ArrayBuffer: null, BigInt: null, DOMException: null, Error: null, Headers: null,
+  JSON: ["parse"], Math: null, Number: null, Object: ["defineProperty", "entries", "fromEntries", "hasOwn", "keys"], RegExp: null,
+  Request: null, String: null, Symbol: ["for"], TextDecoder: null, TypeError: null, URL: null, WeakMap: null, clearTimeout: null,
+  console: null, globalThis: ["fetch"], parseInt: null, performance: null, setTimeout: null, undefined: null,
+}));
+const DISPATCHER = 'Symbol.for("undici.globalDispatcher.1")'; // the one member of `globalThis` reached by a computed name
 const REFUSED = new Set(["constructor", "prototype", "__proto__"]); // a way from a value to the code that made it
 
 /** @param {string} root */
@@ -28,7 +34,7 @@ async function sources(root) {
 }
 
 /** @param {string} text */
-const parse = (text) => acorn.parse(text, { ecmaVersion: "latest", sourceType: "module", locations: true });
+const parse = (text) => acorn.parse(text, { ecmaVersion: "latest", sourceType: "module", locations: true, ranges: true });
 
 /** @param {string} root */
 async function manifest(root) {
@@ -42,9 +48,10 @@ async function dependencies(root) {
 }
 
 /**
- * Each file's imports outside its allowlist, and each way around it: a dynamic import, a global not listed (a bare `fetch`,
- * `global`, `process`, `Reflect`, `Function`), `globalThis` but for its `fetch` and Node's dispatcher, a member reached by a
- * name computed at run time, or a way to the code that made a value.
+ * Each file's imports outside its allowlist, and each way around it: a dynamic import, a global not listed or a member of
+ * it not listed (a bare `fetch`, `global`, `process`, `Reflect`, `Function`, `Object.getPrototypeOf`), a member reached by
+ * a name computed at run time but Node's dispatcher, written in place, or a way to the code that made a value. Globals are
+ * the names no scope declares, as eslint-scope reads them.
  * @param {string} root
  */
 async function importsNotAllowed(root) {
@@ -55,21 +62,28 @@ async function importsNotAllowed(root) {
       found.push(`${name}: a file with no import allowlist`);
       continue;
     }
-    const declared = new Set(), read = /** @type {[string, any][]} */ ([]);
-    walk.fullAncestor(parse(text), (/** @type {any} */ node, _, /** @type {any[]} */ ancestors, /** @type {string} */ type) => {
-      const parent = ancestors[ancestors.length - 2];
-      if (node.type === "Identifier") (type === "VariablePattern" ? declared.add(node.name) : read.push([node.name, parent]));
-      if (node.type.startsWith("Import") && node.type.endsWith("Specifier")) declared.add(node.local.name);
+    const tree = parse(text), parents = new Map();
+    walk.fullAncestor(tree, (/** @type {any} */ node, _, /** @type {any[]} */ ancestors) => {
+      parents.set(node, ancestors[ancestors.length - 2]);
       if (node.type.endsWith("Declaration") && node.source && !allowed.includes(node.source.value)) found.push(`${name}: ${node.source.value}`);
       if (node.type === "ImportExpression" || node.type === "MetaProperty") found.push(`${name}: a dynamic import`);
       if (node.type === "Literal" && REFUSED.has(node.value)) found.push(`${name}: ${node.value}`);
       if (node.type === "MemberExpression" && !node.computed && REFUSED.has(node.property.name)) found.push(`${name}: ${node.property.name}`);
       if (node.type === "MemberExpression" && node.computed && node.property.type !== "Literal"
-        && !(node.object.name === "globalThis" && node.property.name === "DISPATCHER")) found.push(`${name}: a member by a computed name`);
+        && !(node.object.name === "globalThis" && text.slice(node.property.start, node.property.end) === DISPATCHER)) {
+        found.push(`${name}: a member by a computed name`);
+      }
     });
-    for (const [global, parent] of read.filter(([global]) => !declared.has(global))) {
-      const member = parent?.type === "MemberExpression" && parent.object.name === global ? parent.property.name : undefined;
-      if (!GLOBALS.has(global) || (global === "globalThis" && !["fetch", "DISPATCHER"].includes(member))) found.push(`${name}: ${global}`);
+    const { globalScope } = scope.analyze(/** @type {any} */ (tree), { ecmaVersion: 2022, sourceType: "module" });
+    const module = new Set(globalScope?.childScopes[0]?.set.keys()); // its own, read as global where an `eval` could change them
+    for (const { identifier } of (globalScope?.through ?? []).filter(({ identifier }) => !module.has(identifier.name))) {
+      const parent = parents.get(identifier), members = GLOBALS.get(identifier.name);
+      const member = parent?.type === "MemberExpression" && parent.object === identifier
+        ? (parent.computed ? text.slice(parent.property.start, parent.property.end) : parent.property.name) : undefined;
+      if (members === undefined) found.push(`${name}: ${identifier.name}`);
+      else if (members && !(members.includes(member) || (identifier.name === "globalThis" && member === DISPATCHER))) {
+        found.push(`${name}: ${identifier.name}${member === undefined ? "" : `.${member}`}`);
+      }
     }
   }
   return found;
@@ -176,14 +190,19 @@ describe("Broken", () => {
       ['const made = fetch("https://made-up.example/x");', "fetch"],
       ['const made = process.binding("tcp_wrap");', "process"],
       ['const made = global.process.getBuiltinModule("child_process");', "global"],
-      ["const made = globalThis.process;", "globalThis"],
-      ['const made = globalThis["pro" + "cess"];', "a member by a computed name", "globalThis"],
-      ['const made = Reflect.get(Object.getPrototypeOf(() => {}), "constr" + "uctor")("return 1");', "Reflect"],
-      ['const made = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor");', "constructor"],
+      ["const made = globalThis.process;", "globalThis.process"],
+      ['const made = globalThis["pro" + "cess"];', "a member by a computed name", 'globalThis."pro" + "cess"'],
+      ['const made = Reflect.get(Object.getPrototypeOf(() => {}), "constr" + "uctor")("return 1");', "Reflect", "Object.getPrototypeOf"],
+      ['const made = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor");', "constructor",
+        "Object.getOwnPropertyDescriptor", "Object.getPrototypeOf"],
       ['const made = eval("1");', "eval"],
       ['const made = new Function("return 1");', "Function"],
       ['const made = (() => {}).constructor("return 1");', "constructor"],
       ['const made = new WebSocket("wss://made-up.example");', "WebSocket"],
+      ["const made = (process) => process;\nexport const other = () => process.version;", "process"], // a name trusted in one scope only
+      ['const DISPATCHER = "pro" + "cess";\nexport const made = globalThis[DISPATCHER];', "a member by a computed name", "globalThis.DISPATCHER"],
+      ["const made = Object.values(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => {})));",
+        "Object.values", "Object.getOwnPropertyDescriptors", "Object.getPrototypeOf"],
     ]) {
       assert.deepEqual(await importsNotAllowed(await plant("src/logic.js", text)), problems.map((problem) => `logic.js: ${problem}`), text);
     }

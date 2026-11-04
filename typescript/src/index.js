@@ -9,7 +9,7 @@ export * from "./logic.js";
 
 /** @typedef {import("./logic.js").Wire} Wire */
 /** @typedef {(input: string | URL | Request, init?: RequestInit) => Promise<Response>} Fetch */
-/** @typedef {{ key: string, base?: string, sample?: number, fetch?: Fetch }} Way */
+/** @typedef {{ key: string, base?: string, sample?: number, fetch?: Fetch, headersTimeout?: number }} Way */
 
 /** The wire formats: each provider's call paths, and reflexer's path for them. */
 export const WIRES = {
@@ -21,6 +21,7 @@ export const WIRES = {
 };
 
 const KEPT = ["method", "signal", "dispatcher"]; // of a client's request options, what reflexer's request keeps
+export const HEADERS_TIMEOUT = 300_000; // ms reflexer's leg waits for its answer to start: undici's own default, provisional
 const WAYS = new WeakMap(); // each fetch made here, and its way, for an SDK's copy of a client
 
 /**
@@ -37,10 +38,11 @@ function through(wire, way) {
 
   /** @type {Fetch} */
   async function routed(input, init = {}) {
+    tested(new Headers(init.headers));
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {
-        const answer = await send(...ours);
+        const answer = await bounded(send, ours, way.headersTimeout ?? HEADERS_TIMEOUT);
         if (!reflexer.goesStraight(answer.status, answer.headers)) return answer;
         await answer.body?.cancel();
       }
@@ -52,6 +54,21 @@ function through(wire, way) {
 
   WAYS.set(routed, way);
   return routed;
+}
+
+/**
+ * Reflexer's leg, failing when its answer has not started within `ms`: a reflexer that hangs still falls back, whatever
+ * the client's own timeout. Once the answer starts, it runs as the client's would.
+ * @param {Fetch} send @param {[string, RequestInit]} ours @param {number} ms
+ */
+async function bounded(send, [url, init], ms) {
+  const late = new AbortController();
+  const clock = setTimeout(() => late.abort(new DOMException("reflexer's answer did not start in time", "TimeoutError")), ms);
+  try {
+    return await send(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, late.signal]) : late.signal });
+  } finally {
+    clearTimeout(clock);
+  }
 }
 
 /**
@@ -108,14 +125,15 @@ function provider(wire, stock) {
   };
 }
 
-const DISPATCHER = Symbol.for("undici.globalDispatcher.1"); // where Node's fetch keeps its global dispatcher, as undici documents
-
-/** As google-genai's own, on Node and given no fetch: Node's global dispatcher without undici's 300 s timeouts. */
+/**
+ * As google-genai's own, on Node and given no fetch: Node's global dispatcher, kept where undici documents it, without
+ * undici's 300 s timeouts. Reflexer's leg keeps a bound of its own (`bounded`).
+ */
 const untimed = {
   /** @param {object} options @param {object} handler */
   dispatch(options, handler) {
     new Headers(); // Node makes its global dispatcher on first use
-    return /** @type {any} */ (globalThis)[DISPATCHER].dispatch({ ...options, headersTimeout: 0, bodyTimeout: 0 }, handler);
+    return /** @type {any} */ (globalThis)[Symbol.for("undici.globalDispatcher.1")].dispatch({ ...options, headersTimeout: 0, bodyTimeout: 0 }, handler);
   },
 };
 
@@ -124,12 +142,32 @@ export const azure = provider(WIRES.azure);
 export const anthropic = provider(WIRES.anthropic);
 export const gemini = provider(WIRES.gemini, (input, init) => globalThis.fetch(input, { dispatcher: /** @type {any} */ (untimed), ...init }));
 
+/** Each provider SDK's majors this is tested on, and how its calls name its version, in their user agent. */
+const SDKS = [
+  { name: "openai", majors: [7], label: /OpenAI\/JS ([0-9.]+)/ },
+  { name: "@anthropic-ai/sdk", majors: [1], label: /Anthropic\/JS ([0-9.]+)/ },
+  { name: "@google/genai", majors: [2], label: /\bgoogle-genai-sdk\/([0-9.]+)/ },
+];
+
 /**
- * A provider file runs only on the majors of its SDK it was tested on: a new major throws, never misroutes.
- * @param {string} name @param {string} version @param {number[]} majors
+ * A provider SDK runs only on the majors it was tested on: a new major throws, never misroutes.
+ * @param {string} name @param {string} version
  */
-export function supported(name, version, majors) {
+export function supported(name, version) {
+  const { majors } = /** @type {typeof SDKS[0]} */ (SDKS.find((sdk) => sdk.name === name));
   if (!majors.includes(Number(version.split(".")[0]))) throw new Error(`reflexer is tested on ${name} ${majors}, not ${version}`);
+}
+
+/**
+ * The provider SDKs a call's user agent names, each checked by `supported`. A call naming none goes as before: the fetch
+ * form takes a provider's calls from any client.
+ * @param {Headers} headers
+ */
+export function tested(headers) {
+  const label = `${headers.get("user-agent") ?? ""} ${headers.get("x-goog-api-client") ?? ""}`;
+  const named = SDKS.map(({ name, label: pattern }) => [name, pattern.exec(label)?.[1]]).filter(([, version]) => version);
+  for (const [name, version] of named) supported(String(name), String(version));
+  return named.map(([name]) => name);
 }
 
 /**

@@ -6,6 +6,6 @@ import * as stock from "@anthropic-ai/sdk";
 import { VERSION } from "@anthropic-ai/sdk/version";
 import { WIRES, client, supported } from "./index.js";
 
-supported("@anthropic-ai/sdk", VERSION, [1]);
+supported("@anthropic-ai/sdk", VERSION);
 
 export const Anthropic = client(stock.Anthropic, WIRES.anthropic);

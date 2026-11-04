@@ -4,7 +4,7 @@
   "description": "Sends a client's LLM calls through reflexer, on the provider SDK the client already uses.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3"
   },
   "exports": {
     ".": {
@@ -55,13 +55,14 @@
     "@types/node": "20.19.43",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",
+    "eslint-scope": "9.1.2",
     "openai": "7.45.1",
     "typescript": "6.0.3"
   },
   "reflexer": {
     "budget": {
-      "lines": 260,
-      "ifs": 40,
+      "lines": 280,
+      "ifs": 41,
       "privateNames": 0
     }
   }

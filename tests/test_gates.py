@@ -285,6 +285,14 @@ class Broken(unittest.TestCase):
     def test_typescript_a_body_written_to_stderr_turns_semgrep_red(self):
         self.assert_typescript_turns_semgrep_red("export const made = (body) => process.stderr.write(body);")
 
+    def test_typescript_console_reached_another_way_turns_semgrep_red(self):
+        for text in ('export const made = (body) => console["log"](body);',
+                     "export const made = (body) => { const say = console.warn; say(body); };",
+                     "export const made = (body) => console.warn.call(console, body);"):
+            with self.subTest(text=text):
+                self.setUp()
+                self.assert_typescript_turns_semgrep_red(text)
+
     def test_typescript_the_keys_header_outside_route_turns_semgrep_red(self):
         self.assert_typescript_turns_semgrep_red('export const made = (headers, key) => { headers["reflexer-key"] = key; };')
 

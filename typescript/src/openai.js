@@ -6,7 +6,7 @@ import * as stock from "openai";
 import { VERSION } from "openai/version";
 import { WIRES, client, supported } from "./index.js";
 
-supported("openai", VERSION, [7]);
+supported("openai", VERSION);
 
 export const OpenAI = client(stock.OpenAI, WIRES.openai);
 export const AzureOpenAI = client(stock.AzureOpenAI, WIRES.azure);

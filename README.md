@@ -56,7 +56,7 @@ Also `AzureOpenAI`, from `reflexer/openai`. Or keep the stock class and give it 
     new Anthropic({ apiKey: anthropicKey, fetch: reflexer.anthropic.fetch(reflexerKey) });
     new GoogleGenAI({ apiKey: geminiKey, httpOptions: { fetch: reflexer.gemini.fetch(reflexerKey) } });
 
-A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20 or newer, no dependency; the provider SDK is the one you have.
+A `fetch` of your own carries both reflexer's leg and the provider's: give it as before on the one-line classes, or as `reflexer.openai.fetch(reflexerKey, { fetch: yourFetch })`. Node 20.3 or newer, no dependency; the provider SDK is the one you have.
 
 ## LangChain
 
@@ -77,6 +77,7 @@ The answer is your provider's format, unchanged by this SDK. A served answer's `
 - `sample=0.01` (TypeScript: `sample: 0.01`): send a share of the calls to reflexer, the rest straight to the provider.
 - One call straight to the provider: `extra_headers={"Reflexer-Pass-Through": "1"}` (TypeScript: `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's request options). The header never leaves your machine.
 - When reflexer fails, calls go straight to the provider for a while, backing off.
+- TypeScript, `headersTimeout` (ms) in the `fetch` form's options: how long reflexer's leg waits for its answer to start before the call goes straight; by default undici's own, 300 s.
 
 ## Develop
 

@@ -97,10 +97,10 @@ rules:
     paths: {include: ["/typescript/src/"]}
     patterns:
       - pattern-either:
-          - pattern: console.$METHOD(...)
+          - pattern: console
           - pattern: process.$STREAM.write(...)
-      - pattern-not: console.warn("...")
-      - pattern-not: 'console.warn("...", $FAILURE instanceof Error ? $FAILURE.name : typeof $FAILURE)'
+      - pattern-not-inside: console.warn("...")
+      - pattern-not-inside: 'console.warn("...", $FAILURE instanceof Error ? $FAILURE.name : typeof $FAILURE)'
   - id: key-header-only-in-route-js
     message: Only `Reflexer.route` names the key's header, so the key reaches only reflexer's address.
     languages: [javascript]

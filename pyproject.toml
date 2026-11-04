@@ -43,6 +43,6 @@ select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real e
 "tools/**" = ["S"]
 
 [tool.reflexer.budget]  # provisional: grows only in a pull request that says why
-lines = 346  # was 340: LangChain's configurable_fields; was 320: LangChain's two lines; was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
-ifs = 37  # was 35: LangChain's configurable_fields
+lines = 391  # was 346: Gemini's shared client_args, one client's close cutting no other's call; was 340: LangChain's configurable_fields; was 320: LangChain's two lines; was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
+ifs = 39  # was 37: the same; was 35: LangChain's configurable_fields
 private_names = 0

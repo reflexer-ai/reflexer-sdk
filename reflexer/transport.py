@@ -94,6 +94,13 @@ class Through:
     def __init__(self, reflexer, inner):
         self.reflexer, self.inner = reflexer, inner
         self.send = functools.partial(inner.send, stream=True, follow_redirects=False, auth=None)
+        self.flying, self.closing, self.lock = 0, False, threading.Lock()  # its calls in flight, counted when shared (`Both`)
+
+    def landed(self, calls=-1):
+        """Its calls in flight counted; whether its close, held for them, is now due."""
+        with self.lock:
+            self.flying += calls
+            return self.closing and not self.flying
 
     def handle_request(self, request):
         try:
@@ -121,10 +128,15 @@ class Through:
         return await self.send(stays_straight(request))
 
     def close(self):
-        self.inner.close()
+        """Its client's close, held until no call is in flight."""
+        self.closing = True
+        if self.landed(0):
+            self.inner.close()
 
     async def aclose(self):
-        await self.inner.aclose()
+        self.closing = True
+        if self.landed(0):
+            await self.inner.aclose()
 
     def __enter__(self):
         return self
@@ -139,6 +151,29 @@ class Through:
         await self.aclose()
 
 
+def landing(library, stream, through):
+    """An answer's body as it came, of the library's own kind; its call landed on `through` once it is closed."""
+    class Landing(library.SyncByteStream, library.AsyncByteStream):
+        def __iter__(self):
+            return iter(stream)
+
+        def __aiter__(self):
+            return stream.__aiter__()
+
+        def close(self):
+            try:
+                stream.close()
+            finally:
+                through.landed() and through.inner.close()
+
+        async def aclose(self):
+            try:
+                await stream.aclose()
+            finally:
+                through.landed() and await through.inner.aclose()
+    return Landing()
+
+
 def without_its_cookie(answer):
     """Reflexer's answer. The outer client would file its cookie under the provider's name, and send it there."""
     answer.headers.pop("set-cookie", None)
@@ -148,7 +183,9 @@ def without_its_cookie(answer):
 class Both:
     """One transport for both of an SDK's HTTP clients, for what takes one set of arguments for the two (`client_args`).
     Its HTTP clients are made on first use, of the HTTP library the request is of: the SDK picks it, not this.
-    `library_of(request)`, that library; `make(library)` and `make_async(library)`, a `Through` over a client of it."""
+    `library_of(request)`, that library; `make(library)` and `make_async(library)`, a `Through` over a client of it.
+    SDK clients made from one set of arguments share it: one closing closes its HTTP clients for the next call, each
+    once its calls in flight land, so no client cuts another's call, as stock none would."""
 
     def __init__(self, library_of, make, make_async):
         self.library_of, self.makers, self.made = library_of, {False: make, True: make_async}, {False: {}, True: {}}
@@ -156,24 +193,44 @@ class Both:
 
     def through(self, request, is_async=False):
         library, made = self.library_of(request), self.made[is_async]
-        with self.lock:  # one SDK client closing them, when several share these arguments, closes them for the next only
-            if library not in made or made[library].inner.is_closed:
+        with self.lock:
+            if library not in made:
                 made[library] = self.makers[is_async](library)
-        return made[library]
+            made[library].landed(+1)
+            return made[library]
 
     def handle_request(self, request):
-        return self.through(request).handle_request(request)
+        through = self.through(request)
+        try:
+            answer = through.handle_request(request)
+        except BaseException:
+            landing(self.library_of(request), [], through).close()
+            raise
+        answer.stream = landing(self.library_of(request), answer.stream, through)
+        return answer
 
     async def handle_async_request(self, request):
-        return await self.through(request, is_async=True).handle_async_request(request)
+        through = self.through(request, is_async=True)
+        try:
+            answer = await through.handle_async_request(request)
+        except BaseException:
+            await landing(self.library_of(request), [], through).aclose()
+            raise
+        answer.stream = landing(self.library_of(request), answer.stream, through)
+        return answer
+
+    def out(self, is_async):
+        with self.lock:
+            out, self.made[is_async] = self.made[is_async].values(), {}
+        return out
 
     def close(self):
-        for made in self.made[False].values():
-            made.close()
+        for through in self.out(False):
+            through.close()
 
     async def aclose(self):
-        for made in self.made[True].values():
-            await made.aclose()
+        for through in self.out(True):
+            await through.aclose()
 
     def __repr__(self):  # what holds it may build a cache's key from its text
         return "reflexer.Both"

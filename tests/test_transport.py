@@ -217,6 +217,66 @@ class GeminisArguments(unittest.TestCase):
             self.assertIsInstance(inner, library.Client, library.__name__)
 
 
+class SharedArguments(unittest.TestCase):
+    """Two clients made from one `client_args`, as stock each closing its own: one closing cuts nothing of the other's
+    in flight. On a real local socket: closing a mock transport cuts nothing."""
+
+    def setUp(self):
+        import http.server, threading
+        self.go_on = threading.Event()
+        go_on = self.go_on
+
+        class Slow(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("content-length", "8")
+                self.end_headers()
+                self.wfile.write(b"made")
+                self.wfile.flush()
+                go_on.wait(10)
+                self.wfile.write(b"-up!")
+
+            def log_message(self, *_):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}/slow"  # no message call: it goes straight, by our clients
+
+    def tearDown(self):
+        self.go_on.set()
+        self.server.shutdown()
+
+    def test_one_closing_leaves_the_others_call_in_flight_whole(self):
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        one, other = httpx.Client(transport=both), httpx.Client(transport=both)
+        with one.stream("GET", self.url) as answer:
+            parts = answer.iter_bytes()
+            first = next(parts)
+            shared = list(both.made[False].values())
+            other.close()
+            self.go_on.set()
+            self.assertEqual(first + b"".join(parts), b"made-up!")
+        one.close()
+        self.assertTrue(shared and all(made.inner.is_closed for made in shared), "a retired client was left open")
+
+    def test_async_one_closing_leaves_the_others_call_in_flight_whole(self):
+        async def run():
+            both = reflexer.gemini.client_args(KEY)["transport"]
+            one, other = httpx.AsyncClient(transport=both), httpx.AsyncClient(transport=both)
+            async with one.stream("GET", self.url) as answer:
+                parts = answer.aiter_bytes()
+                first = await parts.__anext__()
+                shared = list(both.made[True].values())
+                await other.aclose()
+                self.go_on.set()
+                body = first + b"".join([part async for part in parts])
+            await one.aclose()
+            return body, bool(shared) and all(made.inner.is_closed for made in shared)
+
+        self.assertEqual(asyncio.run(run()), (b"made-up!", True))
+
+
 class Settings(unittest.TestCase):
     def test_the_namespace_holds_through_a_second_round(self):
         """An auth round sends the same request again: the first round must leave it whole."""

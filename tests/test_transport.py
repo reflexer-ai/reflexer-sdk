@@ -145,6 +145,45 @@ class Copies(unittest.TestCase):
             self.assertEqual([r.url.host for r in seen], ["api.reflexer.ai"], module.__name__)
 
 
+class GeminiWithAiohttp(unittest.TestCase):
+    """google-genai sends async calls by aiohttp when it is installed, unless given an HTTP client or a transport."""
+
+    def calls_reach(self, make):
+        import aiohttp  # installed, as a client may have it
+        seen = []
+
+        def handler(request):
+            seen.append(request.url.host)
+            return httpx.Response(503 if request.url.host == "api.reflexer.ai" else 200,
+                                  headers={"reflexer-status-origin": "reflexer"} if request.url.host == "api.reflexer.ai" else {},
+                                  json={"candidates": [{"content": {"role": "model", "parts": [{"text": "made up"}]}}]})
+
+        client = make(handler)
+        if client._api_client._use_aiohttp():  # google-genai's own choice, read so no call leaves this machine
+            return ["aiohttp, past reflexer"]
+        asyncio.run(client.aio.models.generate_content(model="m", contents="x"))
+        return seen
+
+    def test_reflexers_client_keeps_async_calls_on_reflexers_way(self):
+        made = lambda handler: reflexer.gemini.Client(api_key="made-up", reflexer_key=KEY, http_options={
+            "httpx_async_client": httpx.AsyncClient(transport=httpx.MockTransport(handler))})
+        self.assertEqual(self.calls_reach(made)[0], "api.reflexer.ai")
+
+    def test_the_stock_client_given_reflexers_arguments_does_too(self):
+        from google import genai
+        made = lambda handler: genai.Client(api_key="made-up", http_options={
+            "client_args": reflexer.gemini.client_args(KEY, own={"transport": httpx.MockTransport(handler)}),
+            "async_client_args": reflexer.gemini.client_args(KEY, own={"transport": httpx.MockTransport(handler)})})
+        self.assertEqual(self.calls_reach(made)[0], "api.reflexer.ai")
+
+
+    def test_a_sync_client_alone_leaves_async_calls_to_aiohttp_and_the_check_says_so(self):
+        from google import genai
+        made = lambda handler: genai.Client(api_key="made-up", http_options={
+            "httpx_client": reflexer.gemini.http_client(KEY, own=httpx.Client(transport=httpx.MockTransport(handler)))})
+        self.assertEqual(self.calls_reach(made), ["aiohttp, past reflexer"])
+
+
 class GeminisArguments(unittest.TestCase):
     def test_a_request_of_a_subclass_finds_its_library(self):
         class Mine(httpx2.Request):

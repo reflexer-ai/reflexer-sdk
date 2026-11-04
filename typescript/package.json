@@ -1,0 +1,68 @@
+{
+  "name": "reflexer",
+  "version": "0.1.0",
+  "description": "Sends a client's LLM calls through reflexer, on the provider SDK the client already uses.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./openai": {
+      "types": "./types/openai.d.ts",
+      "default": "./src/openai.js"
+    },
+    "./anthropic": {
+      "types": "./types/anthropic.d.ts",
+      "default": "./src/anthropic.js"
+    },
+    "./gemini": {
+      "types": "./types/gemini.d.ts",
+      "default": "./src/gemini.js"
+    }
+  },
+  "files": [
+    "src",
+    "types"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "node --test test/*.test.js",
+    "prepack": "tsc -p ."
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": "^1.0.0",
+    "@google/genai": "^2.0.0",
+    "openai": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    },
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "@google/genai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
+    "@google/genai": "2.31.0",
+    "@types/node": "20.19.43",
+    "acorn": "8.19.0",
+    "acorn-walk": "8.3.5",
+    "openai": "7.45.1",
+    "typescript": "6.0.3"
+  },
+  "reflexer": {
+    "budget": {
+      "lines": 260,
+      "ifs": 40,
+      "privateNames": 0
+    }
+  }
+}

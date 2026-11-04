@@ -44,6 +44,36 @@ jobs:
           git -C planted add key.py && git -C planted -c user.name=ci -c user.email=ci@example.invalid commit -qm planted
           if ./gitleaks git --exit-code 1 planted >/dev/null; then echo "gitleaks missed a key planted in a commit"; exit 1; fi
 
+  typescript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22", "24"]
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Tools, as the lockfile pins and hashes them
+        run: npm ci --ignore-scripts
+      - name: Types, and the declarations a TypeScript client reads
+        run: npm run build
+      - name: Gates and tests, each with its planted fault
+        run: npm test
+      - name: The dev tree's known vulnerabilities, and its registry signatures
+        if: matrix.node == '24'
+        run: |
+          npm audit --audit-level=low
+          npm audit signatures
+
   python-versions:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

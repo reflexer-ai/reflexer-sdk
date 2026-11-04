@@ -1,7 +1,8 @@
 """Each promise in SECURITY.md is held by a check and broken by a planted fault that turns that check red; this refuses a
 promise missing either, or naming one that does not exist: `python tools/promises.py`.
 
-A check is `test:PATH::CLASS::METHOD`, `ruff:CODE` or `semgrep:RULE`."""
+A check is `test:PATH::CLASS::METHOD`, `ruff:CODE`, `semgrep:RULE`, or `node:PATH::SUITE::TEST`: a `node:test` test named
+TEST in the top-level `describe("SUITE"` of PATH."""
 import ast, pathlib, re, sys, tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -30,6 +31,13 @@ def exists(check, root=ROOT):
         if len(names) != 2 or names[0] not in classes:
             return False
         return any(isinstance(node, ast.FunctionDef) and node.name == names[1] for node in classes[names[0]].body)
+    if kind == "node":
+        path, *names = name.split("::")
+        file = root / path
+        if len(names) != 2 or not file.is_file():
+            return False
+        suites = dict(re.findall(r'^describe\("([^"]+)",(.*?)(?=^describe\(|\Z)', file.read_text(), re.M | re.S))
+        return re.search(rf'^\s+test\("{re.escape(names[1])}"', suites.get(names[0], ""), re.M) is not None
     if kind == "ruff":
         selected = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["ruff"]["lint"]["select"]
         return any(name.startswith(prefix) for prefix in selected)

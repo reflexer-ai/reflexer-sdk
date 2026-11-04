@@ -114,7 +114,7 @@ class Broken(unittest.TestCase):
     def setUp(self):
         self.root = pathlib.Path(tempfile.mkdtemp(prefix="reflexer-gates-"))
         self.addCleanup(shutil.rmtree, self.root)
-        for name in ("reflexer", "tools", ".github"):
+        for name in ("reflexer", "tools", ".github", "typescript/test"):
             shutil.copytree(ROOT / name, self.root / name)
         for name in ("pyproject.toml", "semgrep.yml", "SECURITY.md", "build-constraints.txt"):
             shutil.copy(ROOT / name, self.root / name)
@@ -276,6 +276,12 @@ class Broken(unittest.TestCase):
         path = self.root / "SECURITY.md"
         path.write_text(path.read_text() + "\n| **P99** made up | | |\n")
         self.assertIn("P99: held by no check", promises.problems(self.root))
+
+    def test_a_node_test_that_does_not_exist_turns_it_red(self):
+        path, tests = self.root / "SECURITY.md", "node:typescript/test/promises.test.js"
+        path.write_text(path.read_text() + f"\n| **P99** made up | `{tests}::Promises::made up` | `{tests}::Broken::the key reaches only reflexer` |\n")
+        self.assertIn(f"P99: no such check {tests}::Promises::made up", promises.problems(self.root))
+        self.assertIn(f"P99: no such check {tests}::Broken::the key reaches only reflexer", promises.problems(self.root))  # of another suite
 
     def test_a_check_that_does_not_exist_turns_it_red(self):
         path = self.root / "SECURITY.md"

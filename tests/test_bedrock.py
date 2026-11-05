@@ -20,6 +20,7 @@ SIGNS_ANEW = tuple(lib for lib in RUNTIME if lib != "litellm")  # whose line rea
 VOLATILE = {"authorization", "x-amz-date", "amz-sdk-invocation-id", "amz-sdk-request", "x-stainless-retry-count", "content-length",
             "x-stainless-read-timeout", "x-stainless-raw-response"}  # what differs between two calls made alike; the last, anthropic's with any middleware
 SAVED = {}
+TOKEN = "made-up-session-token-of-the-suite"  # a session token's place, made up
 TIMEZONE = "America/Sao_Paulo"  # CI runs in UTC, where a signing time read as local time would pass unseen
 
 
@@ -268,6 +269,42 @@ def per_attempt_body():
         found[lib] = (outcome.text == harness.STRAIGHT_TEXT and arrival is not None and bedrock.signature_holds(arrival)
                       and json.loads(arrival.body)["system"] == [{"text": f"made-up run {len(runs)}"}])
     return found
+
+
+def cancelled(keyed, line):
+    """aiobotocore's call cancelled by the client while the server it waits on stalls (reflexer, or Bedrock for a stock
+    client): the error, as the client sees it, and the reflexer key."""
+    made, calls = world("aiobotocore")
+    (made.reflexer if line else made.provider).set("stall")
+    os.environ["AWS_SESSION_TOKEN"] = TOKEN
+    try:
+        client = calls.client(line=line, keyed=keyed)
+    finally:
+        os.environ.pop("AWS_SESSION_TOKEN", None)
+
+    async def call():
+        async with asyncio.timeout(1.0):
+            await client.converse(modelId=bedrock.MODEL, messages=[{"role": "user", "content": [{"text": "Hi"}]}])
+    try:
+        calls.run(call())
+        error = None
+    except BaseException as raised:  # the cancel's own
+        error = raised
+    calls.close()
+    return error, made.key
+
+
+def shown_on_a_cancel(keyed):
+    """The frames on the error of a cancel during reflexer's leg that show in clear the reflexer key, or the access key's
+    id (on the signature's header) or the session token where a stock client's cancel shows none: anywhere but the
+    client's own request, which botocore's frames show on stock as they do here, and which ours hand on to it."""
+    error, key = cancelled(keyed, line=True)
+    if error is None:
+        return ["no error"]
+    stock, _ = cancelled(keyed, line=False)
+    own = {"aiobotocore.py:asked.request", "aiobotocore.py:before_send.request", "aiobotocore.py:emitted.kwargs"}
+    signing = {*in_clear(error, bedrock.ACCESS_KEY), *in_clear(error, TOKEN)} - {*in_clear(stock, bedrock.ACCESS_KEY), *in_clear(stock, TOKEN)}
+    return sorted({*in_clear(error, key), *(signing - own)})
 
 
 def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
@@ -581,6 +618,11 @@ class Promises(Case):
     def test_a_fallback_signed_anew_carries_the_body_its_signature_covers(self):
         self.assertEqual(per_attempt_body(), {"boto3": True, "aiobotocore": True})
 
+    def test_aiobotocore_a_cancel_during_reflexers_leg_shows_no_key_signature_or_token(self):
+        for keyed in (True, False):
+            with self.subTest(keyed=keyed):
+                self.assertEqual(shown_on_a_cancel(keyed), [])
+
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):
             with self.subTest(is_async=is_async):
@@ -873,6 +915,16 @@ class Broken(Case):
                         {"real": reflexer.bedrock.straight, "key": harness.make_key()})
         with mock.patch.object(reflexer.boto3, "straight", straight):
             self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy")])
+
+    def test_a_signature_kept_where_an_errors_frames_reach_it_turns_it_red(self):
+        real = reflexer.anthropic_bedrock.Again.first
+
+        def keeping(request):  # the call's signed headers kept on the call, which our middleware's frame holds
+            held = real(request)
+            reflexer.anthropic_bedrock.CALL.get()["signed"] = dict(request.headers)
+            return held
+        with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(keeping)):
+            self.assertTrue(anthropic_sampled_out(provider="dead")[2])
 
     def test_a_key_kept_in_a_closure_on_the_answer_turns_it_red(self):
         real, key = reflexer.aiobotocore.forgotten, harness.make_key()

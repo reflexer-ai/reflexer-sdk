@@ -75,7 +75,7 @@ async function bounded(send, [url, init], ms) {
  * Its text, or undefined for a body that could not be sent twice, such as a stream: it goes straight.
  * @param {RequestInit["body"]} body
  */
-function textOf(body) {
+export function textOf(body) {
   if (body == null) return "";
   if (typeof body === "string") return body;
   if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return new TextDecoder().decode(body);
@@ -118,7 +118,7 @@ function staysStraight(input, init) {
  * @param {Wire} wire
  * @param {Fetch} [stock]
  */
-function provider(wire, stock) {
+export function provider(wire, stock) {
   return {
     /** @param {string} key @param {Omit<Way, "key">} [options] */
     fetch: (key, options = {}) => through(wire, { ...options, key, fetch: options.fetch ?? stock }),

@@ -13,13 +13,14 @@ import { PACKAGE } from "./checks.js";
 const ALLOWED = {
   "logic.js": ["node:crypto"],
   "index.js": ["./logic.js"],
+  "bedrock.js": ["./index.js", "./logic.js", "node:async_hooks"], // async_hooks: a call's own state, set by our middleware for our fetch
   "openai.js": ["openai", "openai/version", "./index.js"],
   "anthropic.js": ["@anthropic-ai/sdk", "@anthropic-ai/sdk/version", "./index.js"],
   "gemini.js": ["@google/genai", "./index.js"],
 };
 // The globals the source may read, and of some only these members: none reaches a module, a process, a socket, or code made from text
 const GLOBALS = new Map(Object.entries({
-  AbortController: null, AbortSignal: ["any"], Array: null, ArrayBuffer: null, BigInt: null, DOMException: null, Error: null, Headers: null,
+  AbortController: null, AbortSignal: ["any", "timeout"], Array: null, ArrayBuffer: null, BigInt: null, DOMException: null, Error: null, Headers: null,
   JSON: ["parse"], Math: null, Number: null, Object: ["defineProperty", "entries", "fromEntries", "hasOwn", "keys"], RegExp: null,
   Request: null, String: null, Symbol: ["for"], TextDecoder: null, TypeError: null, URL: null, WeakMap: null, clearTimeout: null,
   console: null, globalThis: ["fetch"], parseInt: null, performance: null, setTimeout: null, undefined: null,
@@ -89,11 +90,15 @@ async function importsNotAllowed(root) {
   return found;
 }
 
-/** lines: lines holding code, with no comment. ifs: `if`, a conditional expression, `case`. privateNames: another's `_names`. */
-async function measure(/** @type {string} */ root) {
+/**
+ * lines: lines holding code, with no comment. ifs: `if`, a conditional expression, `case`. privateNames: another's `_names`.
+ * `files`: those measured, else every file; `but`: those left out.
+ * @param {string} root @param {{ files?: string[], but?: string[] }} [which]
+ */
+async function measure(root, { files, but = [] } = {}) {
   let lines = 0, ifs = 0;
   const defined = new Set(), read = new Set();
-  for (const { text } of await sources(root)) {
+  for (const { text } of (await sources(root)).filter(({ name }) => (!files || files.includes(name)) && !but.includes(name))) {
     const held = new Set();
     for (const token of acorn.tokenizer(text, { ecmaVersion: "latest", sourceType: "module", locations: true })) {
       for (let line = token.loc?.start.line ?? 0; line <= (token.loc?.end.line ?? -1); line++) held.add(line);
@@ -109,13 +114,21 @@ async function measure(/** @type {string} */ root) {
   return { lines, ifs, privateNames };
 }
 
-/** What exceeds the budget in package.json, as text; empty when within it. @param {string} root */
+/**
+ * What exceeds the budgets in package.json, as text; empty when within them: every file but Bedrock's against the
+ * package's, Bedrock's (`bedrock.files`) against its own, so an audit of another provider's path reads none of them.
+ * @param {string} root
+ */
 async function overBudget(root) {
-  const { reflexer: { budget } } = await manifest(root);
-  const size = await measure(root);
-  /** @type {Record<string, number>} */
-  const found = { lines: size.lines, ifs: size.ifs, privateNames: size.privateNames.length };
-  return Object.keys(budget).filter((name) => found[name] > budget[name]).map((name) => `${name}: ${found[name]}, budget ${budget[name]}`);
+  const { reflexer: { budget: { bedrock, ...budget } } } = await manifest(root);
+  /** @param {Record<string, number>} limits @param {any} size @param {string} label */
+  const over = (limits, size, label) => {
+    /** @type {Record<string, number>} */
+    const found = { lines: size.lines, ifs: size.ifs, privateNames: size.privateNames.length };
+    return Object.keys(limits).filter((name) => name in found && found[name] > limits[name]).map((name) => `${label}${name}: ${found[name]}, budget ${limits[name]}`);
+  };
+  const { files, ...apart } = bedrock ?? { files: [] };
+  return [...over(budget, await measure(root, { but: files }), ""), ...over(apart, await measure(root, { files }), "bedrock ")];
 }
 
 describe("Gates", () => {
@@ -132,8 +145,9 @@ describe("Gates", () => {
   });
 
   test("within budget", async (t) => {
-    const size = await measure(PACKAGE);
-    t.diagnostic(`lines ${size.lines}, ifs ${size.ifs}, private names ${size.privateNames.length}`);
+    const { reflexer: { budget: { bedrock } } } = await manifest(PACKAGE);
+    const size = await measure(PACKAGE, { but: bedrock.files }), apart = await measure(PACKAGE, { files: bedrock.files });
+    t.diagnostic(`lines ${size.lines}, ifs ${size.ifs}, private names ${size.privateNames.length}; Bedrock's: lines ${apart.lines}, ifs ${apart.ifs}`);
     assert.deepEqual(await overBudget(PACKAGE), []);
   });
 });
@@ -215,6 +229,13 @@ describe("Broken", () => {
   test("growth past budget turns it red", async () => {
     const copy = await plant("src/logic.js", Array.from({ length: 400 }, (_, n) => `export const made${n} = n ? 1 : 0;`).join("\n"));
     assert.deepEqual((await overBudget(copy)).map((problem) => problem.split(":")[0]), ["lines", "ifs"]);
+  });
+
+  test("growth in a shared file is not Bedrock's to hold", async () => {
+    const shared = await plant("src/logic.js", Array.from({ length: 10 }, (_, n) => `export const made${n} = n ? 1 : 0;`).join("\n"));
+    assert.deepEqual((await overBudget(shared)).map((problem) => problem.split(":")[0]), ["lines", "ifs"]);
+    const apart = await plant("src/bedrock.js", Array.from({ length: 10 }, (_, n) => `export const made${n} = n ? 1 : 0;`).join("\n"));
+    assert.deepEqual((await overBudget(apart)).map((problem) => problem.split(":")[0]), ["bedrock lines", "bedrock ifs"]);
   });
 
   test("another's private name turns it red", async () => {

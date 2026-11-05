@@ -23,7 +23,7 @@ export async function load(root = PACKAGE) {
   const provider = (/** @type {string} */ name) => at(name).catch((failure) => ({ failure })); // as a client would see it fail
   const secret = "rfx1_aaaaakq_" + "a".repeat(52);
   return { index, openai: await provider("openai.js"), anthropic: await provider("anthropic.js"), gemini: await provider("gemini.js"),
-    key: `${secret}_${index.checksum(secret)}` };
+    bedrock: await at("bedrock.js"), key: `${secret}_${index.checksum(secret)}` };
 }
 
 /**

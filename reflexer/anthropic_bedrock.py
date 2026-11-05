@@ -10,9 +10,9 @@ a signed one, to Mantle as stock: reflexer takes signed calls on Bedrock's runti
 """
 import contextvars, inspect
 import anthropic
-from . import BASE, PASS_THROUGH, supported
+from . import BASE, OURS, PASS_THROUGH, supported
 from .anthropic import MESSAGES
-from .bedrock import BEDROCK, Keyed, setup_http_client
+from .bedrock import BEDROCK, Keyed, setup_http_client, straight
 from .transport import STRAIGHT, Through, setup_client
 
 supported("anthropic", [2])
@@ -59,18 +59,20 @@ class Again(Keyed):
     @staticmethod
     def first(request):
         """Whether this is the call's first attempt by our middleware, which tries reflexer: marked so for its legs, with
-        its headers as signed."""
+        the headers of ours its signature covers, which the shipped straight leg takes off; no header of its signature's own."""
         call = CALL.get()
         if call is None or call.get("straight"):
             return False
-        call["first"], call["signed"] = True, dict(request.headers)
+        kept = dict(request.headers)
+        straight(None, kept, None)  # takes off those of ours its signature does not cover, as the call's straight leg does
+        call["first"], call["ours"] = True, {name: value for name, value in kept.items() if name.lower().startswith(OURS)}
         return True
 
 
 def withheld(request):
     """Whether a signed call's straight leg, on our middleware's first attempt, waits for the attempt made again: only
     after reflexer's leg was sent, which may have taken the signature's time. One never sent (sampled out, the breaker
-    open) goes now, its headers as signed: the shipped straight leg took off those of ours its signature covers."""
+    open) goes now, the headers of ours its signature covers put back: the shipped straight leg took them off."""
     call = CALL.get() or {}
     if not call.get("first"):
         return False
@@ -79,7 +81,7 @@ def withheld(request):
         return False
     if call.get("sent"):
         return True
-    request.headers.update(call["signed"])
+    request.headers.update(call["ours"])
     return False
 
 

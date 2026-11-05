@@ -424,7 +424,8 @@ def signed_over_what_its_handlers_set(real):
     def taken(event_name, kwargs, before):
         real(event_name, kwargs, before)
         if not before and event_name.startswith("before-sign."):
-            kwargs["request"].context[bedrock.UNSIGNED] = bedrock.lower(kwargs["request"].headers)
+            request = kwargs["request"]
+            request.context[bedrock.UNSIGNED] = (request.url, request.data, bedrock.lower(request.headers))
     return taken
 
 

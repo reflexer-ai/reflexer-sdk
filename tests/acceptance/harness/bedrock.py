@@ -112,16 +112,20 @@ def in_window(arrival, window):
     return abs(arrival.wall - signed.timestamp()) <= window
 
 
+SCOPES = {RUNTIME: (REGION, "bedrock"), MANTLE: (REGION, "bedrock-mantle")}  # each endpoint's signing region and service, as stock signs
+
+
 def signature_holds(arrival):
-    """Whether a SigV4 call checks as Bedrock checks it: its signature recomputed by botocore's own signer, over the
-    headers it says it signed, at the time it says it signed, with the suite's made-up secret."""
+    """Whether a SigV4 call checks as Bedrock checks it: its scope the endpoint's own region and service, its signature
+    recomputed by botocore's own signer, over the headers it says it signed, at the time it says it signed, with the
+    suite's made-up secret."""
     import botocore.auth, botocore.awsrequest, botocore.credentials
     auth = arrival.headers.get("authorization", "")
     if not auth.startswith("AWS4-HMAC-SHA256 "):
         return False
     parts = dict(part.strip().split("=", 1) for part in auth[len("AWS4-HMAC-SHA256 "):].split(","))
     key, _, region, service, _ = parts["Credential"].split("/")
-    if key != ACCESS_KEY:
+    if key != ACCESS_KEY or (region, service) != SCOPES.get(arrival.host.split(":")[0]):  # Bedrock's own scope, not the one the call names
         return False
     signed = parts["SignedHeaders"].split(";")
     request = botocore.awsrequest.AWSRequest(arrival.method, f"https://{arrival.host}{arrival.path}", data=arrival.body,

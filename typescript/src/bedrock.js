@@ -93,11 +93,13 @@ export function fetch(key, options = {}) {
   const own = (/** @type {any} */ input, /** @type {any} */ init) => (options.fetch ?? globalThis.fetch)(input, init);
   const base = new URL(options.base ?? BASE).origin;
   const inner = (/** @type {any} */ input, /** @type {any} */ init = {}) => {
-    const store = call.getStore();
-    if (store?.again && !String(input).startsWith(base)) { // a signed call's straight leg: the middleware makes the attempt again
+    const store = call.getStore(), ours = String(input).startsWith(base);
+    if (store?.again && !ours && !store.again.sent) return straight(own, input, store.again.init); // reflexer's leg never sent: as signed
+    if (store?.again && !ours) { // a signed call's straight leg after reflexer's: the middleware makes the attempt again
       store.again.straight = true;
       throw new Again("the call goes straight, signed anew");
     }
+    if (store?.again) store.again.sent = true;
     return own(input, init).catch((/** @type {any} */ failure) => {
       if (store?.seen && String(input).startsWith(base) && init.signal?.aborted) store.seen.cut = init.signal.reason ?? true; // reflexer's leg, cut by the client
       throw failure;
@@ -112,7 +114,9 @@ export function fetch(key, options = {}) {
     const seen = store?.seen ?? {};
     const began = performance.now();
     try {
-      return await call.run({ ...store, seen, again: signed(headers) ? store?.again : undefined }, () => routed(input, init)); // a keyed call falls back here
+      const again = signed(headers) ? store?.again : undefined; // a keyed call falls back here
+      if (again) again.init = init;
+      return await call.run({ ...store, seen, again }, () => routed(input, init));
     } catch (failure) {
       if (/** @type {any} */ (seen).cut?.name !== "TimeoutError" || STREAMED.test(new URL(String(input)).pathname)) throw failure;
       return straight(own, input, { ...init, signal: AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) });
@@ -133,7 +137,7 @@ export async function anthropicMiddleware(/** @type {any} */ request, /** @type 
     headers.delete(PASS_THROUGH);
     return skipped(() => next({ ...request, headers }));
   }
-  const seen = { cut: undefined }, again = { straight: false };
+  const seen = { cut: undefined }, again = { straight: false, sent: false, init: {} };
   try {
     return await call.run({ seen, again }, () => next(request));
   } catch (failure) {

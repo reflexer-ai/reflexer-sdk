@@ -14,9 +14,9 @@ from harness import STRAIGHT_TEXT, bedrock, standins
 from harness.bedrock import BOTOCORE, SIGNING, Calls
 
 ALL = bedrock.COLUMNS
-RUNTIME_SIGNING = tuple(lib for lib in SIGNING if lib != "anthropic-mantle")  # whose signed calls go to reflexer: the node signs the runtime's
+RUNTIME_SIGNING = tuple(lib for lib in SIGNING if lib != "anthropic-mantle")  # whose signed calls go to reflexer: the runtime's only
 SIGNS_ANEW = tuple(lib for lib in RUNTIME_SIGNING if lib != "litellm")  # their line reaches the library's own signer
-MANTLE_SIGNED = {lib: "Mantle's signed calls go to Mantle as stock: the node signs Bedrock's runtime calls only" for lib in ("anthropic-mantle",)}
+MANTLE_SIGNED = {lib: "Mantle's signed calls go to Mantle as stock: reflexer takes signed calls on Bedrock's runtime only" for lib in ("anthropic-mantle",)}
 SHORT_WINDOW = 2.0  # seconds a signature holds at Bedrock's stand-in, in the cases that outlast it
 HTTPX_LINES = ("anthropic-bedrock", "anthropic-mantle", "litellm")  # Bedrock's own lines on LiteLLM's and anthropic's HTTP clients
 RUNTIME = f"https://{bedrock.RUNTIME}"

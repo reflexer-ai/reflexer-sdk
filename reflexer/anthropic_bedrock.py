@@ -6,7 +6,7 @@ one that signs (SigV4) on Bedrock's runtime. The SDK signs each attempt as it ma
 middleware around each: ours, last of the client's, takes the skip's header off before the SDK signs, and lets a signed
 call's first attempt go to reflexer alone; given no answer there, it makes the attempt again, which the SDK signs anew
 and our transport sends straight. Mantle's go by the anthropic wire, Mantle as the upstream, with no middleware of ours;
-a signed one, to Mantle as stock: the node signs Bedrock's runtime calls only.
+a signed one, to Mantle as stock: reflexer takes signed calls on Bedrock's runtime only.
 """
 import contextvars, inspect
 import anthropic
@@ -51,24 +51,36 @@ class Again(Keyed):
         return await (self.straight(request) if (CALL.get() or {}).get("skipped") else super().handle_async_request(request))
 
     def signed_call(self, request):
-        return Through.handle_request(self, request) if self.first() else self.straight(request)
+        return Through.handle_request(self, request) if self.first(request) else self.straight(request)
 
     async def asigned_call(self, request):
-        return await (Through.handle_async_request(self, request) if self.first() else self.straight(request))
+        return await (Through.handle_async_request(self, request) if self.first(request) else self.straight(request))
 
     @staticmethod
-    def first():
-        """Whether this is the call's first attempt by our middleware, which tries reflexer: marked so for its legs."""
+    def first(request):
+        """Whether this is the call's first attempt by our middleware, which tries reflexer: marked so for its legs, with
+        its headers as signed."""
         call = CALL.get()
         if call is None or call.get("straight"):
             return False
-        call["first"] = True
+        call["first"], call["signed"] = True, dict(request.headers)
         return True
 
 
 def withheld(request):
-    """Whether the request is a signed call's straight leg after reflexer's, on our middleware's first attempt."""
-    return STRAIGHT in request.extensions and (CALL.get() or {}).get("first", False)
+    """Whether a signed call's straight leg, on our middleware's first attempt, waits for the attempt made again: only
+    after reflexer's leg was sent, which may have taken the signature's time. One never sent (sampled out, the breaker
+    open) goes now, its headers as signed: the shipped straight leg took off those of ours its signature covers."""
+    call = CALL.get() or {}
+    if not call.get("first"):
+        return False
+    if STRAIGHT not in request.extensions:
+        call["sent"] = True
+        return False
+    if call.get("sent"):
+        return True
+    request.headers.update(call["signed"])
+    return False
 
 
 def again(call):

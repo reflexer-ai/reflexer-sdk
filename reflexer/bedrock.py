@@ -4,8 +4,8 @@ names its upstream, its region in its host.
 
 A call that carries a Bedrock API key (`Authorization: Bearer`) goes to reflexer, the key among its headers, as any
 provider's key does; it falls back to the same call, straight. A call to Bedrock's runtime the library signed (SigV4)
-goes to reflexer as signed, and reflexer's node signs its own call to Bedrock, with a role the client granted it; its
-fallback is signed anew by the library's own signer after reflexer's leg, where a line reaches one (the botocore family,
+goes to reflexer as signed; reflexer never passes the client's signature on, and answers from what it holds or sends
+the call back. Its fallback is signed anew by the library's own signer after reflexer's leg, where a line reaches one (the botocore family,
 anthropic's Bedrock clients), so it is as fresh as stock's. What leaves for Bedrock is as the library made it, less any
 header of ours its signature does not cover, which never leaves.
 
@@ -23,7 +23,7 @@ BEDROCK = {
 }
 SKIPPED_HERE = "reflexer_pass_through"  # in a botocore call's context: this call goes straight
 SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
-UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its headers as they came to `before-sign`, before the client's handlers
+UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its URL, body and headers as they came to `before-sign`, before the client's handlers
 ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerPassThrough=True)`
 
 
@@ -63,7 +63,8 @@ def skip_taken(event_name, kwargs, before):
     if before and event_name.startswith("provide-client-params.") and kwargs["params"].pop(ARGUMENT, None):
         kwargs["context"][SKIPPED_HERE] = True
     if before and event_name.startswith("before-sign."):
-        kwargs["request"].context[UNSIGNED] = lower(kwargs["request"].headers)
+        request = kwargs["request"]
+        request.context[UNSIGNED] = (request.url, request.data, lower(request.headers))
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
@@ -90,14 +91,18 @@ def signing_anew(request, unprepared):
     signer, operation = (request.context or {}).get(SIGNER, (None, None))
     if signer is None or not signed(lower(request.headers)):
         return None
-    made = unprepared(request.method, request.url, data=request.body, headers=request.context[UNSIGNED])
+    url, data, headers = request.context[UNSIGNED]
+    made = unprepared(request.method, url, data=data, headers=headers)
     made.context = request.context
     return signer, operation, made
 
 
 def signed_anew(request, made):
-    """The straight request with the signature the client's own signer just made, however long reflexer's leg took."""
-    for name, value in made.prepare().headers.items():
+    """The straight request as the client's own signer just made it anew, however long reflexer's leg took: its URL, body
+    and headers, those set after signing kept."""
+    prepared = made.prepare()
+    request.url, request.body = prepared.url, prepared.body
+    for name, value in prepared.headers.items():
         request.headers[name] = value
 
 
@@ -163,7 +168,7 @@ async def aagain_if_refused(send):
 class Keyed(Through):
     """The shipped `Through`, for a Bedrock call: a call carrying a key goes to reflexer and falls back to the same call,
     straight; reflexer's leg is tried once more when TLS refused it while connecting. A signed call takes `signed_call`:
-    here straight, as the library made it, as Mantle's, whose calls the node does not sign; a line whose library signs
+    here straight, as the library made it, as Mantle's: reflexer takes signed calls on Bedrock's runtime only; a line whose library signs
     Bedrock's runtime calls gives its own. Any other call goes straight (`straight`)."""
 
     def __init__(self, reflexer, inner):

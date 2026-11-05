@@ -17,6 +17,7 @@ import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import http from "node:http";
 import * as check from "./checks.js";
 
+process.env.TZ = "America/Sao_Paulo"; // CI runs in UTC, where a signing time read as local time would pass unseen
 const sdk = await check.load();
 const BEDROCK = "bedrock-runtime.us-east-1.amazonaws.com";
 const ELSEWHERE = "elsewhere.example";
@@ -30,7 +31,8 @@ const WINDOW = 300_000; // ms a signature holds at Bedrock from its signing time
 const clock = { offset: 0 }; // ms Bedrock's clock is ahead of this machine's, in a case that moves it
 
 /**
- * Why Bedrock refuses a SigV4 request, or null: its signature recomputed by Smithy's own signer over the headers it says
+ * Why Bedrock refuses a SigV4 request, or null: its scope this endpoint's own region and service, its signature
+ * recomputed by Smithy's own signer over the headers it says
  * it signed, at the time it says it signed, with the made-up secret, and that time within the window of Bedrock's clock.
  * @param {URL} url @param {Headers} headers @param {string} body
  */
@@ -39,6 +41,7 @@ async function refusal(url, headers, body, raw = (/** @type {string} */ name) =>
   if (!auth.startsWith("AWS4-HMAC-SHA256 ")) return null;
   const parts = Object.fromEntries(auth.slice(17).split(",").map((part) => part.trim().split("=")));
   const [, , region, service] = parts.Credential.split("/");
+  if (url.hostname !== BEDROCK || region !== "us-east-1" || service !== "bedrock") return "the scope is not this endpoint's"; // Bedrock's own, not the one the call names
   const date = headers.get("x-amz-date") ?? "";
   const at = Date.parse(date.replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/, "$1-$2-$3T$4:$5:$6Z"));
   const signedHeaders = Object.fromEntries(parts.SignedHeaders.split(";").map((name) => [name, raw(name) ?? (name === "host" ? url.host : "")]));
@@ -670,6 +673,22 @@ async function clockHeld(faulty) {
   }
 }
 
+describe("Attempts", () => {
+  test("anthropic-bedrock: a signed call never sent to reflexer is attempted once, its headers as signed", async () => {
+    for (const headers of [undefined, NAMESPACE]) {
+      const way = farEnds("served");
+      let attempts = 0;
+      const client = new AnthropicBedrock({ awsRegion: "us-east-1", maxRetries: 0, awsAccessKey: CREDENTIALS.accessKeyId, awsSecretKey: CREDENTIALS.secretAccessKey,
+        fetch: sdk.bedrock.fetch(sdk.key, { fetch: way.fetch, sample: 0 }),
+        middleware: [sdk.bedrock.anthropicMiddleware, (/** @type {any} */ request, /** @type {any} */ next) => { attempts += 1; return next(request); }] });
+      const answer = await client.messages.create({ model: MODEL, max_tokens: 8, messages: [{ role: "user", content: "Hi" }] }, { headers });
+      assert.equal(answer.content.map((/** @type {any} */ part) => part.text).join(""), FROM.bedrock);
+      assert.equal(attempts, 1, JSON.stringify(headers));
+      assert.deepEqual(hosts(way.seen()), [BEDROCK]);
+    }
+  });
+});
+
 describe("Window", { skip: tooOld }, () => {
   const make = /** @type {any} */ (LINES.find(([name]) => name === "ai-sdk"))[2];
 
@@ -764,6 +783,16 @@ describe("Broken", () => {
     });
   });
 
+  test("a fallback signed for another scope turns it red", async () => {
+    for (const scope of ['signingRegion: "eu-west-1"', 'signingService: "made-up-service"']) {
+      await check.planted("bedrock.js", "{ signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000 }",
+        `{ signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000, ${scope} }`, async (faulty) => {
+          const { result } = await called(linesOf(faulty)[0][2], false, "converse", "busy");
+          assert.notEqual(result, FROM.bedrock, scope);
+        });
+    }
+  });
+
   test("ai-sdk: a leg not bounded by its window turns it red", { skip: tooOld }, async () => {
     await check.planted("bedrock-ai.js", "const time = String(input).startsWith(base) ? left(new Headers(init.headers)) : null;", "const time = null;", async (faulty) => {
       assert.equal(await windowCuts(faulty), false);
@@ -784,6 +813,12 @@ describe("Broken", () => {
         // followed no redirect of this call's in the run that showed it)
         assert.notDeepEqual(await onTheFetchHandler(faulty), { refused: true, keyed: [] });
       });
+  });
+
+  test("ai-sdk: a signing time read as local time turns it red", { skip: tooOld }, async () => {
+    await check.planted("bedrock-ai.js", '"$1-$2-$3T$4:$5:$6Z"', '"$1-$2-$3T$4:$5:$6"', async (faulty) => {
+      assert.equal(await windowCuts(faulty), false);
+    });
   });
 
   test("no version check turns it red", async () => {

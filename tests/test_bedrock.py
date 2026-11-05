@@ -2,7 +2,7 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, os, socket, sys, tempfile, shutil, types, unittest
+import asyncio, datetime, json, os, socket, sys, tempfile, shutil, time, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -20,6 +20,7 @@ SIGNS_ANEW = tuple(lib for lib in RUNTIME if lib != "litellm")  # whose line rea
 VOLATILE = {"authorization", "x-amz-date", "amz-sdk-invocation-id", "amz-sdk-request", "x-stainless-retry-count", "content-length",
             "x-stainless-read-timeout", "x-stainless-raw-response"}  # what differs between two calls made alike; the last, anthropic's with any middleware
 SAVED = {}
+TIMEZONE = "America/Sao_Paulo"  # CI runs in UTC, where a signing time read as local time would pass unseen
 
 
 def setUpModule():
@@ -28,7 +29,9 @@ def setUpModule():
     SAVED["folder"], SAVED["certs"] = folder, certs.Certs(folder, harness.NAMES)
     for name in bedrock.AMBIENT:
         os.environ.pop(name, None)
-    os.environ.update(bedrock.ENVIRONMENT, SSL_CERT_FILE=SAVED["certs"].ca, AWS_CA_BUNDLE=SAVED["certs"].ca)
+    os.environ.update(bedrock.ENVIRONMENT, SSL_CERT_FILE=SAVED["certs"].ca, AWS_CA_BUNDLE=SAVED["certs"].ca, TZ=TIMEZONE)
+    if hasattr(time, "tzset"):
+        time.tzset()
     harness.resolver.install()
 
 
@@ -36,6 +39,8 @@ def tearDownModule():
     socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex = SAVED["socket"]
     os.environ.clear()
     os.environ.update(SAVED["env"])
+    if hasattr(time, "tzset"):
+        time.tzset()
     shutil.rmtree(SAVED["folder"], ignore_errors=True)
 
 
@@ -119,6 +124,31 @@ def held_with_a_header_of_the_clients():
     return found
 
 
+def held_with_a_body_or_url_of_the_clients():
+    """{(lib, what): whether a signed call whose client changes its body or its URL in a `before-sign` handler of its
+    own reached Bedrock taken and changed once, as stock's, reflexer busy}: the botocore family, signing anew."""
+    def body(request, **_):
+        data = json.loads(request.data)
+        request.data = json.dumps(data | {"system": data.get("system", []) + [{"text": "made-up house rule"}]}).encode()
+
+    def url(request, **_):
+        request.url += ("&" if "?" in request.url else "?") + "made-up-tag=1"
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        for what, handler in (("body", body), ("url", url)):
+            made, calls = world(lib)
+            client = calls.client(keyed=False)
+            client.meta.events.register("before-sign.bedrock-runtime.*", handler)
+            made.reflexer.set("busy")
+            outcome = calls.call(client)
+            calls.close()
+            arrival = made.provider.seen[-1] if made.provider.seen else None
+            once = arrival is not None and (len(json.loads(arrival.body).get("system", [])) == 1 if what == "body"
+                                            else arrival.path.count("made-up-tag=1") == 1)
+            found[(lib, what)] = outcome.text == harness.STRAIGHT_TEXT and once and bedrock.signature_holds(arrival)
+    return found
+
+
 def signing_times(delay=1.1):
     """{lib: (reflexer's x-amz-date, Bedrock's)}: a signed call whose leg to reflexer took `delay` seconds and no answer."""
     found = {}
@@ -162,6 +192,22 @@ def fallback_when_the_signer_fails():
     client._request_signer.sign = sign
     outcome = calls.call(client)
     return outcome.text, len(made.provider.seen), made.provider.seen[-1].headers.get("authorization") == signed[0]
+
+
+def anthropic_attempts_with_no_leg(headers=None):
+    """AnthropicBedrock's signed call sampled out of reflexer (share none), `headers` the call's own: (what the client
+    saw, how many attempts its HTTP client's hooks saw, whether Bedrock took its signature)."""
+    made, calls = world("anthropic-bedrock")
+    seen = []
+    client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY, aws_secret_key=bedrock.SECRET,
+                                                         max_retries=0, reflexer_key=made.key, sample=0.0,
+                                                         http_client=reflexer.anthropic_bedrock.anthropic.DefaultHttpxClient(event_hooks={"request": [seen.append]}))
+    try:
+        text = client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}], extra_headers=headers).content[0].text
+    except Exception as error:
+        text = type(error).__name__
+    arrival = made.provider.seen[-1] if made.provider.seen else None
+    return text, len(seen), arrival is not None and bedrock.signature_holds(arrival)
 
 
 def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
@@ -338,6 +384,14 @@ class Promises(unittest.TestCase):
     def test_a_signer_failing_anew_sends_the_call_as_first_signed(self):
         self.assertEqual(fallback_when_the_signer_fails(), (harness.STRAIGHT_TEXT, 1, True))
 
+    def test_a_signed_calls_fallback_holds_with_a_body_or_url_handler_of_the_clients(self):
+        self.assertEqual([key for key, held in held_with_a_body_or_url_of_the_clients().items() if not held], [])
+
+    def test_anthropic_a_signed_call_never_sent_to_reflexer_is_attempted_once(self):
+        for headers in (None, {"Reflexer-Namespace": "made-up"}):  # one of ours under the signature: kept, as signed
+            with self.subTest(headers=headers):
+                self.assertEqual(anthropic_attempts_with_no_leg(headers), (harness.STRAIGHT_TEXT, 1, True))
+
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):
             with self.subTest(is_async=is_async):
@@ -484,14 +538,49 @@ class Broken(unittest.TestCase):
         def late(event_name, kwargs, before):  # the headers kept for signing anew, after the client's handlers ran
             real(event_name, kwargs, before)
             if not before and event_name.startswith("before-sign."):
-                kwargs["request"].context[reflexer.bedrock.UNSIGNED] = reflexer.bedrock.lower(kwargs["request"].headers)
+                request = kwargs["request"]
+                request.context[reflexer.bedrock.UNSIGNED] = (request.url, request.data, reflexer.bedrock.lower(request.headers))
         with mock.patch.object(reflexer.boto3, "skip_taken", late), mock.patch.object(reflexer.aiobotocore, "skip_taken", late):
             self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": False, "aiobotocore": False})
+            self.assertEqual([key for key, held in held_with_a_body_or_url_of_the_clients().items() if held], [])
 
     def test_async_anthropic_not_attempted_anew_turns_it_red(self):
         with mock.patch.object(reflexer.anthropic_bedrock, "withheld", lambda request: False):
             at_reflexer, at_bedrock, text = async_anthropic_signing_times()
         self.assertEqual(at_bedrock, at_reflexer)
+
+    def test_a_fallback_signed_for_another_scope_turns_it_red(self):
+        """The client's signer asked for another region or service on its second signing: Bedrock's stand-in refuses the
+        scope, as Bedrock does, so the check goes red."""
+        real = reflexer.bedrock.signing_anew
+        for scope in ({"region_name": "eu-west-1"}, {"signing_name": "made-up-service"}):
+            def elsewhere(request, unprepared, scope=scope):
+                made = real(request, unprepared)
+                if made is None:
+                    return None
+                signer, operation, copy = made
+
+                class Elsewhere:  # the client's signer, given another scope
+                    def sign(self, operation, request):
+                        return signer.sign(operation, request, **scope)
+                return Elsewhere(), operation, copy
+            with self.subTest(scope=scope), mock.patch.object(reflexer.boto3, "signing_anew", elsewhere):
+                made, calls = world("boto3")
+                made.reflexer.set("busy")
+                outcome = calls.call(calls.client(keyed=False))
+                calls.close()
+                self.assertNotEqual(outcome.text, harness.STRAIGHT_TEXT)
+
+    def test_litellm_a_signing_time_read_as_local_time_turns_it_red(self):
+        def local(headers):  # the window's clock slipped: x-amz-date read in this machine's time zone, not UTC
+            try:
+                at = datetime.datetime.strptime(headers.get("x-amz-date") or "", "%Y%m%dT%H%M%SZ")
+            except ValueError:
+                return None
+            return at.timestamp() + reflexer.litellm.WINDOW["seconds"] - reflexer.litellm.WINDOW["margin"] - time.time()
+        with mock.patch.object(reflexer.litellm, "left", local):
+            text, took, taken = litellm_leg()
+        self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < 2.0)
 
     def test_litellm_a_leg_unbounded_turns_it_red(self):
         with mock.patch.object(reflexer.litellm, "within", lambda seconds, send: send()), \

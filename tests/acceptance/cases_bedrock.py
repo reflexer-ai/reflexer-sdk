@@ -207,7 +207,7 @@ def bedrock_a_signed_calls_fallback_after_a_leg_past_the_window_is_taken(t):
     t.check(t.to_reflexer(), "reflexer saw nothing")
 
 
-@bedrock_case("bedrock fresh", libs=("litellm",), steady=True)
+@bedrock_case("bedrock fresh", libs=("litellm",))
 def bedrock_litellm_a_signed_calls_leg_is_cut_while_its_signature_holds(t):
     """LiteLLM signs before any hook runs: reflexer's leg, stalled, is cut at what is left of the window (shortened here,
     at Bedrock's stand-in and in the line), well before the client's own timeout, and the same signed call is taken."""

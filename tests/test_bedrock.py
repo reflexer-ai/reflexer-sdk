@@ -131,6 +131,39 @@ def signing_times(delay=1.1):
     return found
 
 
+def async_anthropic_signing_times(delay=1.1):
+    """AsyncAnthropicBedrock's signed call, reflexer busy after `delay` seconds: (reflexer's x-amz-date, Bedrock's, the text)."""
+    made, _ = world("anthropic-bedrock")
+    made.reflexer.set("busy", delay=delay)
+
+    async def call():
+        client = reflexer.anthropic_bedrock.AsyncAnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY,
+                                                                  aws_secret_key=bedrock.SECRET, max_retries=0, reflexer_key=made.key)
+        answer = await client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}])
+        await client.close()
+        return answer.content[0].text
+    text = asyncio.run(call())
+    return made.reflexer.seen[-1].headers.get("x-amz-date"), made.provider.seen[-1].headers.get("x-amz-date"), text
+
+
+def fallback_when_the_signer_fails():
+    """boto3's signed call, reflexer busy, the client's signer failing when asked to sign it anew: (what the client saw,
+    how many calls Bedrock got, whether the one it got carries the call's first signature)."""
+    made, calls = world("boto3")
+    client = calls.client(keyed=False)
+    made.reflexer.set("busy")
+    real, signed = client._request_signer.sign, []
+
+    def sign(operation, request, **kwargs):
+        if signed:
+            raise RuntimeError("made-up: the signer failed")
+        real(operation, request, **kwargs)
+        signed.append(request.headers.get("authorization"))
+    client._request_signer.sign = sign
+    outcome = calls.call(client)
+    return outcome.text, len(made.provider.seen), made.provider.seen[-1].headers.get("authorization") == signed[0]
+
+
 def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
     """LiteLLM's signed call, reflexer stalled, the window shortened to `seconds` at Bedrock's stand-in and in the line:
     (what the client saw, the seconds it took, whether Bedrock took it). `is_async`: by `acompletion` and its line."""
@@ -301,6 +334,14 @@ class Promises(unittest.TestCase):
     def test_a_signed_calls_fallback_holds_with_a_before_sign_handler_of_the_clients(self):
         self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": True, "aiobotocore": True})
 
+    def test_async_anthropic_a_signed_calls_fallback_is_signed_after_reflexers_leg(self):
+        at_reflexer, at_bedrock, text = async_anthropic_signing_times()
+        self.assertEqual(text, harness.STRAIGHT_TEXT)
+        self.assertGreater(at_bedrock, at_reflexer)
+
+    def test_a_signer_failing_anew_sends_the_call_as_first_signed(self):
+        self.assertEqual(fallback_when_the_signer_fails(), (harness.STRAIGHT_TEXT, 1, True))
+
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):
             with self.subTest(is_async=is_async):
@@ -450,6 +491,11 @@ class Broken(unittest.TestCase):
                 kwargs["request"].context[reflexer.bedrock.UNSIGNED] = reflexer.bedrock.lower(kwargs["request"].headers)
         with mock.patch.object(reflexer.boto3, "skip_taken", late), mock.patch.object(reflexer.aiobotocore, "skip_taken", late):
             self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": False, "aiobotocore": False})
+
+    def test_async_anthropic_not_attempted_anew_turns_it_red(self):
+        with mock.patch.object(reflexer.anthropic_bedrock, "withheld", lambda request: False):
+            at_reflexer, at_bedrock, text = async_anthropic_signing_times()
+        self.assertEqual(at_bedrock, at_reflexer)
 
     def test_litellm_a_leg_unbounded_turns_it_red(self):
         with mock.patch.object(reflexer.litellm, "within", lambda seconds, send: send()), \

@@ -594,7 +594,6 @@ FREEZES = {
     "stall_reflexer_stalled_provider_at_six_tenths":           (holding(), 2.0),
     "stall_slow_pass_through_at_seven_tenths":                 (answering("reflexer"), 0.6),  # its slow answer, made later
     "bedrock_the_clients_timeout_holds_on_reflexers_leg":      (holding(), 2.0),
-    "bedrock_litellm_a_signed_calls_leg_is_cut_while_its_signature_holds": (holding(), 2.0),  # the leg its window cuts
 }
 
 

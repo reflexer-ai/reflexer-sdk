@@ -127,7 +127,7 @@ TypeScript:
     chat = new ChatBedrockConverse({ model, client: bedrock.wrap(client, reflexerKey) });
 
     // client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey })
-    client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey), middleware: [bedrock.anthropicMiddleware] });
+    client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey), middleware: [bedrock.anthropicMiddleware] }); // ours last of your middleware
 
     import * as bedrockAi from "@reflexer-ai/sdk/bedrock-ai";
 

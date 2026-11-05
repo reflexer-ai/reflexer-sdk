@@ -325,5 +325,29 @@ class DeadStandIn(unittest.TestCase):
         socket.create_connection(("127.0.0.1", self.port), timeout=2).close()
 
 
+class StalledStandIn(unittest.TestCase):
+    """A stalled stand-in waits on any descriptor: a long test process's sockets pass `select()`'s FD_SETSIZE, past
+    which it refuses one, and the call, cut, would go straight as from an outage."""
+    FD_SETSIZE = 1024  # select()'s limit on Linux
+
+    def test_its_wait_takes_a_descriptor_past_selects_limit(self):
+        import resource
+        from harness import standins
+        past = 2 * self.FD_SETSIZE
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard != resource.RLIM_INFINITY and hard <= past:
+            self.skipTest(f"this process may open {hard} descriptors, not past {past}")
+        if soft != resource.RLIM_INFINITY and soft <= past:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (past + 1, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        ours, theirs = socket.socketpair()
+        self.addCleanup(theirs.close)
+        self.addCleanup(ours.close)
+        os.dup2(ours.fileno(), past)
+        high = socket.socket(fileno=past)
+        self.addCleanup(high.close)
+        theirs.sendall(b"x")
+        self.assertEqual(standins.select.select([high], [], [], 2)[0], [high])
+
 if __name__ == "__main__":
     unittest.main()

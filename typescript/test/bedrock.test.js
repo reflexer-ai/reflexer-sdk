@@ -624,46 +624,58 @@ async function onTheFetchHandler(lines) {
  * exception. Its errors, and where the key showed.
  * @param {any} lines the package, or a faulty copy
  */
-async function framesAtThrows(lines) {
+const FRAMES_WITHIN_MS = 30000; // the frame check, its scene started to its result
+const NEVER_WITHIN_MS = 2000; // the bound a scene that never answers is given, so its check is quick
+
+async function framesAtThrows(lines, scene = new URL("./frames-scene.js", import.meta.url).pathname, within = FRAMES_WITHIN_MS) {
   const { spawn } = await import("node:child_process");
-  const child = spawn(process.execPath, ["--inspect-brk=127.0.0.1:0", new URL("./frames-scene.js", import.meta.url).pathname, lines.root],
-    { stdio: ["ignore", "pipe", "pipe"] });
-  let out = "";
+  const child = spawn(process.execPath, ["--inspect-brk=127.0.0.1:0", scene, lines.root], { stdio: ["ignore", "pipe", "pipe"] });
+  let out = "", timer, socket, poll;
   child.stdout.on("data", (data) => { out += data; });
-  const url = await new Promise((ok) => child.stderr.on("data", (data) => { const found = /ws:\/\/\S+/.exec(String(data)); if (found) ok(found[0]); }));
-  const socket = new WebSocket(String(url));
-  await new Promise((ok) => socket.addEventListener("open", ok));
-  let id = 0;
-  const waiting = new Map(), scripts = new Map(), shown = new Set();
-  const post = (/** @type {string} */ method, params = {}) => new Promise((ok) => { waiting.set(++id, ok); socket.send(JSON.stringify({ id, method, params })); });
-  const text = (/** @type {any} */ value) => (value?.value !== undefined ? String(value.value) : value?.description ?? "");
-  socket.addEventListener("message", async ({ data }) => {
-    const message = JSON.parse(String(data));
-    if (message.id) return waiting.get(message.id)?.(message.result ?? {});
-    if (message.method === "Debugger.scriptParsed") return scripts.set(message.params.scriptId, message.params.url);
-    if (message.method !== "Debugger.paused") return;
-    for (const frame of message.params.callFrames.filter((/** @type {any} */ f) => (scripts.get(f.location.scriptId) ?? "").includes("/src/"))) {
-      for (const scope of frame.scopeChain.filter((/** @type {any} */ s) => ["local", "block", "catch"].includes(s.type))) {
-        for (const { name, value } of (await post("Runtime.getProperties", { objectId: scope.object.objectId, ownProperties: true })).result ?? []) {
-          const inside = value?.objectId ? ((await post("Runtime.getProperties", { objectId: value.objectId, ownProperties: true })).result ?? []) : [];
-          if ([text(value), ...inside.map((/** @type {any} */ p) => text(p.value))].some((each) => each.includes(lines.key))) {
-            shown.add(`${frame.functionName || "(anonymous)"}.${name}`);
+  const late = new Promise((_, fail) => { timer = setTimeout(() => fail(new Error(`no result within ${within} ms: ${out}`)), within); });
+  const ended = new Promise((_, fail) => child.on("exit", (code) => fail(new Error(`the scene ended (${code}) before its result: ${out}`))));
+  const watched = async () => {
+    const url = await new Promise((ok) => child.stderr.on("data", (data) => { const found = /ws:\/\/\S+/.exec(String(data)); if (found) ok(found[0]); }));
+    socket = new WebSocket(String(url));
+    await new Promise((ok) => socket.addEventListener("open", ok));
+    let id = 0;
+    const waiting = new Map(), scripts = new Map(), shown = new Set();
+    const post = (/** @type {string} */ method, params = {}) => new Promise((ok) => { waiting.set(++id, ok); socket.send(JSON.stringify({ id, method, params })); });
+    const text = (/** @type {any} */ value) => (value?.value !== undefined ? String(value.value) : value?.description ?? "");
+    socket.addEventListener("message", async ({ data }) => {
+      const message = JSON.parse(String(data));
+      if (message.id) return waiting.get(message.id)?.(message.result ?? {});
+      if (message.method === "Debugger.scriptParsed") return scripts.set(message.params.scriptId, message.params.url);
+      if (message.method !== "Debugger.paused") return;
+      for (const frame of message.params.callFrames.filter((/** @type {any} */ f) => (scripts.get(f.location.scriptId) ?? "").includes("/src/"))) {
+        for (const scope of frame.scopeChain.filter((/** @type {any} */ s) => ["local", "block", "catch"].includes(s.type))) {
+          for (const { name, value } of (await post("Runtime.getProperties", { objectId: scope.object.objectId, ownProperties: true })).result ?? []) {
+            const inside = value?.objectId ? ((await post("Runtime.getProperties", { objectId: value.objectId, ownProperties: true })).result ?? []) : [];
+            if ([text(value), ...inside.map((/** @type {any} */ p) => text(p.value))].some((each) => each.includes(lines.key))) {
+              shown.add(`${frame.functionName || "(anonymous)"}.${name}`);
+            }
           }
         }
       }
-    }
-    socket.send(JSON.stringify({ id: ++id, method: "Debugger.resume", params: {} }));
-  });
-  await post("Debugger.enable");
-  await post("Debugger.setPauseOnExceptions", { state: "all" });
-  await post("Runtime.runIfWaitingForDebugger");
-  await new Promise((ok) => { const done = setInterval(() => { if (out.includes("thrown")) { clearInterval(done); ok(null); } }, 20); });
-  socket.close();
-  child.kill(); // the inspector holds it, waiting for its debugger to leave
-  return { thrown: JSON.parse(out).thrown, shown: [...shown].sort() };
+      socket.send(JSON.stringify({ id: ++id, method: "Debugger.resume", params: {} }));
+    });
+    await post("Debugger.enable");
+    await post("Debugger.setPauseOnExceptions", { state: "all" });
+    await post("Runtime.runIfWaitingForDebugger");
+    await new Promise((ok) => { poll = setInterval(() => { if (out.includes("thrown")) ok(null); }, 20); });
+    return { thrown: JSON.parse(out).thrown, shown: [...shown].sort() };
+  };
+  try {
+    return await Promise.race([watched(), late, ended]);
+  } finally {
+    clearTimeout(timer);
+    clearInterval(poll);
+    socket?.close();
+    child.kill(); // the inspector holds it, waiting for its debugger to leave
+  }
 }
 
-const noSocket = typeof WebSocket === "undefined" && "this Node has no WebSocket client, Node 22's"; // the DevTools protocol's
+const noSocket = typeof WebSocket === "undefined" && "Node 20 has no WebSocket client, which the DevTools protocol needs (Node 22's has)";
 
 describe("Promises", () => {
   test("an error thrown to the client shows the key in no frame of the SDK's", { skip: noSocket }, async () => {
@@ -878,6 +890,18 @@ describe("Broken", () => {
       "const held = { key }; const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);", async (faulty) => {
         assert.deepEqual((await framesAtThrows(faulty)).shown, ["handle.held"]);
       });
+  });
+
+  test("a scene that never answers fails the frame check within its bound, never hangs it", { skip: noSocket, timeout: FRAMES_WITHIN_MS }, async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const here = mkdtempSync(`${tmpdir()}/frames-`);
+    try {
+      writeFileSync(`${here}/never.js`, "setInterval(() => {}, 1000);\n"); // made up: a scene stuck before its result
+      await assert.rejects(framesAtThrows({ ...sdk, key: "made-up" }, `${here}/never.js`, NEVER_WITHIN_MS), /no result within/);
+    } finally {
+      rmSync(here, { recursive: true });
+    }
   });
 
   test("no version check turns it red", async () => {

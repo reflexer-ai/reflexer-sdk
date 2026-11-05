@@ -60,6 +60,8 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
         except Exception as failure:
             reflexer.failed(failure)
             return None, route is not None
+        except BaseException as stopped:  # a cancel, a ^C: raised on without the frames below, which hold the leg
+            raise stopped.with_traceback(None)
         finally:
             route = leg = None  # what an error's traceback, raised on, would show of this frame
         if reflexer.goes_straight(answer.status_code, answer.headers):

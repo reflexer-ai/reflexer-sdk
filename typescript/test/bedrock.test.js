@@ -617,7 +617,59 @@ async function onTheFetchHandler(lines) {
   }
 }
 
+/**
+ * At each error the Bedrock lines throw to the client, the SDK's own frames' locals that show the reflexer key as an error
+ * tracker capturing locals reads them: local, block and catch scopes, an object's own properties one level deep. The
+ * scene runs in a process of its own under the inspector, watched over the DevTools protocol, which pauses on every
+ * exception. Its errors, and where the key showed.
+ * @param {any} lines the package, or a faulty copy
+ */
+async function framesAtThrows(lines) {
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["--inspect-brk=127.0.0.1:0", new URL("./frames-scene.js", import.meta.url).pathname, lines.root],
+    { stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  child.stdout.on("data", (data) => { out += data; });
+  const url = await new Promise((ok) => child.stderr.on("data", (data) => { const found = /ws:\/\/\S+/.exec(String(data)); if (found) ok(found[0]); }));
+  const socket = new WebSocket(String(url));
+  await new Promise((ok) => socket.addEventListener("open", ok));
+  let id = 0;
+  const waiting = new Map(), scripts = new Map(), shown = new Set();
+  const post = (/** @type {string} */ method, params = {}) => new Promise((ok) => { waiting.set(++id, ok); socket.send(JSON.stringify({ id, method, params })); });
+  const text = (/** @type {any} */ value) => (value?.value !== undefined ? String(value.value) : value?.description ?? "");
+  socket.addEventListener("message", async ({ data }) => {
+    const message = JSON.parse(String(data));
+    if (message.id) return waiting.get(message.id)?.(message.result ?? {});
+    if (message.method === "Debugger.scriptParsed") return scripts.set(message.params.scriptId, message.params.url);
+    if (message.method !== "Debugger.paused") return;
+    for (const frame of message.params.callFrames.filter((/** @type {any} */ f) => (scripts.get(f.location.scriptId) ?? "").includes("/src/"))) {
+      for (const scope of frame.scopeChain.filter((/** @type {any} */ s) => ["local", "block", "catch"].includes(s.type))) {
+        for (const { name, value } of (await post("Runtime.getProperties", { objectId: scope.object.objectId, ownProperties: true })).result ?? []) {
+          const inside = value?.objectId ? ((await post("Runtime.getProperties", { objectId: value.objectId, ownProperties: true })).result ?? []) : [];
+          if ([text(value), ...inside.map((/** @type {any} */ p) => text(p.value))].some((each) => each.includes(lines.key))) {
+            shown.add(`${frame.functionName || "(anonymous)"}.${name}`);
+          }
+        }
+      }
+    }
+    socket.send(JSON.stringify({ id: ++id, method: "Debugger.resume", params: {} }));
+  });
+  await post("Debugger.enable");
+  await post("Debugger.setPauseOnExceptions", { state: "all" });
+  await post("Runtime.runIfWaitingForDebugger");
+  await new Promise((ok) => { const done = setInterval(() => { if (out.includes("thrown")) { clearInterval(done); ok(null); } }, 20); });
+  socket.close();
+  child.kill(); // the inspector holds it, waiting for its debugger to leave
+  return { thrown: JSON.parse(out).thrown, shown: [...shown].sort() };
+}
+
+const noSocket = typeof WebSocket === "undefined" && "this Node has no WebSocket client, Node 22's"; // the DevTools protocol's
+
 describe("Promises", () => {
+  test("an error thrown to the client shows the key in no frame of the SDK's", { skip: noSocket }, async () => {
+    assert.deepEqual(await framesAtThrows(sdk), { thrown: ["ReplayNotTaken", "ReplayNotTaken"], shown: [] });
+  });
+
   test("aws-js on a handler that follows redirects is refused as the line is made", async () => {
     assert.deepEqual(await onTheFetchHandler(sdk), { refused: true, keyed: [] });
   });
@@ -764,7 +816,7 @@ describe("Broken", () => {
   });
 
   test("a fallback not signed anew turns it red", async () => {
-    await check.planted("bedrock.js", "ours && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request))", "false ? null", async (faulty) => {
+    await check.planted("bedrock.js", "sent && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request))", "false ? null", async (faulty) => {
       const { result, seen } = await called(linesOf(faulty)[0][2], false, "converse", "late");
       const [leg, straight] = [check.REFLEXER, BEDROCK].map((host) => /** @type {any} */ (seen.find(({ url }) => url.host === host)).headers.get("x-amz-date"));
       assert.equal(straight, leg, String(result));
@@ -819,6 +871,13 @@ describe("Broken", () => {
     await check.planted("bedrock-ai.js", '"$1-$2-$3T$4:$5:$6Z"', '"$1-$2-$3T$4:$5:$6"', async (faulty) => {
       assert.equal(await windowCuts(faulty), false);
     });
+  });
+
+  test("a key in a frame of the SDK's at a throw turns it red", { skip: noSocket }, async () => {
+    await check.planted("bedrock.js", "const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);",
+      "const held = { key }; const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);", async (faulty) => {
+        assert.deepEqual((await framesAtThrows(faulty)).shown, ["handle.held"]);
+      });
   });
 
   test("no version check turns it red", async () => {

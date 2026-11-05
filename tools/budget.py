@@ -30,8 +30,11 @@ def code_lines(text, tree):
     return len(held - docstrings(tree))
 
 
+INTERNALS = {"get_referents", "get_referrers", "get_objects"}  # gc's: a way into another's objects past every name they give
+
+
 def private(name):
-    return name.startswith("_") and not name.startswith("__") and name.replace("_", "").isalnum()
+    return name in INTERNALS or name.startswith("_") and not name.startswith("__") and name.replace("_", "").isalnum()
 
 
 def private_names(trees, allowed=None):
@@ -47,6 +50,8 @@ def private_names(trees, allowed=None):
                 defined |= {t.attr for t in node.targets if isinstance(t, ast.Attribute) and getattr(t.value, "id", "") == "self"}
             if isinstance(node, ast.Attribute):
                 used.add((name, node.attr))
+            elif isinstance(node, ast.ImportFrom):
+                used |= {(name, alias.name) for alias in node.names}
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                 used |= {(name, part) for part in node.value.split(".")}
     excused = {(name, each) for name, names in (allowed or {}).items() for each in names}

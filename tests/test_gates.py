@@ -18,7 +18,9 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "langchain_gemini.py": {"langchain_google_genai"},
     "bedrock.py": {"copy", "inspect", "re"},  # Bedrock's wire and what its lines share: the standard library only
     "boto3.py": {"boto3", "botocore", "urllib3"},  # urllib3: botocore's own HTTP library, whose read timeout botocore names its own
-    "aiobotocore.py": {"aiobotocore", "botocore", "yarl", "asyncio", "gc"},  # gc: the one way to the headers aiohttp keeps  # yarl: aiohttp's URL, which aiobotocore sends by as its own send does
+    # aiohttp, yarl: the session aiobotocore sends by, and its URL; gc.get_referents, gc's one function used here: the one
+    # way to the request headers aiohttp keeps with an answer (P27)
+    "aiobotocore.py": {"aiobotocore", "botocore", "aiohttp", "yarl", "asyncio", "gc.get_referents"},
     "anthropic_bedrock.py": {"anthropic", "contextvars", "inspect"},  # contextvars: a call's own state, set by our middleware for our transport
     "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "datetime", "inspect", "threading", "time"},  # httpx: LiteLLM's own HTTP library; the rest, its window's bound
 }
@@ -36,9 +38,10 @@ def imports_not_allowed(root):
             found.append(f"{path.name}: a file with no import allowlist")
             continue
         for node in ast.walk(ast.parse(path.read_text())):
-            names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else \
-                [node.module] if isinstance(node, ast.ImportFrom) and node.level == 0 else []
-            found += [f"{path.name}: {name}" for name in names if name not in allowed and name.split(".")[0] not in allowed]
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module not in allowed and node.module.split(".")[0] not in allowed:
+                found += [f"{path.name}: {node.module}.{alias.name}" for alias in node.names if f"{node.module}.{alias.name}" not in allowed]
+            elif isinstance(node, ast.Import):  # a module's one function allowed is not the module
+                found += [f"{path.name}: {alias.name}" for alias in node.names if alias.name not in allowed and alias.name.split(".")[0] not in allowed]
     return found
 
 
@@ -149,6 +152,16 @@ class Broken(unittest.TestCase):
     def test_an_import_outside_the_allowlist_turns_it_red(self):
         self.plant("__init__.py", "import made_up_module")
         self.assertEqual(imports_not_allowed(self.root), ["__init__.py: made_up_module"])
+
+    def test_more_of_a_module_than_its_function_allowed_turns_it_red(self):
+        self.plant("aiobotocore.py", "import gc\nfrom gc import get_referrers")
+        self.assertEqual(imports_not_allowed(self.root), ["aiobotocore.py: gc", "aiobotocore.py: gc.get_referrers"])
+
+    def test_a_way_past_names_counted_where_not_allowed_turns_it_red(self):
+        limits = tomllib.loads((self.root / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]
+        self.plant("transport.py", "import gc\ndef made_up(thing):\n    return gc.get_referents(thing)")
+        self.assertEqual([problem.split(",")[0] for problem in budget.problems(self.root / "reflexer", limits) if "private" in problem],
+                         ["private_names: 1"])
 
     def test_a_file_with_no_allowlist_turns_it_red(self):
         (self.root / "reflexer" / "made_up.py").write_text("")

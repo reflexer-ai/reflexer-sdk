@@ -2,7 +2,7 @@
 answer says. A case: `cases.py`."""
 import asyncio, base64, hashlib, logging, os, random, threading, time, uuid
 
-from . import resolver, standins
+from . import bedrock, resolver, standins
 from .standins import STRAIGHT_TEXT, SERVED_TEXT, Proxy, Standin
 
 MODEL = {"openai": "frontier-x", "azure": "frontier-d", "anthropic": "frontier-y", "gemini": "frontier-z", "acme": "frontier-a"}
@@ -13,7 +13,7 @@ AZURE_VERSION = "2024-10-21"
 PASS_THROUGH = "Reflexer-Pass-Through"
 REFLEXER_NAMES = ["api.reflexer.ai"]
 PROVIDER_NAMES = ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "openrouter.ai",
-                  "api.groq.com", "made-up.openai.azure.com", "api.acme.example"]
+                  "api.groq.com", "made-up.openai.azure.com", "api.acme.example", *bedrock.NAMES]
 ELSEWHERE_NAMES = ["elsewhere.example"]
 RUNNER_NAMES = ["runner.example"]
 NAMES = REFLEXER_NAMES + PROVIDER_NAMES + ELSEWHERE_NAMES + RUNNER_NAMES
@@ -350,6 +350,11 @@ class Test:
                 carried = key and (any(key in value for value in arrival.headers.values())
                                    or key.encode() in (arrival.body or b"") or key in (arrival.path or ""))
                 self.check(not carried, f"the reflexer key reached the {who}: {arrival}")
+        for who, arrivals in others[1:] + [("reflexer", self.reflexer.seen)]:  # Bedrock's: its key and a signature, only where they go
+            for arrival in arrivals:
+                auth = " ".join(value for name, value in arrival.headers.items() if name in ("authorization", "x-api-key"))
+                self.check(who == "reflexer" or bedrock.BEARER not in auth, f"the Bedrock API key reached the {who}: {arrival}")
+                self.check("AWS4-HMAC-SHA256" not in auth and bedrock.SECRET not in auth, f"a SigV4 signature reached the {who}: {arrival}")
         for arrival in self.reflexer.seen + self.provider.seen + self.elsewhere.seen + self.runner.seen + self.proxy.plain:
             left = self.local_flags & set(arrival.headers)
             self.check(not left, f"the skip's flag {sorted(left)} left the machine: {arrival}")

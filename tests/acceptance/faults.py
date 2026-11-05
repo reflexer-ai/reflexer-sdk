@@ -7,6 +7,7 @@ import httpx, httpx2
 from google.genai import types as genai_types
 
 import reflexer, reflexer.gemini, reflexer.transport as transport
+import reflexer.aiobotocore, reflexer.anthropic_bedrock, reflexer.bedrock as bedrock, reflexer.boto3, reflexer.litellm
 import harness, lines
 from harness import standins
 
@@ -329,6 +330,98 @@ def setter(owner, name, value):
     return lambda: setattr(owner, name, value)
 
 
+# Bedrock's: its lines are in files of their own, each reading what it uses by its own name
+
+BOTOCORE_LINES = (reflexer.boto3, reflexer.aiobotocore)
+
+
+def on_bedrock(name, value):
+    """`name` replaced in Bedrock's shared file and in every line that reads it."""
+    def plant():
+        for module in (bedrock, *BOTOCORE_LINES):
+            if hasattr(module, name):
+                setattr(module, name, value)
+    return plant
+
+
+def bedrock_line(around):
+    """The client's Bedrock line: `around(real, world, lib, keyed, settings)` makes the client in its place."""
+    real = lines.bedrock_client
+    return lambda: setattr(lines, "bedrock_client", lambda world, lib, keyed=True, **settings: around(real, world, lib, keyed, settings))
+
+
+def bedrock_stock(real, world, lib, keyed, settings):
+    return harness.bedrock.LIBS[lib].make(None, keyed, settings)
+
+
+def bedrock_share_ignored(real, world, lib, keyed, settings):
+    world.share = 1.0
+    return real(world, lib, keyed, **settings)
+
+
+def straight_changed(request, headers, body):
+    """The straight call, a header of the SDK's added and none of ours taken off."""
+    headers["x-made-up"] = "1"
+    return request
+
+
+def key_on_the_botocore_request(reflexer_, request):
+    request.headers["reflexer-key"] = reflexer_.key
+    return real_botocore_route(reflexer_, request)
+
+
+def cut_sent_again(real):
+    """A served answer whose body fails, sent to Bedrock too, as if it never came."""
+    def read(answer, request):
+        try:
+            return real(answer, request)
+        except Exception:
+            return None
+
+    async def aread(answer, request):
+        try:
+            return await real(answer, request)
+        except Exception:
+            return None
+    return aread if real is real_aread_served else read
+
+
+def a_session_of_its_own(real, session_for):
+    """Reflexer's leg by an HTTP session of the line's own, not the client's: `session_for(client)` makes it."""
+    def through(client, *args, **kwargs):
+        own = types.SimpleNamespace(_endpoint=types.SimpleNamespace(http_session=session_for(client)), meta=client.meta)
+        real(own, *args, **kwargs)
+        return client
+    return through
+
+
+def own_botocore_session(client):
+    import botocore.httpsession
+    return botocore.httpsession.URLLib3Session(verify=os.environ["AWS_CA_BUNDLE"])
+
+
+def first_aiohttp_session(client):
+    """The client's own aiohttp session as its first event loop opened it, kept for every loop after."""
+    own, kept = client._endpoint.http_session, []
+
+    async def session_for(proxy):
+        if not kept:
+            kept.append(await own._get_session(proxy))
+        return kept[0]
+    return types.SimpleNamespace(_get_session=session_for, _proxy_config=own._proxy_config)
+
+
+def route_logging_its_headers(self, url, headers, replay=False):
+    made = real_route(self, url, headers, replay)
+    if made:
+        import logging
+        logging.getLogger("botocore.made_up").debug("sending %s", made[1])
+    return made
+
+
+real_botocore_route, real_read_served, real_aread_served = bedrock.botocore_route, reflexer.boto3.read_served, reflexer.aiobotocore.read_served
+
+
 FAULTS = {
     # where the key goes, what is routed
     "key_on_every_request": lambda: (setattr(transport, "to_reflexer", key_on_the_clients_own_request),
@@ -393,6 +486,30 @@ FAULTS = {
     "calls_the_public_method_twice": lambda: on_the_line(calls_the_public_method_twice),
     "errors_of_our_own": lambda: on_the_line(errors_of_our_own),
     "gemini_answer_dressed": lambda: on_the_line(gemini_answer_dressed),
+    # Bedrock's
+    "bedrock_stock": bedrock_line(bedrock_stock),
+    "bedrock_share_ignored": bedrock_line(bedrock_share_ignored),
+    "bedrock_signed_routed": on_bedrock("keyed", lambda headers: True),
+    "bedrock_straight_changed": on_bedrock("straight", straight_changed),
+    "bedrock_streams_not_routed": lambda: bedrock.BEDROCK.update(calls=r"/model/[^/]+/(invoke|converse)$"),
+    "bedrock_every_operation_routed": lambda: bedrock.BEDROCK.update(calls=r"/model/[^/]+/[a-z-]+$"),
+    "bedrock_no_fallback": setter(reflexer.Reflexer, "failed", lambda self, failure: (_ for _ in ()).throw(failure)),
+    "bedrock_connection_is_an_answer": setter(reflexer, "read", read_meaning(lambda s, o, f: reflexer.ANSWER if o == "connection" else None)),
+    "bedrock_cut_sent_again": lambda: (setattr(reflexer.boto3, "read_served", cut_sent_again(real_read_served)),
+                                       setattr(reflexer.aiobotocore, "read_served", cut_sent_again(real_aread_served))),
+    "bedrock_no_tls_retry": lambda: (on_bedrock("again_if_refused", lambda send: send())(),
+                                     on_bedrock("aagain_if_refused", lambda send: send())()),
+    "bedrock_skip_not_taken": on_bedrock("skip_taken", lambda event_name, kwargs, before: None),
+    "bedrock_no_replay_guard": lambda: (setattr(bedrock, "is_replay", lambda body: False), setattr(transport, "is_replay", lambda body: False)),
+    "bedrock_timeout_not_read": setter(reflexer.litellm, "asked", lambda timeout, logging_obj: timeout),
+    "bedrock_handlers_answer_ignored": on_bedrock("answered", lambda responses: False),
+    "bedrock_copy_is_stock": lambda: [setattr(cls, name, getattr(cls.__mro__[2], "copy")) for cls in
+                                      (reflexer.anthropic_bedrock.AnthropicBedrock, reflexer.anthropic_bedrock.AnthropicBedrockMantle)
+                                      for name in ("copy", "with_options")],
+    "bedrock_key_on_the_clients_request": lambda: (on_bedrock("botocore_route", key_on_the_botocore_request)(), setattr(bedrock, "OURS", "not-ours-")),
+    "bedrock_own_session": setter(reflexer.boto3, "through", a_session_of_its_own(reflexer.boto3.through, own_botocore_session)),
+    "bedrock_first_loops_session": setter(reflexer.aiobotocore, "through", a_session_of_its_own(reflexer.aiobotocore.through, first_aiohttp_session)),
+    "bedrock_route_logs_its_headers": setter(reflexer.Reflexer, "route", route_logging_its_headers),
 }
 
 
@@ -460,6 +577,7 @@ FREEZES = {
     "kept_with_options_timeout_holds":                         (holding(), 2.0),
     "stall_reflexer_stalled_provider_at_six_tenths":           (holding(), 2.0),
     "stall_slow_pass_through_at_seven_tenths":                 (answering("reflexer"), 0.6),  # its slow answer, made later
+    "bedrock_the_clients_timeout_holds_on_reflexers_leg":      (holding(), 2.0),
 }
 
 

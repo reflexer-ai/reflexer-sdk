@@ -13,13 +13,16 @@ import argparse, importlib.metadata, json, logging, os, shutil, signal, sys, tem
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, ROOT]  # the suite's modules, and the SDK of this checkout
-SDK_COLUMNS = ("openai", "anthropic", "gemini", "azure", "acme")
-VERSIONS = ("openai", "anthropic", "google-genai", "httpx2", "httpx")
+from harness import bedrock  # noqa: E402 Bedrock's libraries and its wire, as the suite plays them
+
+SDK_COLUMNS = ("openai", "anthropic", "gemini", "azure", "acme", *bedrock.COLUMNS)
+VERSIONS = ("openai", "anthropic", "google-genai", "httpx2", "httpx", "boto3", "aiobotocore", "litellm", "langchain-aws", "strands-agents",
+            "pydantic-ai-slim")
 AMBIENT = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
            "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_CUSTOM_HEADERS",
            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS",
            "GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT",
-           "OPENAI_API_VERSION", "SSL_CERT_DIR")  # nothing of the caller's environment reaches a case
+           "OPENAI_API_VERSION", "SSL_CERT_DIR", *bedrock.AMBIENT)  # nothing of the caller's environment reaches a case
 GRACE_AFTER_ALARM = 2  # seconds between a case's own alarm and its kill
 MAX_JOBS = 8
 
@@ -164,13 +167,14 @@ def rendered(table, seconds, versions):
     """The table: a line per case with a word per SDK, then each cell not passed with what the client saw."""
     lines = [f"{seconds:.0f}s on {versions}.", ""]
     width = max(len(row["case"]) for row in table) + 2
-    head = f"{'case':<{width}}" + "".join(f"{sdk:<10}" for sdk in SDK_COLUMNS)
     behaviours = list(dict.fromkeys(row["behaviour"] for row in table))
     for behaviour in behaviours:
-        lines += [f"== {behaviour}", head]
-        for name in dict.fromkeys(row["case"] for row in table if row["behaviour"] == behaviour):
-            cells = {row["sdk"]: row["status"] for row in table if row["case"] == name}
-            lines.append((f"{name:<{width}}" + "".join(f"{cells.get(sdk, '-'):<10}" for sdk in SDK_COLUMNS)).rstrip())
+        rows = [row for row in table if row["behaviour"] == behaviour]
+        columns = [sdk for sdk in SDK_COLUMNS if any(row["sdk"] == sdk for row in rows)]  # those its cases run on
+        lines += [f"== {behaviour}", f"{'case':<{width}}" + "".join(f"{sdk[:16]:<17}" for sdk in columns)]
+        for name in dict.fromkeys(row["case"] for row in rows):
+            cells = {row["sdk"]: row["status"] for row in rows if row["case"] == name}
+            lines.append((f"{name:<{width}}" + "".join(f"{cells.get(sdk, '-'):<17}" for sdk in columns)).rstrip())
         lines.append("")
     lines.append("Sum: " + ", ".join(f"{word} {count}" for word, count in summary(table).items()) + f", of {len(table)} cells.")
     lines += ["", "Each not passed:"] + [f"{row['status']:<7} {row['case']} / {row['sdk']}: {row['saw']}"
@@ -201,7 +205,8 @@ def main():
     tmp = tempfile.mkdtemp(prefix="acceptance-")
     try:
         authority = certs.Certs(tmp, harness.NAMES)
-        os.environ["SSL_CERT_FILE"] = authority.ca
+        os.environ["SSL_CERT_FILE"] = os.environ["AWS_CA_BUNDLE"] = authority.ca  # AWS_CA_BUNDLE: botocore's own trust
+        os.environ.update(bedrock.ENVIRONMENT)
         import cases
         versions = ", ".join(f"{name} {importlib.metadata.version(name)}" for name in VERSIONS)
         began = time.monotonic()

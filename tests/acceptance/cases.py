@@ -1417,14 +1417,6 @@ def new_provider_skip_goes_straight(t):
     t.check(not t.to_reflexer(), f"reflexer got it: {t.to_reflexer()}")
 
 
-# ---- open: not built yet; they stay in the table
-
-@case("open", sdks=("anthropic",), na={"anthropic": "Bedrock: this SDK has no Bedrock client, and botocore, which signs "
-                                                      "its requests, is not installed here"})
-def open_bedrock(t):
-    raise harness.Cannot("not run")
-
-
 # ---- measures, again
 
 @case("measure", sdks=WITH_AZURE)
@@ -1438,3 +1430,6 @@ def measure_what_each_4xx_of_reflexers_does(t):
         what.append(f"{status} {'raised' if outcome.error is not None else 'answered'}")
     t.note(", ".join(what))
     t.last = None
+
+
+import cases_bedrock  # noqa: E402,F401 Amazon Bedrock's cases, registered beside these

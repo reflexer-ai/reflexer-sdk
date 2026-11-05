@@ -16,7 +16,8 @@
     garbage   answers bytes that are not HTTP
     badcert   TLS with a certificate nobody trusts
 
-Any mode takes `delay=` (seconds before answering), `gzip=True` (compressed when the request accepts it, the SDKs'
+Any mode takes `refuse_tls=` (that many of the next TLS handshakes refused by an alert, as a garbled ClientHello is),
+`delay=` (seconds before answering), `gzip=True` (compressed when the request accepts it, the SDKs'
 default), `gap=` (seconds between a stream's events), `handshake=` (a `threading.Event`: a stream's first event sent,
 the rest wait until it is set, at most `HANDSHAKE_WAIT`; `Arrival.handed_first` says whether it was), `headers=` (added
 to the answer), `body=` (replaces it).
@@ -24,6 +25,8 @@ A request asking for a stream gets its format's events, unless the mode set a bo
 """
 import gzip as gzip_module, http.server, json, select, socket, ssl, struct, threading, time
 from urllib.parse import urlsplit
+
+from . import bedrock
 
 STALL_HOLD = 60.0  # seconds a stalled answer holds at most, past any case's limit
 REQUEST_ID = "0190f0e0-0000-7000-8000-000000000000"
@@ -43,9 +46,16 @@ PRESETS = {"busy": {"status": 503, "headers": {"Reflexer-Status-Origin": "reflex
            "redirect": {"status": 307, "headers": PROVIDERS_THROUGH_US | {"location": REDIRECT_TARGET}, "body": b""}}
 
 
+REFUSING = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)  # refuses each handshake at its ClientHello, by an alert
+REFUSING.sni_callback = lambda sock, name, context: ssl.ALERT_DESCRIPTION_DECODE_ERROR
+MESSAGE_WIRES = ("chat", "responses", "messages", "gemini", "acme", "converse", "converse_stream", "invoke", "invoke_stream")
+
+
 def wire_of(path):
     """Which format a request's path speaks; the same under reflexer's prefix."""
     path = urlsplit(path).path
+    if bedrock.wire_of(path):
+        return bedrock.wire_of(path)
     for ending, wire in (("/chat/completions", "chat"), ("/responses", "responses"), ("/messages", "messages"),
                          ("enerateContent", "gemini"), ("/v2/ask", "acme"), ("/models", "models")):
         if ending in path:
@@ -55,6 +65,8 @@ def wire_of(path):
 
 def body_for(path, text, extra_usage=None):
     wire, usage = wire_of(path), extra_usage or {}
+    if bedrock.wire_of(urlsplit(path).path):
+        return bedrock.body_for(wire, text)
     if wire == "chat":
         return {"id": "chatcmpl-made-up", "object": "chat.completion", "created": 1, "model": "frontier-x",
                 "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}}],
@@ -95,6 +107,8 @@ def as_served(path, body):
 def events_for(path, text, served=False):
     """A stream's events, in the request's format, as bytes each."""
     wire = wire_of(path)
+    if wire in bedrock.STREAMED:
+        return bedrock.events_for(wire, text)
     made = (lambda body: as_served(path, body)) if served else (lambda body: body)
     if wire == "messages":
         steps = [("message_start", {"type": "message_start", "message": made(body_for(path, "")) | {"content": [], "stop_reason": None}}),
@@ -124,7 +138,7 @@ def events_for(path, text, served=False):
 
 
 def asks_stream(path, body):
-    if "streamGenerateContent" in path:
+    if "streamGenerateContent" in path or wire_of(path) in bedrock.STREAMED:
         return True
     try:
         return json.loads(body or b"{}").get("stream") is True
@@ -162,6 +176,7 @@ class Standin:
         self.name, self.context, self.untrusted, self.is_reflexer = name, context, untrusted, is_reflexer
         self.seen, self.connections = [], set()
         self.mode, self.params = "ok", {}
+        self.refused_tls = 0  # handshakes refused by an alert, as `refuse_tls` asked
         self.listener = None
         self._listen(0)
 
@@ -182,7 +197,7 @@ class Standin:
 
     def message_arrivals(self):
         """The message calls that reached it, and the attempts `reset` counted; not a listing of models."""
-        return [a for a in self.seen if a.path is None or wire_of(a.path) in ("chat", "responses", "messages", "gemini", "acme")]
+        return [a for a in self.seen if a.path is None or wire_of(a.path) in MESSAGE_WIRES]
 
     def _listen(self, port):
         self.listener = bound(port)
@@ -222,6 +237,9 @@ class Standin:
             if self.context is not None:
                 self.connections.discard(connection)
                 context = self.untrusted if self.mode == "badcert" else self.context
+                if self.params.get("refuse_tls", 0) > self.refused_tls:
+                    self.refused_tls += 1
+                    context = REFUSING
                 connection = context.wrap_socket(connection, server_side=True)  # detaches the plain socket
                 self.connections.add(connection)
             Handler(connection, address, self)
@@ -253,6 +271,8 @@ class Standin:
         status, headers, body = self._made(arrival, mode, params)
         wants_stream = asks_stream(arrival.path, arrival.body)
         if wants_stream and status < 300 and "body" not in params:
+            if wire_of(arrival.path) in bedrock.STREAMED:
+                headers = {"content-type": bedrock.EVENT_STREAM} | headers
             return handler.stream(status, headers, events_for(arrival.path, self._text(mode), self.is_served(mode)), params)
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         if mode == "cut":

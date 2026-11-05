@@ -136,6 +136,8 @@ CONTROLS = {
     "bedrock_straight_changed": [("bedrock_a_signed_mantle_call_never_reaches_reflexer_and_is_as_stock", "*"),
                                  *[("bedrock_a_signed_calls_fallback_is_as_stock", lib) for lib in  # LiteLLM's: the shipped legs
                                    ("boto3", "aiobotocore", "langchain-aws", "strands", "pydantic-ai", "anthropic-bedrock")]],
+    "bedrock_signed_over_handled_headers": [("bedrock_a_signed_calls_fallback_keeps_a_header_the_client_sets_as_it_signs", "boto3"),
+                                            ("bedrock_a_signed_calls_fallback_keeps_a_header_the_client_sets_as_it_signs", "aiobotocore")],
     "bedrock_middleware_skip_ignored": [("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "anthropic-bedrock")],
     "bedrock_skip_not_taken": [("bedrock_skip_as_an_argument_goes_straight", "*"), ("bedrock_skip_as_an_argument_on_a_signed_call_goes_straight", "*"),
                                ("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "boto3")],

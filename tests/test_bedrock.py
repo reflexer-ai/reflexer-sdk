@@ -102,6 +102,23 @@ def signed_as_stock(scene=lambda w: w.reflexer.set("busy")):
     return found
 
 
+def held_with_a_header_of_the_clients():
+    """{lib: whether a signed call whose client sets a header in a `before-sign` handler of its own (as botocore's docs
+    show) reached Bedrock taken, the header on it, reflexer busy}: the botocore family, whose fallback is signed anew."""
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        made, calls = world(lib)
+        client = calls.client(keyed=False)
+        client.meta.events.register("before-sign.bedrock-runtime.*", lambda request, **_: request.headers.__setitem__("X-Made-Up-Team", "made-up"))
+        made.reflexer.set("busy")
+        outcome = calls.call(client)
+        calls.close()
+        arrival = made.provider.seen[-1]
+        found[lib] = (outcome.text == harness.STRAIGHT_TEXT and bedrock.signature_holds(arrival)
+                      and arrival.headers.get("x-made-up-team") == "made-up")
+    return found
+
+
 def signing_times(delay=1.1):
     """{lib: (reflexer's x-amz-date, Bedrock's)}: a signed call whose leg to reflexer took `delay` seconds and no answer."""
     found = {}
@@ -177,6 +194,7 @@ def ours_on_signed_calls():
     found = {}
     for lib, how in [(lib, "call") for lib in LINES] + [("boto3", "after signing")]:
         made, calls = world(lib)
+        SCENES["busy"](made)  # a signed call on Bedrock's runtime goes to reflexer first: here, its fallback
         client = calls.client(keyed=False)
         if how == "after signing":
             after_signing(client)
@@ -279,6 +297,9 @@ class Promises(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertTrue(at_reflexer and at_bedrock)
                 self.assertEqual(at_bedrock > at_reflexer, lib in SIGNS_ANEW, (at_reflexer, at_bedrock))
+
+    def test_a_signed_calls_fallback_holds_with_a_before_sign_handler_of_the_clients(self):
+        self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": True, "aiobotocore": True})
 
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):
@@ -420,6 +441,16 @@ class Broken(unittest.TestCase):
             found = signing_times()
         self.assertEqual([lib for lib, (at_reflexer, at_bedrock) in found.items() if at_bedrock > at_reflexer], [])
 
+    def test_a_fallback_signed_over_the_headers_its_handlers_already_set_turns_it_red(self):
+        real = reflexer.bedrock.skip_taken
+
+        def late(event_name, kwargs, before):  # the headers kept for signing anew, after the client's handlers ran
+            real(event_name, kwargs, before)
+            if not before and event_name.startswith("before-sign."):
+                kwargs["request"].context[reflexer.bedrock.UNSIGNED] = reflexer.bedrock.lower(kwargs["request"].headers)
+        with mock.patch.object(reflexer.boto3, "skip_taken", late), mock.patch.object(reflexer.aiobotocore, "skip_taken", late):
+            self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": False, "aiobotocore": False})
+
     def test_litellm_a_leg_unbounded_turns_it_red(self):
         with mock.patch.object(reflexer.litellm, "within", lambda seconds, send: send()), \
                 mock.patch.object(reflexer.litellm, "awithin", lambda seconds, sent: sent):
@@ -458,14 +489,19 @@ class Broken(unittest.TestCase):
         def unguarded(request, headers, body):
             return real(request, headers, body if reflexer.bedrock.keyed(headers) else None)
         with mock.patch.object(reflexer.bedrock, "straight", unguarded), mock.patch.object(reflexer.boto3, "straight", unguarded), \
-                mock.patch.object(reflexer.aiobotocore, "straight", unguarded):
+                mock.patch.object(reflexer.aiobotocore, "straight", unguarded), \
+                mock.patch.object(reflexer.transport, "is_replay", lambda body: False):  # anthropic's signed call: the shipped legs' guard too
             self.assertTrue(all(signed_replays_reaching_bedrock().values()))
 
     def test_headers_of_ours_kept_on_a_signed_call_turns_it_red(self):
         def keeping(request, headers, body):
             return request
+
+        def keeping_shipped(request):  # LiteLLM's signed call falls back by the shipped legs
+            request.extensions[reflexer.transport.STRAIGHT] = True
+            return request
         with mock.patch.object(reflexer.bedrock, "straight", keeping), mock.patch.object(reflexer.boto3, "straight", keeping), \
-                mock.patch.object(reflexer.aiobotocore, "straight", keeping):
+                mock.patch.object(reflexer.aiobotocore, "straight", keeping), mock.patch.object(reflexer.transport, "stays_straight", keeping_shipped):
             found = ours_on_signed_calls()
         self.assertTrue(found[("boto3", "after signing")][0] and found[("litellm", "call")][0], found)
 

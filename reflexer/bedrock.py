@@ -23,6 +23,7 @@ BEDROCK = {
 }
 SKIPPED_HERE = "reflexer_pass_through"  # in a botocore call's context: this call goes straight
 SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
+UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its headers as they came to `before-sign`, before the client's handlers
 ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerPassThrough=True)`
 
 
@@ -61,6 +62,8 @@ def skip_taken(event_name, kwargs, before):
     client's own handlers); the header, from the request after the client's own `before-sign` handlers, before it is signed."""
     if before and event_name.startswith("provide-client-params.") and kwargs["params"].pop(ARGUMENT, None):
         kwargs["context"][SKIPPED_HERE] = True
+    if before and event_name.startswith("before-sign."):
+        kwargs["request"].context[UNSIGNED] = lower(kwargs["request"].headers)
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
@@ -81,12 +84,13 @@ def botocore_route(reflexer, request):
 
 def signing_anew(request, unprepared):
     """The client's own botocore signer for a signed call after reflexer's leg, and what it signs: (signer, operation,
-    a copy of the request), or None. botocore's signer takes a request before botocore prepares it (`unprepared`,
-    botocore's `AWSRequest`), its context shared; the client's `before-sign` handlers run again, as on any attempt."""
+    the request as it came to `before-sign`), or None. botocore's signer takes a request before botocore prepares it
+    (`unprepared`, botocore's `AWSRequest`), its context shared; the client's `before-sign` handlers run on it again, as on
+    any attempt botocore signs, and a header set after signing stays unsigned, as stock."""
     signer, operation = (request.context or {}).get(SIGNER, (None, None))
     if signer is None or not signed(lower(request.headers)):
         return None
-    made = unprepared(request.method, request.url, data=request.body, headers=lower(request.headers))
+    made = unprepared(request.method, request.url, data=request.body, headers=request.context[UNSIGNED])
     made.context = request.context
     return signer, operation, made
 

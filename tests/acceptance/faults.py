@@ -419,6 +419,15 @@ def route_logging_its_headers(self, url, headers, replay=False):
     return made
 
 
+def signed_over_what_its_handlers_set(real):
+    """The headers kept for signing a call anew taken after the client's own `before-sign` handlers ran, not before."""
+    def taken(event_name, kwargs, before):
+        real(event_name, kwargs, before)
+        if not before and event_name.startswith("before-sign."):
+            kwargs["request"].context[bedrock.UNSIGNED] = bedrock.lower(kwargs["request"].headers)
+    return taken
+
+
 real_botocore_route, real_read_served, real_aread_served = bedrock.botocore_route, reflexer.boto3.read_served, reflexer.aiobotocore.read_served
 
 
@@ -494,6 +503,7 @@ FAULTS = {
     "bedrock_not_signed_anew": lambda: (on_bedrock("signing_anew", lambda request, unprepared: None)(),
                                         setattr(reflexer.anthropic_bedrock, "withheld", lambda request: False)),
     "bedrock_middleware_skip_ignored": setter(reflexer.anthropic_bedrock.Middleware, "attempt", staticmethod(lambda request: (request, {}))),
+    "bedrock_signed_over_handled_headers": lambda: [setattr(line, "skip_taken", signed_over_what_its_handlers_set(bedrock.skip_taken)) for line in BOTOCORE_LINES],
     "bedrock_window_unbounded": setter(reflexer.litellm, "within", lambda seconds, send: send()),
     "bedrock_window_ignored": setter(reflexer.litellm, "left", lambda headers, now=None: 60.0),
     "bedrock_straight_changed": on_bedrock("straight", straight_changed),

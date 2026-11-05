@@ -123,7 +123,7 @@ def bedrock_client(cls, make_http_client, ours=()):
             if not hasattr(http_client, "reflexer_through"):
                 http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample)
             self.reflexer_http_client = http_client
-            middleware = (*[each for each in middleware if not isinstance(each, Middleware)], *[made() for made in ours])
+            middleware = (*[each for each in middleware or () if not isinstance(each, Middleware)], *[made() for made in ours])
             super().__init__(*args, http_client=http_client, **({"middleware": middleware} if middleware else {}), **config)
 
         def copy(self, *args, http_client=None, **config):

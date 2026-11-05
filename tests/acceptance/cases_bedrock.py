@@ -120,6 +120,17 @@ def bedrock_a_signed_calls_fallback_is_as_stock(t):
     signed_as_stock(t, calls, reflexer=True)
 
 
+@bedrock_case("bedrock routing", libs=SIGNS_ANEW)
+def bedrock_a_signed_calls_fallback_keeps_a_header_the_client_sets_as_it_signs(t):
+    """A header of the client's set where its library signs (a `before-sign` handler on botocore, the call's own
+    elsewhere), reflexer busy: the fallback signed anew carries it once, and Bedrock takes it, as stock's."""
+    calls = Calls(t)
+    reflexer_status(t, 503, body={"message": "made-up"})
+    straight(t, calls.call(calls.client(keyed=False), headers={"X-Made-Up-Team": "made-up"}))  # the stand-in takes only a signature that holds
+    arrival = t.provider.seen[-1]
+    t.check(t.to_reflexer() and arrival.headers.get("x-made-up-team") == "made-up", f"reflexer {len(t.to_reflexer())}: {arrival.headers}")
+
+
 @bedrock_case("bedrock routing", libs=("anthropic-mantle",))
 def bedrock_a_signed_mantle_call_never_reaches_reflexer_and_is_as_stock(t):
     calls = Calls(t)

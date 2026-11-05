@@ -112,7 +112,7 @@ export function fetch(key, options = {}) {
     const seen = store?.seen ?? {};
     const began = performance.now();
     try {
-      return await call.run({ ...store, seen }, () => routed(input, init));
+      return await call.run({ ...store, seen, again: signed(headers) ? store?.again : undefined }, () => routed(input, init)); // a keyed call falls back here
     } catch (failure) {
       if (/** @type {any} */ (seen).cut?.name !== "TimeoutError" || STREAMED.test(new URL(String(input)).pathname)) throw failure;
       return straight(own, input, { ...init, signal: AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) });

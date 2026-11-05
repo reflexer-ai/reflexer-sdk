@@ -151,23 +151,13 @@ export const aiMiddleware = {
 export function requestHandler(key, { handler, ...options }) {
   if (HANDLERS.has(handler)) throw new Error("this handler already sends through reflexer"); // twice, a call would try reflexer twice
   if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw new Error("reflexer's line takes AWS JS's Node HTTP handlers, which follow no redirect: this one could carry the key to a redirect's target");
-  const reflexer = new Reflexer(key, WIRE, options);
+  const ask = asking(new Reflexer(key, WIRE, options), handler, options.headersTimeout ?? HEADERS_TIMEOUT);
   const made = {
     /** @param {any} request @param {any} [given] */
     async handle(request, { reflexerPassThrough, ...given } = {}) {
       if (!keyed(tested(new Headers(plain(request.headers))))) return handler.handle(smithyStaysStraight(request), given);
-      try {
-        const ours = reflexerPassThrough ? null : smithyToReflexer(reflexer, request);
-        if (ours) {
-          const { response } = await bounded((abortSignal) => handler.handle(ours, { ...given, abortSignal }), given.abortSignal,
-            options.headersTimeout ?? HEADERS_TIMEOUT);
-          if (!reflexer.goesStraight(response.statusCode, new Headers(plain(response.headers)))) return { response };
-          response.body?.destroy?.();
-        }
-      } catch (failure) {
-        reflexer.failed(failure);
-      }
-      return handler.handle(smithyStaysStraight(request), given);
+      const response = reflexerPassThrough ? null : await ask(request, given);
+      return response ? { response } : handler.handle(smithyStaysStraight(request), given);
     },
     /** @param {any} name @param {any} value */
     updateHttpClientConfig: (name, value) => handler.updateHttpClientConfig(name, value),
@@ -176,6 +166,26 @@ export function requestHandler(key, { handler, ...options }) {
   };
   HANDLERS.set(made, true);
   return made;
+}
+/**
+ * Reflexer's leg on AWS JS: its answer, or null to go straight. The line's state is this closure's, not the client's
+ * call's: an error thrown to the client shows no frame of ours holding the key.
+ * @param {Reflexer} reflexer @param {any} handler @param {number} bound
+ */
+function asking(reflexer, handler, bound) {
+  return async (/** @type {any} */ request, /** @type {any} */ given) => {
+    try {
+      const ours = smithyToReflexer(reflexer, request);
+      if (!ours) return null;
+      // the client's own timeouts hold, as its handler applies them; ours bounds the answer's head, as the fetch line's
+      const { response } = await bounded((abortSignal) => handler.handle(ours, { ...given, abortSignal }), given.abortSignal, bound);
+      if (!reflexer.goesStraight(response.statusCode, new Headers(plain(response.headers)))) return response;
+      response.body?.destroy?.();
+    } catch (failure) {
+      reflexer.failed(failure);
+    }
+    return null;
+  };
 }
 const HANDLERS = new WeakMap(); // each handler made here
 const FOLLOWS_NO_REDIRECT = ["http/1.1", "h2"]; // Smithy's Node handlers' protocols, by their metadata; its fetch handler names none

@@ -98,8 +98,8 @@
         "files": [
           "bedrock.js"
         ],
-        "lines": 158,
-        "ifs": 28,
+        "lines": 162,
+        "ifs": 29,
         "privateNames": 0
       }
     }

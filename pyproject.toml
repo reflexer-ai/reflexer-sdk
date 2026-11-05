@@ -52,9 +52,9 @@ private_names = 0  # in every file, but those each Bedrock line names below
 [tool.reflexer.budget.bedrock]  # Bedrock's files, apart from every other file's: an audit of another provider's path reads none of them
 files = ["bedrock.py", "boto3.py", "aiobotocore.py", "anthropic_bedrock.py", "litellm.py"]
 private_names = 0  # but those allowed below
-lines = 267  # its wire and the httpx lines' transport, boto3, aiobotocore, anthropic's Bedrock clients, LiteLLM
-ifs = 39
+lines = 296  # its wire and the httpx lines' transport, boto3, aiobotocore, anthropic's Bedrock clients, LiteLLM; a frame of its own for each botocore leg, so no key outlives it on an error; aiohttp's kept headers tried as the line is made
+ifs = 42
 
 [tool.reflexer.budget.private_names_allowed]  # no public name reaches the client's own HTTP session, which reflexer's leg goes by; each read once, as the line is made, so a release renaming one fails the line, never a call
 "boto3.py" = ["_endpoint"]  # botocore's endpoint, whose HTTP session sends the client's calls
-"aiobotocore.py" = ["_endpoint", "_get_session", "_proxy_config"]  # and the aiohttp session and proxies it sends them by
+"aiobotocore.py" = ["_endpoint", "_get_session", "_proxy_config", "get_referents"]  # and the aiohttp session and proxies it sends them by; gc's get_referents, the one way to the request headers aiohttp keeps with an answer, our key among them

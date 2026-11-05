@@ -35,19 +35,30 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
         raise ValueError("this client already goes through reflexer")
     emit = events.emit
 
-    def before_send(request):
-        route = botocore_route(reflexer, request)
-        if route is not None:
+    def asked(request):
+        """Reflexer's answer, or None. Its frame ends before anything reaches the client, and holds no key past it."""
+        route = leg = None
+        try:
+            route = botocore_route(reflexer, request)
+            if route is None:
+                return None
             leg = botocore.awsrequest.AWSRequest(request.method, route[0], data=request.body, headers=route[1], stream_output=True).prepare()
             leg.context = request.context  # the call's own settings for its session, such as a read timeout of its own
-            try:
-                answer = again_if_refused(lambda: send(leg))
-            except Exception as failure:
-                reflexer.failed(failure)
-            else:
-                if not reflexer.goes_straight(answer.status_code, answer.headers):
-                    return read_served(answer, request)
-                answer.raw.close()  # its body unread: one that stalls or breaks holds nothing up
+            answer = again_if_refused(lambda: send(leg))
+        except Exception as failure:
+            reflexer.failed(failure)
+            return None
+        finally:
+            route = leg = None  # what an error's traceback, raised on, would show of this frame
+        if reflexer.goes_straight(answer.status_code, answer.headers):
+            answer.raw.close()  # its body unread: one that stalls or breaks holds nothing up
+            return None
+        return answer
+
+    def before_send(request):
+        answer = asked(request)
+        if answer is not None:
+            return read_served(answer, request)
         straight(request, request.headers, request.body if isinstance(request.body, bytes) else None)
         return None  # botocore sends it, straight
 

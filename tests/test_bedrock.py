@@ -143,13 +143,19 @@ def ours_on_signed_calls():
     return found
 
 
+SDK = os.path.join(os.path.abspath(ROOT), "reflexer") + os.sep  # the SDK's own files: their frames' locals are followed
+
+
 def holders(roots, secret, most=500000):
-    """The paths by which `secret` is reached from `roots`, following every object reference (`gc.get_referents`), a
-    bound method's object included, as any code the client runs could follow it; not into modules, classes, code or
-    functions, whose globals are the program's own."""
+    """The paths by which `secret` is reached from `roots`, following every object reference (`gc.get_referents`): a
+    bound method's object, a function's closure and defaults, and the locals of the SDK's own frames, a traceback's
+    among them; not into modules, classes, code, a function's globals or another's frames, which are the program's own.
+    Past `most` objects it fails: a walk cut short proves nothing."""
     import gc
     seen, pending, found = set(), [(root, "root") for root in roots], []
-    while pending and len(seen) < most:
+    while pending:
+        if len(seen) >= most:
+            raise AssertionError(f"the walk passed {most} objects, unfinished")
         thing, path = pending.pop()
         if id(thing) in seen:
             continue
@@ -157,9 +163,68 @@ def holders(roots, secret, most=500000):
         if isinstance(thing, (str, bytes, bytearray)):
             found += [path] if (secret in thing if isinstance(thing, str) else secret.encode() in thing) else []
             continue
-        if isinstance(thing, type) or type(thing).__name__ in ("module", "function", "code", "frame", "cell"):
+        kind = type(thing).__name__
+        if isinstance(thing, type) or kind in ("module", "code"):
             continue
-        pending += [(held, f"{path}>{type(held).__name__}") for held in gc.get_referents(thing)]
+        if kind == "function":
+            held = [cell.cell_contents for cell in thing.__closure__ or () if cell_holds(cell)]
+            held += list(thing.__defaults__ or ()) + list((thing.__kwdefaults__ or {}).values())
+        elif kind == "frame":
+            held = list(thing.f_locals.values()) if os.path.abspath(thing.f_code.co_filename).startswith(SDK) else []
+        else:
+            held = gc.get_referents(thing)
+        pending += [(each, f"{path}>{type(each).__name__}") for each in held]
+    return found
+
+
+def cell_holds(cell):
+    try:
+        cell.cell_contents
+        return True
+    except ValueError:  # empty
+        return False
+
+
+def in_clear(error, secret):
+    """The SDK's own frames' locals, on an error's traceback and those it chains, that show `secret` as an error tracker
+    capturing locals writes them: by their `repr`, a container's holding its items'. The line's own state stays reachable
+    from them, as the client's HTTP client holds it; what such a tracker ships is what is written."""
+    found, seen, pending = [], set(), [error]
+    while pending:
+        each = pending.pop()
+        if each is None or id(each) in seen:
+            continue
+        seen.add(id(each))
+        pending += [each.__context__, each.__cause__]
+        step = each.__traceback__
+        while step is not None:
+            frame = step.tb_frame
+            if os.path.abspath(frame.f_code.co_filename).startswith(SDK):
+                found += [f"{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if secret in repr(value)]
+            step = step.tb_next
+    return sorted(set(found))
+
+
+ERRORS = {  # (what reflexer does, the call, its own fields): each call raises to the client, the line having taken it
+    "cut": (lambda w: w.reflexer.set("cut"), None, None),
+    "replay, reflexer busy": (lambda w: w.reflexer.set("busy"), "invoke", {"replay_response": {"id": "made-up"}}),
+}
+RAISING = {"cut": ("boto3", "aiobotocore", "anthropic-bedrock", "litellm"),
+           "replay, reflexer busy": ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle", "anthropic-compat", "openai-compat")}
+
+
+def errors_in_clear():
+    """{(lib, scene): the SDK's frames' locals showing the key on the error the client got} (empty: none), through the
+    Bedrock lines and the shipped lines at Bedrock's routes."""
+    found = {}
+    for scene, (arrange, op, extra) in ERRORS.items():
+        for lib in RAISING[scene]:
+            made, calls = world(lib)
+            arrange(made)
+            given = op if op in calls.lib.ops else ("messages" if "messages" in calls.lib.ops else calls.lib.ops[0])
+            outcome = calls.call(calls.client(), given, extra=extra)
+            calls.close()
+            found[(lib, scene)] = in_clear(outcome.error, harness.make_key()) if outcome.error is not None else ["no error raised"]
     return found
 
 
@@ -247,12 +312,16 @@ class Promises(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertEqual(where, [])
 
+    def test_an_error_raised_to_the_client_shows_no_key_in_the_sdks_frames(self):
+        for (lib, scene), shown in errors_in_clear().items():
+            with self.subTest(lib=lib, scene=scene):
+                self.assertEqual(shown, [])
+
     def test_a_calls_own_read_timeout_holds_on_reflexers_leg(self):
         self.assertEqual(straight_within(0.5), {"boto3": True, "aiobotocore": True})
 
     def test_a_private_name_renamed_fails_the_line_as_it_is_made(self):
         """What no public name reaches, read as the line is made: a release renaming it raises there, before any call."""
-        import aiobotocore.httpsession
         key = harness.make_key()
         self.assertTrue(renamed_endpoint_fails_the_line())
         for name in ("_get_session", "_proxy_config", "_endpoint"):
@@ -274,7 +343,7 @@ class Promises(unittest.TestCase):
     def test_a_line_that_cannot_carry_reflexers_leg_fails_as_it_is_made(self):
         """aiobotocore on another HTTP session class, or a client given the line twice: each raises as the line is made,
         where every call would otherwise go straight, or try reflexer twice."""
-        import aiobotocore.config, aiobotocore.httpxsession, aiobotocore.session, boto3
+        import aiobotocore.config, aiobotocore.httpxsession, aiobotocore.session
         key = harness.make_key()
 
         async def on_httpx():
@@ -286,6 +355,23 @@ class Promises(unittest.TestCase):
         twice = reflexer.boto3.client("bedrock-runtime", region_name=bedrock.REGION, reflexer_key=key)
         with self.assertRaises(ValueError):
             reflexer.boto3.through(twice, key)
+
+    def test_aiobotocore_a_session_with_hooks_of_its_own_or_headers_kept_otherwise_fails_the_line(self):
+        """An aiohttp session of a subclass (trace hooks, middlewares) would see our headers; and where aiohttp's kept
+        headers could not be forgotten, every served answer would be dropped: each raises as the line is made."""
+        import aiobotocore.config, aiobotocore.httpsession, aiobotocore.session
+        key = harness.make_key()
+
+        class Own(aiobotocore.httpsession.AIOHTTPSession):
+            pass
+
+        async def made(config=None):
+            async with aiobotocore.session.get_session().create_client("bedrock-runtime", region_name=bedrock.REGION, config=config) as client:
+                reflexer.aiobotocore.through(client, key)
+        with self.assertRaises(TypeError):
+            asyncio.run(made(aiobotocore.config.AioConfig(http_session_cls=Own)))
+        with mock.patch.object(reflexer.aiobotocore, "get_referents", lambda held: []), self.assertRaises(TypeError):
+            asyncio.run(made())
 
     def test_litellm_a_timeout_moved_fails_the_call_never_drops_it(self):
         """LiteLLM's converse route hands `post` no timeout: the line reads the call's own, and a release that moves it
@@ -374,12 +460,30 @@ class Broken(unittest.TestCase):
         self.assertTrue(all(found[(lib, how)][0] for lib, how in (("boto3", "after signing"), ("aiobotocore", "after signing"), ("litellm", "call"))), found)
 
     def test_reflexers_answer_still_keeping_our_headers_goes_straight(self):
-        """A release of aiohttp keeping the request's headers where they cannot be forgotten: the answer is not handed on."""
+        """An answer keeping the request's headers where they cannot be forgotten, after the line was made: not handed on."""
         made, calls = world("aiobotocore")
-        with mock.patch.object(reflexer.aiobotocore.gc, "get_referents", lambda held: []):
-            outcome = calls.call(calls.client())
+        client = calls.client()
+        with mock.patch.object(reflexer.aiobotocore, "get_referents", lambda held: []):
+            outcome = calls.call(client)
         calls.close()
         self.assertEqual((outcome.text, bool(made.provider.seen)), (harness.STRAIGHT_TEXT, True))
+
+    def test_a_key_in_a_frame_of_the_lines_on_an_error_turns_it_red(self):
+        # a frame of the line's own file holding the key as a replay raises through it
+        straight = eval(compile("lambda request, headers, body, kept=key: real(request, headers, body)", reflexer.boto3.__file__, "eval"),
+                        {"real": reflexer.bedrock.straight, "key": harness.make_key()})
+        with mock.patch.object(reflexer.boto3, "straight", straight):
+            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy")])
+
+    def test_a_key_kept_in_a_closure_on_the_answer_turns_it_red(self):
+        real, key = reflexer.aiobotocore.forgotten, harness.make_key()
+
+        def keeping(response):
+            made = real(response)
+            return types.SimpleNamespace(content=made.content, url=made.url, status=made.status, read=made.read, close=made.close,
+                                         release=made.release, hook=lambda: key)
+        with mock.patch.object(reflexer.aiobotocore, "forgotten", keeping):
+            self.assertTrue(what_the_client_is_handed()["aiobotocore"])
 
     def test_reflexers_own_answer_handed_on_turns_it_red(self):
         with mock.patch.object(reflexer.aiobotocore, "forgotten", lambda response: response):

@@ -81,7 +81,7 @@
     "@langchain/google-genai": "2.3.4",
     "@langchain/openai": "1.7.1",
     "@smithy/fetch-http-handler": "5.8.1",
-    "@types/node": "20.19.43",
+    "@types/node": "26.6.6",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",
     "ai": "7.0.155",

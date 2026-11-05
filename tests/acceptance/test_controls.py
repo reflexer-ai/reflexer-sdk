@@ -53,7 +53,7 @@ CONTROLS = {
     "straight_dressed_as_served": [("fields_an_answer_that_went_straight_carries_none", "*")],
     "prices_a_pass_through": [("fields_a_pass_through_keeps_the_providers_cost", "*")],  # gemini's object takes no price: `stock` shows it
     "flag_not_read": [("skip_goes_straight_and_its_flag_stays_here", "*"), ("new_provider_skip_goes_straight", "acme"),
-                      ("bedrock_skip_as_a_header_goes_straight", "litellm"), ("bedrock_skip_as_a_header_goes_straight", "anthropic-bedrock"),
+                      ("bedrock_skip_as_a_header_goes_straight", "litellm"),
                       ("async_skip_goes_straight", "*"), ("stream_skip_goes_straight", "*")],
     "skip_sticks": [("skip_holds_for_one_call_only", "*")],
     "hop_loses_its_mark": [("redirect_on_a_straight_call_stays_straight", "*")],
@@ -135,8 +135,8 @@ CONTROLS = {
     "bedrock_window_ignored": [("bedrock_litellm_a_signed_call_with_no_time_left_goes_straight", "litellm")],
     "bedrock_straight_changed": [("bedrock_a_signed_mantle_call_never_reaches_reflexer_and_is_as_stock", "*"),
                                  *[("bedrock_a_signed_calls_fallback_is_as_stock", lib) for lib in  # LiteLLM's: the shipped legs
-                                   ("boto3", "aiobotocore", "langchain-aws", "strands", "pydantic-ai", "anthropic-bedrock")],
-                                 ("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "litellm")],
+                                   ("boto3", "aiobotocore", "langchain-aws", "strands", "pydantic-ai", "anthropic-bedrock")]],
+    "bedrock_middleware_skip_ignored": [("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "anthropic-bedrock")],
     "bedrock_skip_not_taken": [("bedrock_skip_as_an_argument_goes_straight", "*"), ("bedrock_skip_as_an_argument_on_a_signed_call_goes_straight", "*"),
                                ("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "boto3")],
     "bedrock_share_ignored": [("sampling_on_bedrock_none_sends_all_straight", "*")],

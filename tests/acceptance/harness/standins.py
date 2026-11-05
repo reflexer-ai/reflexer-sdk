@@ -306,10 +306,9 @@ class Standin:
         """Reads nothing more and answers nothing, until the client leaves."""
         connection = handler.connection
         started = time.monotonic()
-        polled = select.poll()  # not `select.select`, which refuses a descriptor past FD_SETSIZE: a process of many sockets has those
-        polled.register(connection, select.POLLIN)
         while time.monotonic() - started < STALL_HOLD:
-            if polled.poll(20):
+            readable, _, _ = select.select([connection], [], [], 0.02)
+            if readable:
                 try:
                     if not connection.recv(1):
                         break

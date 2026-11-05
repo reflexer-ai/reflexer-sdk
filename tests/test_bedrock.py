@@ -41,10 +41,16 @@ def tearDownModule():
 
 def world(lib):
     """A world of stand-ins of its own, as each acceptance case's process has. LiteLLM keeps its HTTP clients across
-    calls, connected to the last world's stand-ins: dropped, as a process of its own would start with none."""
+    calls, connected to the last world's stand-ins: dropped, as a process of its own would start with none. The last
+    world's stand-ins are closed, as a case's process ends with them: a process holding every world's sockets passes
+    the descriptor numbers a stand-in's `select` takes."""
     import litellm
     litellm.in_memory_llm_clients_cache.flush_cache()
+    for standin in SAVED.pop("standins", ()):
+        standin._cut_connections()
+        standin._close()
     made = harness.World((SAVED["certs"].context(), SAVED["certs"].untrusted()))
+    SAVED["standins"] = [made.reflexer, made.provider, made.elsewhere, made.runner]
     test = harness.Test(lines, lib, made)
     import logging
     logging.getLogger().removeHandler(test.logs)

@@ -139,7 +139,7 @@ def sampling_on_bedrock_none_sends_all_straight(t):
 # ---- no harm: whatever fails on the way to reflexer, the client's own call still goes
 
 def no_harm(name, arrange, libs=ALL):
-    for keyed, kind, among in ((True, "", libs), (False, "signed_", tuple(lib for lib in libs if lib in SIGNING))):
+    for keyed, kind, among in ((True, "", libs), (False, "signed_", tuple(lib for lib in libs if lib in RUNTIME_SIGNING))):
         @bedrock_case("bedrock no harm", libs=among, name=f"no_harm_on_bedrock_{kind}{name}")  # no shipped case's name inside: `--only` takes parts
         def check(t, keyed=keyed):
             calls = Calls(t)

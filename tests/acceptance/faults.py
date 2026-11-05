@@ -493,6 +493,7 @@ FAULTS = {
     "bedrock_signed_not_routed": on_bedrock("signed", lambda headers: False),
     "bedrock_not_signed_anew": lambda: (on_bedrock("signing_anew", lambda request, unprepared: None)(),
                                         setattr(reflexer.anthropic_bedrock, "withheld", lambda request: False)),
+    "bedrock_middleware_skip_ignored": setter(reflexer.anthropic_bedrock.Middleware, "attempt", staticmethod(lambda request: (request, {}))),
     "bedrock_window_unbounded": setter(reflexer.litellm, "within", lambda seconds, send: send()),
     "bedrock_window_ignored": setter(reflexer.litellm, "left", lambda headers, now=None: 60.0),
     "bedrock_straight_changed": on_bedrock("straight", straight_changed),

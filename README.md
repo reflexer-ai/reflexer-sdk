@@ -132,7 +132,7 @@ TypeScript:
     // model = createAmazonBedrock({ region, apiKey: bedrockKey })(modelId)
     model = wrapLanguageModel({ model: createAmazonBedrock({ region, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey) })(modelId), middleware: bedrock.aiMiddleware });
 
-`bedrock.requestHandler(reflexerKey, { handler })` is the handler `wrap` gives AWS JS, for a client that sets its own `requestHandler`. One call straight: AWS JS `client.send(command, { reflexerPassThrough: true })`; the AI SDK `providerOptions: { reflexer: { passThrough: true } }`; or the `Reflexer-Pass-Through` header (AWS JS by a middleware of yours, AnthropicBedrock and the AI SDK in the call's headers). What each line cannot do: SECURITY.md, **Known limits**.
+AWS JS's line takes its Node HTTP handlers, its default on Node; its fetch handler, a browser's or an edge runtime's, follows redirects and is refused. `bedrock.requestHandler(reflexerKey, { handler })` is the handler `wrap` gives AWS JS, for a client that sets its own `requestHandler`. One call straight: AWS JS `client.send(command, { reflexerPassThrough: true })`; the AI SDK `providerOptions: { reflexer: { passThrough: true } }`; or the `Reflexer-Pass-Through` header (AWS JS by a middleware of yours, AnthropicBedrock and the AI SDK in the call's headers). What each line cannot do: SECURITY.md, **Known limits**.
 
 ## What reflexer's answer looks like
 

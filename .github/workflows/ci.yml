@@ -26,7 +26,7 @@ jobs:
           enable-cache: false
           version: "0.11.7"
       - name: Tools
-        run: uv sync --locked --group dev --group test --group frameworks
+        run: uv sync --locked --group dev --group test --group frameworks --group bedrock
       - name: Gates and tests, each gate with its planted fault
         run: uv run --locked python -m unittest discover -s tests -t . -v
       - name: Acceptance, offline over real sockets, TLS and the provider SDKs
@@ -98,7 +98,7 @@ jobs:
         env:
           PYTHON: ${{ matrix.python }}
         run: |
-          uv sync --locked --no-default-groups --group test --group frameworks --python "$PYTHON"
-          uv run --locked --no-default-groups --group test --group frameworks python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai
-          uv run --locked --no-default-groups --group test python tests/acceptance/run.py
+          uv sync --locked --no-default-groups --group test --group frameworks --group bedrock --python "$PYTHON"
+          uv run --locked --no-default-groups --group test --group frameworks --group bedrock python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai tests.test_bedrock
+          uv run --locked --no-default-groups --group test --group bedrock python tests/acceptance/run.py
 

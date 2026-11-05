@@ -31,6 +31,10 @@
     "./bedrock": {
       "types": "./types/bedrock.d.ts",
       "default": "./src/bedrock.js"
+    },
+    "./bedrock-ai": {
+      "types": "./types/bedrock-ai.d.ts",
+      "default": "./src/bedrock-ai.js"
     }
   },
   "files": [
@@ -96,10 +100,11 @@
       "privateNames": 0,
       "bedrock": {
         "files": [
-          "bedrock.js"
+          "bedrock.js",
+          "bedrock-ai.js"
         ],
-        "lines": 158,
-        "ifs": 28,
+        "lines": 213,
+        "ifs": 35,
         "privateNames": 0
       }
     }

@@ -14,6 +14,7 @@ const ALLOWED = {
   "logic.js": ["node:crypto"],
   "index.js": ["./logic.js"],
   "bedrock.js": ["./index.js", "./logic.js", "node:async_hooks"], // async_hooks: a call's own state, set by our middleware for our fetch
+  "bedrock-ai.js": ["./bedrock.js", "./logic.js"], // the AI SDK's line, built on the Bedrock fetch line
   "openai.js": ["openai", "openai/version", "./index.js"],
   "anthropic.js": ["@anthropic-ai/sdk", "@anthropic-ai/sdk/version", "./index.js"],
   "gemini.js": ["@google/genai", "./index.js"],
@@ -21,6 +22,7 @@ const ALLOWED = {
 // The globals the source may read, and of some only these members: none reaches a module, a process, a socket, or code made from text
 const GLOBALS = new Map(Object.entries({
   AbortController: null, AbortSignal: ["any", "timeout"], Array: null, ArrayBuffer: null, BigInt: null, DOMException: null, Error: null, Headers: null,
+  Date: ["now", "parse"], // the clock a SigV4 signature's time is reckoned by: AWS JS's corrected, the AI SDK's as it signs
   JSON: ["parse"], Math: null, Number: null, Object: ["defineProperty", "entries", "fromEntries", "hasOwn", "keys"], RegExp: null,
   Request: null, String: null, Symbol: ["for"], TextDecoder: null, TypeError: null, URL: null, WeakMap: null, clearTimeout: null,
   console: null, globalThis: ["fetch"], parseInt: null, performance: null, setTimeout: null, undefined: null,

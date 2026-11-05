@@ -271,42 +271,6 @@ def per_attempt_body():
     return found
 
 
-def cancelled(keyed, line):
-    """aiobotocore's call cancelled by the client while the server it waits on stalls (reflexer, or Bedrock for a stock
-    client): the error, as the client sees it, and the reflexer key."""
-    made, calls = world("aiobotocore")
-    (made.reflexer if line else made.provider).set("stall")
-    os.environ["AWS_SESSION_TOKEN"] = TOKEN
-    try:
-        client = calls.client(line=line, keyed=keyed)
-    finally:
-        os.environ.pop("AWS_SESSION_TOKEN", None)
-
-    async def call():
-        async with asyncio.timeout(1.0):
-            await client.converse(modelId=bedrock.MODEL, messages=[{"role": "user", "content": [{"text": "Hi"}]}])
-    try:
-        calls.run(call())
-        error = None
-    except BaseException as raised:  # the cancel's own
-        error = raised
-    calls.close()
-    return error, made.key
-
-
-def shown_on_a_cancel(keyed):
-    """The frames on the error of a cancel during reflexer's leg that show in clear the reflexer key, or the access key's
-    id (on the signature's header) or the session token where a stock client's cancel shows none: anywhere but the
-    client's own request, which botocore's frames show on stock as they do here, and which ours hand on to it."""
-    error, key = cancelled(keyed, line=True)
-    if error is None:
-        return ["no error"]
-    stock, _ = cancelled(keyed, line=False)
-    own = {"aiobotocore.py:asked.request", "aiobotocore.py:before_send.request", "aiobotocore.py:emitted.kwargs"}
-    signing = {*in_clear(error, bedrock.ACCESS_KEY), *in_clear(error, TOKEN)} - {*in_clear(stock, bedrock.ACCESS_KEY), *in_clear(stock, TOKEN)}
-    return sorted({*in_clear(error, key), *(signing - own)})
-
-
 def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
     """LiteLLM's signed call, reflexer stalled, the window shortened to `seconds` at Bedrock's stand-in and in the line:
     (what the client saw, the seconds it took, whether Bedrock took it). `is_async`: by `acompletion` and its line."""
@@ -426,11 +390,21 @@ def cell_holds(cell):
         return False
 
 
-def in_clear(error, secret):
+def in_clear(error, secret, own=()):
     """The locals of every frame but the tests' own, the SDK's and its libraries', on an error's traceback and those it
     chains, that show `secret` as an error tracker capturing locals writes them: by their `repr`, a container's holding
     its items'. The line's own state stays reachable from them, as the client's HTTP client holds it; what such a tracker
-    ships is what is written."""
+    ships is what is written. `own`: the client's own requests, which show their signature as a stock client's frames
+    show them, so a local shows the secret only past them."""
+    def shows(value):
+        if any(value is each for each in own):
+            return False
+        if type(value) is dict:
+            return secret in repr(list(value)) or any(shows(each) for each in value.values())
+        if type(value) in (list, tuple, set):
+            return any(shows(each) for each in value)
+        return secret in repr(value)
+
     found, seen, pending = [], set(), [error]
     while pending:
         each = pending.pop()
@@ -442,7 +416,7 @@ def in_clear(error, secret):
         while step is not None:
             frame = step.tb_frame
             if not os.path.abspath(frame.f_code.co_filename).startswith(TESTS):
-                found += [f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if secret in repr(value)]
+                found += [f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if shows(value)]
             step = step.tb_next
     return sorted(set(found))
 
@@ -452,28 +426,29 @@ class Stop(BaseException):
 
 
 def asked(arrange, op=None, extra=None):
-    """A scene: reflexer arranged, a call made (`op`, with its own fields), whose error the client gets."""
-    def scene(made, calls):
+    """A scene: reflexer arranged, a call made (`op`, with its own fields), whose error the client gets. `client()` makes
+    the client."""
+    def scene(made, calls, client):
         arrange(made)
         given = op if op in calls.lib.ops else ("messages" if "messages" in calls.lib.ops else calls.lib.ops[0])
-        return calls.call(calls.client(), given, extra=extra).error
+        return calls.call(client(), given, extra=extra).error
     return scene
 
 
-def deadline(made, calls):
+def deadline(made, calls, client):
     """A scene: the client's own deadline (`asyncio.wait_for`) cancels its call while reflexer stalls."""
     made.reflexer.set("stall")
-    client = calls.client()
+    client = client()
     try:
         calls.run(asyncio.wait_for(calls.lib.call(client, calls.lib.ops[0], None, None, None), 0.5))
     except asyncio.TimeoutError as error:
         return error
 
 
-def stopped(made, calls):
+def stopped(made, calls, client):
     """A scene: a `BaseException` raised in urllib3 as reflexer's leg is sent."""
     import urllib3.connectionpool
-    real, client = urllib3.connectionpool.HTTPConnectionPool._make_request, calls.client()
+    real, client = urllib3.connectionpool.HTTPConnectionPool._make_request, client()
 
     def stopping(pool, *args, **kwargs):
         if pool.host in harness.REFLEXER_NAMES:
@@ -493,18 +468,38 @@ ERRORS = {  # scene: (the call, raising to the client, the line having taken it;
     "the client's deadline, reflexer stalled": (deadline, ("aiobotocore",)),
     "not an Exception, in the leg": (stopped, ("boto3",)),
 }
+SIGNED_ERRORS = {"boto3", "aiobotocore", "anthropic-bedrock"}  # whose signed call also raises in a scene but "cut", which falls back
+
+
+def scene_client(calls, keyed, own):
+    """A scene's client: keyed, or signed with a session token; the botocore family's own requests and their headers kept
+    in `own`, as they reach its `before-send` handlers."""
+    def client():
+        if not keyed:
+            os.environ["AWS_SESSION_TOKEN"] = TOKEN
+        try:
+            made = calls.client(keyed=keyed)
+        finally:
+            os.environ.pop("AWS_SESSION_TOKEN", None)
+        if calls.lib.botocore:
+            made.meta.events.register("before-send", lambda request, **_: own.extend((request, request.headers)))
+        return made
+    return client
 
 
 def errors_in_clear():
-    """{(lib, scene): the frames' locals showing the key on the error the client got} (empty: none), through the
-    Bedrock lines and the shipped lines at Bedrock's routes."""
+    """{(lib, scene, keyed): the frames' locals on the error the client got showing the key, or on a signed call the
+    access key's id (on its signature's header) or the session token past the client's own request} (empty: none),
+    through the Bedrock lines and the shipped lines at Bedrock's routes."""
     found = {}
     for scene, (made_by, libs) in ERRORS.items():
-        for lib in libs:
+        for lib, keyed in [(lib, True) for lib in libs] + [(lib, False) for lib in libs if lib in SIGNED_ERRORS and scene != "cut"]:
             made, calls = world(lib)
-            error = made_by(made, calls)
+            own = []
+            error = made_by(made, calls, scene_client(calls, keyed, own))
             calls.close()
-            found[(lib, scene)] = in_clear(error, harness.make_key()) if error is not None else ["no error raised"]
+            shown = [] if keyed else [*in_clear(error, bedrock.ACCESS_KEY, own), *in_clear(error, TOKEN, own)]
+            found[(lib, scene, keyed)] = sorted({*in_clear(error, harness.make_key()), *shown}) if error is not None else ["no error raised"]
     return found
 
 
@@ -618,11 +613,6 @@ class Promises(Case):
     def test_a_fallback_signed_anew_carries_the_body_its_signature_covers(self):
         self.assertEqual(per_attempt_body(), {"boto3": True, "aiobotocore": True})
 
-    def test_aiobotocore_a_cancel_during_reflexers_leg_shows_no_key_signature_or_token(self):
-        for keyed in (True, False):
-            with self.subTest(keyed=keyed):
-                self.assertEqual(shown_on_a_cancel(keyed), [])
-
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):
             with self.subTest(is_async=is_async):
@@ -655,9 +645,9 @@ class Promises(Case):
             with self.subTest(lib=lib):
                 self.assertEqual(where, [])
 
-    def test_an_error_raised_to_the_client_shows_no_key_in_any_frame(self):
-        for (lib, scene), shown in errors_in_clear().items():
-            with self.subTest(lib=lib, scene=scene):
+    def test_an_error_raised_to_the_client_shows_no_key_signature_or_token_in_any_frame(self):
+        for (lib, scene, keyed), shown in errors_in_clear().items():
+            with self.subTest(lib=lib, scene=scene, keyed=keyed):
                 self.assertEqual(shown, [])
 
     def test_a_calls_own_read_timeout_holds_on_reflexers_leg(self):
@@ -914,7 +904,7 @@ class Broken(Case):
         straight = eval(compile("lambda request, headers, body, kept=key: real(request, headers, body)", reflexer.boto3.__file__, "eval"),
                         {"real": reflexer.bedrock.straight, "key": harness.make_key()})
         with mock.patch.object(reflexer.boto3, "straight", straight):
-            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy")])
+            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy", True)])
 
     def test_a_signature_kept_where_an_errors_frames_reach_it_turns_it_red(self):
         real = reflexer.anthropic_bedrock.Again.first
@@ -925,6 +915,14 @@ class Broken(Case):
             return held
         with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(keeping)):
             self.assertTrue(anthropic_sampled_out(provider="dead")[2])
+
+    def test_a_signature_in_a_frame_of_the_lines_on_an_error_turns_it_red(self):
+        # a frame of the line's own file holding a copy of the signed headers as a replay raises through it
+        made = {"real": reflexer.bedrock.straight}
+        exec(compile("def straight(request, headers, body):\n    kept = dict(headers)\n    return real(request, headers, body)", reflexer.boto3.__file__, "exec"), made)
+        straight = made["straight"]
+        with mock.patch.object(reflexer.boto3, "straight", straight):
+            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy", False)])
 
     def test_a_key_kept_in_a_closure_on_the_answer_turns_it_red(self):
         real, key = reflexer.aiobotocore.forgotten, harness.make_key()

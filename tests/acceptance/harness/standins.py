@@ -155,6 +155,7 @@ class Arrival:
     def __init__(self, host, method, path, headers, body):
         self.host, self.method, self.path, self.headers, self.body = host, method, path, headers, body
         self.at, self.left_after, self.gzipped, self.handed_first = time.monotonic(), None, False, None
+        self.wall = time.time()  # its arrival, by the clock a signature's time is judged by
 
     def __repr__(self):
         return f"{self.method} {self.host}{self.path}"
@@ -177,6 +178,7 @@ class Standin:
         self.seen, self.connections = [], set()
         self.mode, self.params = "ok", {}
         self.refused_tls = 0  # handshakes refused by an alert, as `refuse_tls` asked
+        self.window = bedrock.WINDOW  # seconds a SigV4 signature holds here, as at Bedrock; a case may shorten it
         self.listener = None
         self._listen(0)
 
@@ -257,7 +259,7 @@ class Standin:
         if mode in ("dead", "reset", "badcert"):  # on a connection opened before: nothing answers on it
             handler.close_connection = True
             return None
-        refused = None if self.is_reflexer or arrival.host.split(":")[0] not in bedrock.NAMES else bedrock.refusal(arrival)
+        refused = None if self.is_reflexer or arrival.host.split(":")[0] not in bedrock.NAMES else bedrock.refusal(arrival, self.window)
         if refused:  # Bedrock takes no call without its key or a signature that holds
             status, headers, body = refused
             return handler.reply(status, headers, json.dumps(body).encode())
@@ -304,9 +306,10 @@ class Standin:
         """Reads nothing more and answers nothing, until the client leaves."""
         connection = handler.connection
         started = time.monotonic()
+        polled = select.poll()  # not `select.select`, which refuses a descriptor past FD_SETSIZE: a process of many sockets has those
+        polled.register(connection, select.POLLIN)
         while time.monotonic() - started < STALL_HOLD:
-            readable, _, _ = select.select([connection], [], [], 0.02)
-            if readable:
+            if polled.poll(20):
                 try:
                     if not connection.recv(1):
                         break

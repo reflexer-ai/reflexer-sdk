@@ -15,6 +15,10 @@ import reflexer.aiobotocore, reflexer.anthropic_bedrock, reflexer.bedrock, refle
 import importlib.util  # noqa: E402
 LINES = tuple(lib for lib in bedrock.SIGNING  # Bedrock's own lines: each library that can carry a key and sign; pydantic-ai's
               if lib != "pydantic-ai" or importlib.util.find_spec("pydantic_ai"))  # group is its own, as for the shipped lines
+RUNTIME = tuple(lib for lib in LINES if lib != "anthropic-mantle")  # whose signed calls go to reflexer: the node signs the runtime's
+SIGNS_ANEW = tuple(lib for lib in RUNTIME if lib != "litellm")  # whose line reaches the library's own signer for the fallback
+VOLATILE = {"authorization", "x-amz-date", "amz-sdk-invocation-id", "amz-sdk-request", "x-stainless-retry-count", "content-length",
+            "x-stainless-read-timeout", "x-stainless-raw-response"}  # what differs between two calls made alike; the last, anthropic's with any middleware
 SAVED = {}
 
 
@@ -72,21 +76,57 @@ def holding(found, secret):
                          or secret.encode() in (arrival.body or b"")}) for lib, seen in found.items()}
 
 
-def signed_as_stock():
-    """{lib: whether a signed call reached Bedrock only, its signature held, and its headers as a stock client's}."""
+def signed_as_stock(scene=lambda w: w.reflexer.set("busy")):
+    """{lib: whether a signed call, reflexer giving no answer, went to reflexer first (the runtime's) or never (Mantle's),
+    and reached Bedrock taken, its signature holding, its headers and body as a stock client's but what differs between
+    any two calls}."""
     found = {}
     for lib in LINES:
         made, calls = world(lib)
         outcome = calls.call(calls.client(line=False, keyed=False))
         assert made.provider.seen, f"{lib}: {outcome} {outcome.error!r}"
         stock = made.provider.seen[-1]
-        calls.call(calls.client(keyed=False))
+        scene(made)
+        outcome = calls.call(calls.client(keyed=False))
         ours = made.provider.seen[-1]
         calls.close()
-        same = [name for name in ("content-type", "host", "accept") if stock.headers.get(name) != ours.headers.get(name)]
-        found[lib] = (not made.reflexer.seen and bedrock.signature_holds(ours) and ours.body == stock.body and not same
-                      and set(ours.headers) == set(stock.headers))
+        kept = [{name: value for name, value in each.headers.items() if name not in VOLATILE and name != "user-agent"} for each in (ours, stock)]
+        found[lib] = (outcome.text == harness.STRAIGHT_TEXT and bool(made.reflexer.seen) == (lib in RUNTIME)
+                      and bedrock.signature_holds(ours) and ours.body == stock.body and kept[0] == kept[1])
     return found
+
+
+def signing_times(delay=1.1):
+    """{lib: (reflexer's x-amz-date, Bedrock's)}: a signed call whose leg to reflexer took `delay` seconds and no answer."""
+    found = {}
+    for lib in RUNTIME:
+        made, calls = world(lib)
+        made.reflexer.set("busy", delay=delay)
+        calls.call(calls.client(keyed=False))
+        calls.close()
+        found[lib] = (made.reflexer.seen[-1].headers.get("x-amz-date"), made.provider.seen[-1].headers.get("x-amz-date"))
+    return found
+
+
+def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
+    """LiteLLM's signed call, reflexer stalled, the window shortened to `seconds` at Bedrock's stand-in and in the line:
+    (what the client saw, the seconds it took, whether Bedrock took it). `is_async`: by `acompletion` and its line."""
+    import time, litellm
+    made, calls = world("litellm")
+    made.provider.window = seconds
+    made.reflexer.set("stall")
+    with mock.patch.dict(reflexer.litellm.WINDOW, seconds=seconds, margin=margin):
+        began = time.monotonic()
+        if is_async:
+            given = calls.client(keyed=False, timeout=10 * seconds, line=False) | {"client": reflexer.litellm.async_client(made.key)}
+            try:
+                text = asyncio.run(litellm.acompletion(model=f"bedrock/converse/{bedrock.MODEL}", messages=[{"role": "user", "content": "Hi"}],
+                                                       max_tokens=8, **given)).choices[0].message.content
+            except Exception:
+                text = None
+        else:
+            text = calls.call(calls.client(keyed=False, timeout=10 * seconds)).text
+    return text, time.monotonic() - began, bool(made.provider.seen) and made.provider.seen[-1].headers.get("authorization", "")[:4] == "AWS4"
 
 
 def reached_bedrock_after(scene, extra=None):
@@ -213,18 +253,33 @@ class Promises(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertEqual(who, ["reflexer"])
 
-    def test_a_bedrock_key_reaches_only_bedrock_or_reflexer_and_a_signature_only_bedrock(self):
+    def test_a_bedrock_key_or_signature_reaches_only_bedrock_or_reflexer_and_the_secret_no_one(self):
         keyed, signed = arrivals(), arrivals(keyed=False)
         for lib in LINES:
             with self.subTest(lib=lib):
                 self.assertEqual(holding(keyed, bedrock.BEARER)[lib], ["bedrock", "reflexer"])
-                self.assertEqual(holding(signed, "AWS4-HMAC-SHA256")[lib], ["bedrock"])
+                self.assertEqual(holding(signed, "AWS4-HMAC-SHA256")[lib], ["bedrock", "reflexer"] if lib in RUNTIME else ["bedrock"])
                 self.assertEqual(holding(signed, bedrock.BEARER)[lib] + holding(keyed, bedrock.SECRET)[lib] + holding(signed, bedrock.SECRET)[lib], [])
 
-    def test_a_signed_call_never_goes_to_reflexer_and_is_as_stock(self):
+    def test_a_signed_call_goes_to_reflexer_and_falls_back_as_stock(self):
         for lib, held in signed_as_stock().items():
             with self.subTest(lib=lib):
                 self.assertTrue(held)
+
+    def test_a_signed_calls_fallback_is_signed_after_reflexers_leg(self):
+        """The line reaches the library's own signer: the fallback's signing time is after the leg's, so a leg of any
+        length leaves it fresh. LiteLLM's reuses its signature: its leg is bounded by the window instead (below)."""
+        for lib, (at_reflexer, at_bedrock) in signing_times().items():
+            with self.subTest(lib=lib):
+                self.assertTrue(at_reflexer and at_bedrock)
+                self.assertEqual(at_bedrock > at_reflexer, lib in SIGNS_ANEW, (at_reflexer, at_bedrock))
+
+    def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
+        for is_async in (False, True):
+            with self.subTest(is_async=is_async):
+                text, took, taken = litellm_leg(is_async=is_async)
+                self.assertEqual((text, taken), (harness.STRAIGHT_TEXT, True))
+                self.assertLess(took, 2.0)
 
     def test_through_each_bedrock_line_a_call_reflexer_does_not_take_still_reaches_bedrock(self):
         for scene in ("busy", "dead"):
@@ -335,18 +390,49 @@ class Broken(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertIn("elsewhere", held[lib])
 
-    def test_a_signed_call_sent_to_reflexer_turns_it_red(self):
+    def test_a_signed_mantle_call_sent_to_reflexer_turns_it_red(self):
         with mock.patch.object(reflexer.bedrock, "keyed", lambda headers: True):
             signed = arrivals(keyed=False, scenes={"served": SCENES["served"]})
-            self.assertTrue(all("reflexer" in who for who in holding(signed, "AWS4-HMAC-SHA256").values()))
-            self.assertFalse(any(signed_as_stock().values()))
+            self.assertIn("reflexer", holding(signed, "AWS4-HMAC-SHA256")["anthropic-mantle"])
+            self.assertFalse(signed_as_stock()["anthropic-mantle"])
+
+    def test_a_signed_call_not_sent_to_reflexer_turns_it_red(self):
+        with mock.patch.object(reflexer.bedrock, "signed", lambda headers: False):
+            self.assertEqual([lib for lib in RUNTIME if "reflexer" in holding(arrivals(keyed=False), "AWS4-HMAC-SHA256")[lib]], [])
+            self.assertFalse(any(signed_as_stock()[lib] for lib in RUNTIME))
+
+    def test_the_secret_sent_turns_it_red(self):
+        real = reflexer.bedrock.lower
+        with mock.patch.object(reflexer.bedrock, "lower", lambda headers: real(headers) | {"x-made-up": bedrock.SECRET}):
+            self.assertTrue(all(holding(arrivals(keyed=False), bedrock.SECRET)[lib] for lib in ("boto3", "aiobotocore")))
+
+    def test_a_fallback_not_signed_anew_turns_it_red(self):
+        with mock.patch.object(reflexer.bedrock, "signing_anew", lambda request, unprepared: None), \
+                mock.patch.object(reflexer.boto3, "signing_anew", lambda request, unprepared: None), \
+                mock.patch.object(reflexer.aiobotocore, "signing_anew", lambda request, unprepared: None), \
+                mock.patch.object(reflexer.anthropic_bedrock, "withheld", lambda request: False):
+            found = signing_times()
+        self.assertEqual([lib for lib, (at_reflexer, at_bedrock) in found.items() if at_bedrock > at_reflexer], [])
+
+    def test_litellm_a_leg_unbounded_turns_it_red(self):
+        with mock.patch.object(reflexer.litellm, "within", lambda seconds, send: send()), \
+                mock.patch.object(reflexer.litellm, "awithin", lambda seconds, sent: sent):
+            for is_async in (False, True):
+                with self.subTest(is_async=is_async):
+                    text, took, taken = litellm_leg(is_async=is_async)
+                    self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < 2.0)
 
     def test_a_signed_call_changed_turns_it_red(self):
         def changed(request, headers, body):
             headers["x-made-up"] = "1"
             return request
+        real = reflexer.transport.stays_straight
+
+        def changed_shipped(request):  # LiteLLM's signed call falls back by the shipped legs
+            request.headers["x-made-up"] = "1"
+            return real(request)
         with mock.patch.object(reflexer.bedrock, "straight", changed), mock.patch.object(reflexer.boto3, "straight", changed), \
-                mock.patch.object(reflexer.aiobotocore, "straight", changed):
+                mock.patch.object(reflexer.aiobotocore, "straight", changed), mock.patch.object(reflexer.transport, "stays_straight", changed_shipped):
             self.assertFalse(any(signed_as_stock().values()))
 
     def test_no_fallback_turns_it_red(self):

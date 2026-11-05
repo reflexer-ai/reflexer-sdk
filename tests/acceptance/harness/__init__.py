@@ -354,7 +354,11 @@ class Test:
             for arrival in arrivals:
                 auth = " ".join(value for name, value in arrival.headers.items() if name in ("authorization", "x-api-key"))
                 self.check(who == "reflexer" or bedrock.BEARER not in auth, f"the Bedrock API key reached the {who}: {arrival}")
-                self.check("AWS4-HMAC-SHA256" not in auth and bedrock.SECRET not in auth, f"a SigV4 signature reached the {who}: {arrival}")
+                self.check(who == "reflexer" or "AWS4-HMAC-SHA256" not in auth, f"a SigV4 signature reached the {who}: {arrival}")
+        for who, arrivals in others + [("reflexer", self.reflexer.seen)]:
+            for arrival in arrivals:  # the client's AWS secret: only its own signer reads it, and no request carries it
+                held = any(bedrock.SECRET in value for value in arrival.headers.values()) or bedrock.SECRET.encode() in (arrival.body or b"")
+                self.check(not held, f"the client's AWS secret reached the {who}: {arrival}")
         for arrival in self.reflexer.seen + self.provider.seen + self.elsewhere.seen + self.runner.seen + self.proxy.plain:
             left = self.local_flags & set(arrival.headers)
             self.check(not left, f"the skip's flag {sorted(left)} left the machine: {arrival}")

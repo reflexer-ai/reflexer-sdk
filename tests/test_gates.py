@@ -19,8 +19,8 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "bedrock.py": {"copy", "inspect", "re"},  # Bedrock's wire and what its lines share: the standard library only
     "boto3.py": {"boto3", "botocore", "urllib3"},  # urllib3: botocore's own HTTP library, whose read timeout botocore names its own
     "aiobotocore.py": {"aiobotocore", "botocore", "yarl", "asyncio"},  # yarl: aiohttp's URL, which aiobotocore sends by as its own send does
-    "anthropic_bedrock.py": {"anthropic"},
-    "litellm.py": {"litellm", "httpx"},  # httpx: LiteLLM's own HTTP library
+    "anthropic_bedrock.py": {"anthropic", "contextvars", "inspect"},  # contextvars: a call's own state, set by our middleware for our transport
+    "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "datetime", "inspect", "threading", "time"},  # httpx: LiteLLM's own HTTP library; the rest, its window's bound
 }
 
 

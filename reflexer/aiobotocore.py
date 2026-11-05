@@ -1,6 +1,6 @@
 """aiobotocore's bedrock-runtime clients, through reflexer: `reflexer.aiobotocore.through(client, key)` on a client made
 by `session.create_client("bedrock-runtime", ...)`, once entered. As `reflexer.boto3`, async: aiobotocore emits
-`before-send` and awaits its handlers, ours after them all.
+`before-send` and awaits its handlers, ours after them all; a signed call's fallback is signed anew by its own signer.
 
 Reflexer's leg goes by the client's own aiohttp session, the one its endpoint sends by, with the client's connector,
 proxy, TLS and timeouts, asked to follow no redirect: aiobotocore's own `send` follows them, our key on. No public name
@@ -10,8 +10,8 @@ one fails this line as the client makes it, never a call.
 import asyncio
 import yarl
 import aiobotocore.awsrequest, aiobotocore.httpsession, botocore.awsrequest, botocore.exceptions
-from . import BASE, Reflexer, supported
-from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, skip_taken, straight
+from . import BASE, Reflexer, log, supported
+from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, signed_anew, signing_anew, skip_taken, straight
 
 supported("aiobotocore", [3])
 EVENT = "before-send."
@@ -56,6 +56,13 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
                     return await read_served(answer, request)
                 answer.raw.close()  # its body unread, its connection not reused
         straight(request, request.headers, request.body if isinstance(request.body, bytes) else None)
+        anew = route and signing_anew(request, botocore.awsrequest.AWSRequest)
+        if anew:
+            try:
+                await anew[0].sign(anew[1], anew[2])
+                signed_anew(request, anew[2])
+            except Exception as failure:  # the client's own signer failed anew: the call goes as it was first signed
+                log.warning("signing the call anew failed (%s); it goes as first signed", type(failure).__name__)
         return None
 
     async def emitted(event_name, **kwargs):

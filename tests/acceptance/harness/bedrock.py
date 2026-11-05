@@ -7,7 +7,7 @@ ChatBedrockConverse, `strands`'s BedrockModel, `pydantic-ai`'s BedrockConverseMo
 `anthropic-mantle` (anthropic's Bedrock clients); `litellm`; and the shipped lines at Bedrock's compatible routes,
 `openai-compat` (`/openai/v1`) and `anthropic-compat` (`/anthropic`), which take a key only.
 """
-import asyncio, base64, importlib.util, json, os, struct, time, zlib
+import asyncio, base64, datetime, importlib.util, json, os, struct, time, zlib
 
 REGION = "us-east-1"
 RUNTIME = f"bedrock-runtime.{REGION}.amazonaws.com"
@@ -86,20 +86,30 @@ def events_for(wire, text):
     return [event("chunk", {"bytes": base64.b64encode(json.dumps(step).encode()).decode()}) for step in steps]
 
 
-def refusal(arrival):
+WINDOW = 300.0  # seconds a SigV4 signature holds at Bedrock from the time it says it signed: AWS's five minutes
+
+
+def refusal(arrival, window=WINDOW):
     """Bedrock's own refusal of a call whose key or signature it does not take, (status, headers, body), in the route's
-    format, as Bedrock answers each; None for a call it takes. Its own operations: AWS's error; its compatible routes:
-    their format's, with no AWS error type."""
+    format, as Bedrock answers each; None for a call it takes. A signature it takes holds, and its signing time is within
+    `window` of its arrival. Its own operations: AWS's error; its compatible routes: their format's, with no AWS error type."""
     auth = arrival.headers.get("authorization") or ""
-    if auth == f"Bearer {BEARER}" or arrival.headers.get("x-api-key") == BEARER or (auth.startswith("AWS4-HMAC-SHA256 ") and signature_holds(arrival)):
+    holds = auth.startswith("AWS4-HMAC-SHA256 ") and signature_holds(arrival)
+    if auth == f"Bearer {BEARER}" or arrival.headers.get("x-api-key") == BEARER or (holds and in_window(arrival, window)):
         return None
     path, mantle = arrival.path.split("?")[0], arrival.host.split(":")[0] == MANTLE
-    message = "made-up: the key or signature is not valid"
+    message = "made-up: Signature expired" if holds else "made-up: the key or signature is not valid"
     if wire_of(path):
-        return 403, {"x-amzn-errortype": "AccessDeniedException"}, {"message": message}
+        return 403, {"x-amzn-errortype": "InvalidSignatureException" if holds else "AccessDeniedException"}, {"message": message}
     if path.endswith("/chat/completions"):
         return 401, {}, {"error": {"type": "permission_denied_error", "code": "invalid_api_key" if mantle else "access_denied", "message": message}}
     return (401 if mantle else 403), {}, {"type": "error", "error": {"type": "authentication_error" if mantle else "permission_error", "message": message}}
+
+
+def in_window(arrival, window):
+    """Whether a signed call's signing time is within `window` seconds of its arrival, by the clock Bedrock judges it by."""
+    signed = datetime.datetime.strptime(arrival.headers.get("x-amz-date", ""), "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
+    return abs(arrival.wall - signed.timestamp()) <= window
 
 
 def signature_holds(arrival):

@@ -490,6 +490,11 @@ FAULTS = {
     "bedrock_stock": bedrock_line(bedrock_stock),
     "bedrock_share_ignored": bedrock_line(bedrock_share_ignored),
     "bedrock_signed_routed": on_bedrock("keyed", lambda headers: True),
+    "bedrock_signed_not_routed": on_bedrock("signed", lambda headers: False),
+    "bedrock_not_signed_anew": lambda: (on_bedrock("signing_anew", lambda request, unprepared: None)(),
+                                        setattr(reflexer.anthropic_bedrock, "withheld", lambda request: False)),
+    "bedrock_window_unbounded": setter(reflexer.litellm, "within", lambda seconds, send: send()),
+    "bedrock_window_ignored": setter(reflexer.litellm, "left", lambda headers, now=None: 60.0),
     "bedrock_straight_changed": on_bedrock("straight", straight_changed),
     "bedrock_streams_not_routed": lambda: bedrock.BEDROCK.update(calls=r"/model/[^/]+/(invoke|converse)$"),
     "bedrock_every_operation_routed": lambda: bedrock.BEDROCK.update(calls=r"/model/[^/]+/[a-z-]+$"),
@@ -578,6 +583,7 @@ FREEZES = {
     "stall_reflexer_stalled_provider_at_six_tenths":           (holding(), 2.0),
     "stall_slow_pass_through_at_seven_tenths":                 (answering("reflexer"), 0.6),  # its slow answer, made later
     "bedrock_the_clients_timeout_holds_on_reflexers_leg":      (holding(), 2.0),
+    "bedrock_litellm_a_signed_calls_leg_is_cut_while_its_signature_holds": (holding(), 2.0),  # the leg its window cuts
 }
 
 

@@ -238,6 +238,11 @@ describe("Broken", () => {
     assert.deepEqual((await overBudget(apart)).map((problem) => problem.split(":")[0]), ["bedrock lines", "bedrock ifs"]);
   });
 
+  test("another's private name in Bedrock's file turns it red", async () => {
+    const copy = await plant("src/bedrock.js", "export const madeUp = (/** @type {any} */ other) => other._madeUpPrivate;");
+    assert.deepEqual((await overBudget(copy)).filter((problem) => problem.includes("privateNames")), ["bedrock privateNames: 1, budget 0"]);
+  });
+
   test("another's private name turns it red", async () => {
     const copy = await plant("src/logic.js", "export const made = (/** @type {any} */ other) => other._madeUpPrivate;");
     assert.deepEqual((await measure(copy)).privateNames, ["_madeUpPrivate"]);

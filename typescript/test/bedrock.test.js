@@ -8,6 +8,8 @@ import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import { BedrockRuntimeClient, ConverseCommand, ConverseStreamCommand, CountTokensCommand, InvokeModelCommand,
   InvokeModelWithResponseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 import { ChatBedrockConverse } from "@langchain/aws";
+import { FetchHttpHandler } from "@smithy/fetch-http-handler";
+import http from "node:http";
 import * as check from "./checks.js";
 
 const sdk = await check.load();
@@ -476,12 +478,12 @@ describe("Timeouts", () => {
 });
 
 /** Whether a call naming each release throws, by each line's way in: `fetch` and AWS JS's handler. @param {any} faulty */
-async function untestedThrows(faulty, labels = UNTESTED) {
+async function untestedThrows(faulty, labels = UNTESTED, named = "user-agent") {
   /** @type {Record<string, boolean>} */
   const found = {};
   for (const label of labels) {
     const way = farEnds("served");
-    const headers = { "user-agent": `made-up ${label}`, authorization: `Bearer ${BEARER}` };
+    const headers = { [named]: `made-up ${label}`, authorization: `Bearer ${BEARER}` };
     const body = JSON.stringify({ messages: HI });
     const viaFetch = faulty.bedrock.fetch(sdk.key, { fetch: way.fetch })(`https://${BEDROCK}/model/${MODEL}/converse`, { method: "POST", headers, body });
     const viaHandler = faulty.bedrock.requestHandler(sdk.key, { handler: way.handler }).handle({ method: "POST", protocol: "https:", hostname: BEDROCK,
@@ -510,13 +512,56 @@ describe("Tested", () => {
     assert.ok(Object.values(await untestedThrows(sdk)).every(Boolean), JSON.stringify(await untestedThrows(sdk)));
   });
 
+  test("a release not tested, named only where a browser's AWS JS names it, throws", async () => {
+    const found = await untestedThrows(sdk, UNTESTED, "x-amz-user-agent"); // a browser sets no user-agent of its own
+    assert.ok(Object.values(found).every(Boolean), JSON.stringify(found));
+  });
+
   test("AnthropicBedrock's calls are named by this list, not by the provider SDKs' own", () => {
     assert.deepEqual(sdk.index.tested(new Headers({ "user-agent": "AnthropicBedrock/JS 2.0.0" })), []);
     assert.ok(sdk.bedrock.LIBRARIES.some((/** @type {any} */ library) => library.label.test("AnthropicBedrock/JS 2.0.0")));
   });
 });
 
+/**
+ * AWS JS on Smithy's own FetchHttpHandler, its browser and edge runtimes' handler, wrapped, over real sockets on this
+ * machine: reflexer answers a redirect to another origin. Whom the key reached, and whether the line was taken at all.
+ * @param {any} lines the package, or a faulty copy
+ */
+async function onTheFetchHandler(lines) {
+  /** @type {string[]} */
+  const keyed = [];
+  const listen = (/** @type {any} */ handler) => new Promise((ok) => { const server = http.createServer(handler).listen(0, "127.0.0.1", () => ok(server)); });
+  const elsewhere = /** @type {any} */ (await listen((/** @type {any} */ request, /** @type {any} */ response) => {
+    if (request.headers["reflexer-key"]) keyed.push("elsewhere");
+    response.writeHead(200, { "content-type": "application/json", "reflexer-status-origin": "reflexer" });
+    response.end(answer(`/model/${MODEL}/converse`, FROM.reflexer).body);
+  }));
+  const reflexer = /** @type {any} */ (await listen((/** @type {any} */ request, /** @type {any} */ response) => {
+    if (request.headers["reflexer-key"]) keyed.push("reflexer");
+    request.resume();
+    response.writeHead(307, { location: `http://127.0.0.1:${elsewhere.address().port}/moved`, "reflexer-status-origin": "reflexer" });
+    response.end();
+  }));
+  try {
+    const client = lines.bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1", maxAttempts: 1, endpoint: "https://bedrock.made-up.invalid",
+      token: { token: BEARER }, authSchemePreference: ["httpBearerAuth"], requestHandler: new FetchHttpHandler() }), sdk.key,
+    { base: `http://127.0.0.1:${reflexer.address().port}` });
+    await client.send(new ConverseCommand({ modelId: MODEL, messages: HI })).catch(() => null);
+    return { refused: false, keyed };
+  } catch (failure) {
+    return { refused: /follow no redirect/.test(String(failure)), keyed };
+  } finally {
+    reflexer.close();
+    elsewhere.close();
+  }
+}
+
 describe("Promises", () => {
+  test("aws-js on a handler that follows redirects is refused as the line is made", async () => {
+    assert.deepEqual(await onTheFetchHandler(sdk), { refused: true, keyed: [] });
+  });
+
   test("through each Bedrock line the key reaches only reflexer", async () => {
     for (const keyed of [true, false]) {
       for (const [name, given] of Object.entries(await hostsGiven((one) => one.key, keyed))) {
@@ -575,6 +620,13 @@ describe("Broken", () => {
       assert.ok((await hostsGiven(() => "AWS4-HMAC-SHA256 ", false, faulty))["anthropic-bedrock"].includes(check.REFLEXER));
       assert.ok((await signedAsMade(faulty))["anthropic-bedrock"].reflexer > 0);
     });
+  });
+
+  test("a handler that follows redirects taken turns it red", async () => {
+    await check.planted("bedrock.js", "if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw",
+      "if (false) throw", async (faulty) => {
+        assert.ok((await onTheFetchHandler(faulty)).keyed.includes("elsewhere"));
+      });
   });
 
   test("no version check turns it red", async () => {

@@ -27,7 +27,7 @@ export const LIBRARIES = [
 function tested(headers) {
   const sortable = (/** @type {string} */ text) => text.split(".").map((part) => part.padStart(9, "0")).join("."); // in text order as in version order
   for (const { name, majors, floor, label } of LIBRARIES) {
-    const version = label.exec(headers.get("user-agent") ?? "")?.[1];
+    const version = label.exec(`${headers.get("user-agent") ?? ""} ${headers.get("x-amz-user-agent") ?? ""}`)?.[1]; // a browser's, the second
     if (version && (!majors.includes(Number(version.split(".")[0])) || sortable(version) < sortable(floor))) {
       throw new Error(`reflexer is tested on ${name} ${majors} from ${floor}, not ${version}`);
     }
@@ -150,6 +150,7 @@ export const aiMiddleware = {
  */
 export function requestHandler(key, { handler, ...options }) {
   if (HANDLERS.has(handler)) throw new Error("this handler already sends through reflexer"); // twice, a call would try reflexer twice
+  if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw new Error("reflexer's line takes AWS JS's Node HTTP handlers, which follow no redirect: this one could carry the key to a redirect's target");
   const reflexer = new Reflexer(key, WIRE, options);
   const made = {
     /** @param {any} request @param {any} [given] */
@@ -177,6 +178,7 @@ export function requestHandler(key, { handler, ...options }) {
   return made;
 }
 const HANDLERS = new WeakMap(); // each handler made here
+const FOLLOWS_NO_REDIRECT = ["http/1.1", "h2"]; // Smithy's Node handlers' protocols, by their metadata; its fetch handler names none
 
 /**
  * The one line on a client made elsewhere: its own handler, from its resolved config, wrapped by ours. The skip as a

@@ -80,6 +80,7 @@
     "@langchain/core": "1.3.3",
     "@langchain/google-genai": "2.3.4",
     "@langchain/openai": "1.7.1",
+    "@smithy/fetch-http-handler": "5.8.1",
     "@types/node": "20.19.43",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",
@@ -97,8 +98,9 @@
         "files": [
           "bedrock.js"
         ],
-        "lines": 156,
-        "ifs": 27
+        "lines": 158,
+        "ifs": 28,
+        "privateNames": 0
       }
     }
   }

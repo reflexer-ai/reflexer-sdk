@@ -625,7 +625,9 @@ describe("Broken", () => {
   test("a handler that follows redirects taken turns it red", async () => {
     await check.planted("bedrock.js", "if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw",
       "if (false) throw", async (faulty) => {
-        assert.ok((await onTheFetchHandler(faulty)).keyed.includes("elsewhere"));
+        // the check above, red: the line taken; on Node 22 and later, the key also reached the redirect's target (Node 20's fetch
+        // followed no redirect of this call's in the run that showed it)
+        assert.notDeepEqual(await onTheFetchHandler(faulty), { refused: true, keyed: [] });
       });
   });
 

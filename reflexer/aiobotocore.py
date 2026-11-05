@@ -7,10 +7,10 @@ proxy, TLS and timeouts, asked to follow no redirect: aiobotocore's own `send` f
 reaches that session: `client._endpoint`'s `_get_session` and `_proxy_config`, read once, here; a release that renames
 one fails this line as the client makes it, never a call.
 """
-import asyncio
+import asyncio, gc
 import yarl
 import aiobotocore.awsrequest, aiobotocore.httpsession, botocore.awsrequest, botocore.exceptions
-from . import BASE, Reflexer, supported
+from . import BASE, OURS, Reflexer, supported
 from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, skip_taken, straight
 
 supported("aiobotocore", [3])
@@ -40,7 +40,7 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
         response = await session.post(yarl.URL(leg.url, encoded=True), headers=lower(leg.headers) | {"accept-encoding": "identity"},
                                       data=leg.body, proxy=proxy, proxy_headers=proxy_headers_for(leg.url), allow_redirects=False, **timeout)
         headers = {name.decode().lower(): value.decode() for name, value in response.raw_headers}
-        return aiobotocore.awsrequest.AioAWSResponse(str(response.url), response.status, headers, Answer(response))
+        return aiobotocore.awsrequest.AioAWSResponse(str(response.url), response.status, headers, forgotten(response))
 
     async def before_send(request):
         route = botocore_route(reflexer, request)
@@ -70,13 +70,18 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
     return client
 
 
-class Answer:
-    """Reflexer's aiohttp answer, as aiobotocore reads a body, without the request it answered: aiohttp keeps that
-    request's headers, our key among them, where a client's `after-call` handler and the body's stream would reach them."""
-
-    def __init__(self, response):
-        self.content, self.url, self.status = response.content, response.url, response.status
-        self.read, self.close, self.release = response.read, response.close, response.release
+def forgotten(response):
+    """Reflexer's aiohttp answer, its request's headers of ours forgotten: aiohttp keeps that request's headers, our key
+    among them, with the answer, which a stream's own reader keeps alive, where a client's `after-call` handler and the
+    body it is handed would reach them. The request has left; no public name reaches the headers it keeps but the proxy
+    it reads them by, whose own headers `gc` names."""
+    for kept in gc.get_referents(response.request_info.headers):
+        for name in [name for name in kept if name.lower().startswith(OURS)] if hasattr(kept, "popall") else ():
+            kept.popall(name)
+    if any(name.lower().startswith(OURS) for name in response.request_info.headers):  # a release keeping them otherwise
+        response.close()
+        raise RuntimeError("reflexer's answer still keeps our headers: not handed on, the call goes straight")
+    return response
 
 
 async def read_served(answer, request):

@@ -52,8 +52,8 @@ private_names = 0  # in every file, but those each Bedrock line names below
 [tool.reflexer.budget.bedrock]  # Bedrock's files, apart from every other file's: an audit of another provider's path reads none of them
 files = ["bedrock.py", "boto3.py", "aiobotocore.py", "anthropic_bedrock.py", "litellm.py"]
 private_names = 0  # but those allowed below
-lines = 263  # its wire and the httpx lines' transport, boto3, aiobotocore, anthropic's Bedrock clients, LiteLLM
-ifs = 37
+lines = 267  # its wire and the httpx lines' transport, boto3, aiobotocore, anthropic's Bedrock clients, LiteLLM
+ifs = 39
 
 [tool.reflexer.budget.private_names_allowed]  # no public name reaches the client's own HTTP session, which reflexer's leg goes by; each read once, as the line is made, so a release renaming one fails the line, never a call
 "boto3.py" = ["_endpoint"]  # botocore's endpoint, whose HTTP session sends the client's calls

@@ -18,7 +18,7 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "langchain_gemini.py": {"langchain_google_genai"},
     "bedrock.py": {"copy", "inspect", "re"},  # Bedrock's wire and what its lines share: the standard library only
     "boto3.py": {"boto3", "botocore", "urllib3"},  # urllib3: botocore's own HTTP library, whose read timeout botocore names its own
-    "aiobotocore.py": {"aiobotocore", "botocore", "yarl", "asyncio"},  # yarl: aiohttp's URL, which aiobotocore sends by as its own send does
+    "aiobotocore.py": {"aiobotocore", "botocore", "yarl", "asyncio", "gc"},  # gc: the one way to the headers aiohttp keeps  # yarl: aiohttp's URL, which aiobotocore sends by as its own send does
     "anthropic_bedrock.py": {"anthropic"},
     "litellm.py": {"litellm", "httpx"},  # httpx: LiteLLM's own HTTP library
 }

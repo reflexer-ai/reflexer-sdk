@@ -23,10 +23,23 @@ the rest wait until it is set, at most `HANDSHAKE_WAIT`; `Arrival.handed_first` 
 to the answer), `body=` (replaces it).
 A request asking for a stream gets its format's events, unless the mode set a body: that is the stream mode.
 """
-import gzip as gzip_module, http.server, json, select, socket, ssl, struct, threading, time
+import gzip as gzip_module, http.server, json, select as select_module, socket, ssl, struct, threading, time, types
 from urllib.parse import urlsplit
 
 from . import bedrock
+
+
+def readable_of(readable, writable, broken, timeout):
+    """`select.select` for what may be read, by `poll`: `select` refuses a descriptor past FD_SETSIZE, which a long
+    test process's sockets reach. A closed or broken connection counts as one to read, as `select` has it."""
+    waits = select_module.poll()
+    for each in readable:
+        waits.register(each, select_module.POLLIN)
+    ready = {fd for fd, _ in waits.poll(timeout * 1000)}
+    return [each for each in readable if each.fileno() in ready], [], []
+
+
+select = types.SimpleNamespace(select=readable_of)  # what faults.py slows down, as it did `select` itself
 
 STALL_HOLD = 60.0  # seconds a stalled answer holds at most, past any case's limit
 REQUEST_ID = "0190f0e0-0000-7000-8000-000000000000"

@@ -144,11 +144,12 @@ def ours_on_signed_calls():
 
 
 SDK = os.path.join(os.path.abspath(ROOT), "reflexer") + os.sep  # the SDK's own files: their frames' locals are followed
+TESTS = os.path.join(os.path.abspath(ROOT), "tests") + os.sep
 
 
 def holders(roots, secret, most=500000):
     """The paths by which `secret` is reached from `roots`, following every object reference (`gc.get_referents`): a
-    bound method's object, a function's closure and defaults, and the locals of the SDK's own frames, a traceback's
+    bound method's object, a function's closure, defaults and attributes (`__wrapped__` among them), and the locals of the SDK's own frames, a traceback's
     among them; not into modules, classes, code, a function's globals or another's frames, which are the program's own.
     Past `most` objects it fails: a walk cut short proves nothing."""
     import gc
@@ -168,7 +169,7 @@ def holders(roots, secret, most=500000):
             continue
         if kind == "function":
             held = [cell.cell_contents for cell in thing.__closure__ or () if cell_holds(cell)]
-            held += list(thing.__defaults__ or ()) + list((thing.__kwdefaults__ or {}).values())
+            held += list(thing.__defaults__ or ()) + list((thing.__kwdefaults__ or {}).values()) + list(vars(thing).values())
         elif kind == "frame":
             held = list(thing.f_locals.values()) if os.path.abspath(thing.f_code.co_filename).startswith(SDK) else []
         else:
@@ -186,9 +187,10 @@ def cell_holds(cell):
 
 
 def in_clear(error, secret):
-    """The SDK's own frames' locals, on an error's traceback and those it chains, that show `secret` as an error tracker
-    capturing locals writes them: by their `repr`, a container's holding its items'. The line's own state stays reachable
-    from them, as the client's HTTP client holds it; what such a tracker ships is what is written."""
+    """The locals of every frame but the tests' own, the SDK's and its libraries', on an error's traceback and those it
+    chains, that show `secret` as an error tracker capturing locals writes them: by their `repr`, a container's holding
+    its items'. The line's own state stays reachable from them, as the client's HTTP client holds it; what such a tracker
+    ships is what is written."""
     found, seen, pending = [], set(), [error]
     while pending:
         each = pending.pop()
@@ -199,32 +201,70 @@ def in_clear(error, secret):
         step = each.__traceback__
         while step is not None:
             frame = step.tb_frame
-            if os.path.abspath(frame.f_code.co_filename).startswith(SDK):
-                found += [f"{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if secret in repr(value)]
+            if not os.path.abspath(frame.f_code.co_filename).startswith(TESTS):
+                found += [f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if secret in repr(value)]
             step = step.tb_next
     return sorted(set(found))
 
 
-ERRORS = {  # (what reflexer does, the call, its own fields): each call raises to the client, the line having taken it
-    "cut": (lambda w: w.reflexer.set("cut"), None, None),
-    "replay, reflexer busy": (lambda w: w.reflexer.set("busy"), "invoke", {"replay_response": {"id": "made-up"}}),
+class Stop(BaseException):
+    """Made up: what is not an `Exception`, raised as reflexer's leg is sent, as gevent's `Timeout` or a ^C is."""
+
+
+def asked(arrange, op=None, extra=None):
+    """A scene: reflexer arranged, a call made (`op`, with its own fields), whose error the client gets."""
+    def scene(made, calls):
+        arrange(made)
+        given = op if op in calls.lib.ops else ("messages" if "messages" in calls.lib.ops else calls.lib.ops[0])
+        return calls.call(calls.client(), given, extra=extra).error
+    return scene
+
+
+def deadline(made, calls):
+    """A scene: the client's own deadline (`asyncio.wait_for`) cancels its call while reflexer stalls."""
+    made.reflexer.set("stall")
+    client = calls.client()
+    try:
+        calls.run(asyncio.wait_for(calls.lib.call(client, calls.lib.ops[0], None, None, None), 0.5))
+    except asyncio.TimeoutError as error:
+        return error
+
+
+def stopped(made, calls):
+    """A scene: a `BaseException` raised in urllib3 as reflexer's leg is sent."""
+    import urllib3.connectionpool
+    real, client = urllib3.connectionpool.HTTPConnectionPool._make_request, calls.client()
+
+    def stopping(pool, *args, **kwargs):
+        if pool.host in harness.REFLEXER_NAMES:
+            raise Stop()
+        return real(pool, *args, **kwargs)
+    with mock.patch.object(urllib3.connectionpool.HTTPConnectionPool, "_make_request", stopping):
+        try:
+            calls.run(calls.lib.call(client, calls.lib.ops[0], None, None, None))
+        except Stop as error:
+            return error
+
+
+ERRORS = {  # scene: (the call, raising to the client, the line having taken it; the libraries it is made on)
+    "cut": (asked(lambda w: w.reflexer.set("cut")), ("boto3", "aiobotocore", "anthropic-bedrock", "litellm")),
+    "replay, reflexer busy": (asked(lambda w: w.reflexer.set("busy"), "invoke", {"replay_response": {"id": "made-up"}}),
+                              ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle", "anthropic-compat", "openai-compat")),
+    "the client's deadline, reflexer stalled": (deadline, ("aiobotocore",)),
+    "not an Exception, in the leg": (stopped, ("boto3",)),
 }
-RAISING = {"cut": ("boto3", "aiobotocore", "anthropic-bedrock", "litellm"),
-           "replay, reflexer busy": ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle", "anthropic-compat", "openai-compat")}
 
 
 def errors_in_clear():
-    """{(lib, scene): the SDK's frames' locals showing the key on the error the client got} (empty: none), through the
+    """{(lib, scene): the frames' locals showing the key on the error the client got} (empty: none), through the
     Bedrock lines and the shipped lines at Bedrock's routes."""
     found = {}
-    for scene, (arrange, op, extra) in ERRORS.items():
-        for lib in RAISING[scene]:
+    for scene, (made_by, libs) in ERRORS.items():
+        for lib in libs:
             made, calls = world(lib)
-            arrange(made)
-            given = op if op in calls.lib.ops else ("messages" if "messages" in calls.lib.ops else calls.lib.ops[0])
-            outcome = calls.call(calls.client(), given, extra=extra)
+            error = made_by(made, calls)
             calls.close()
-            found[(lib, scene)] = in_clear(outcome.error, harness.make_key()) if outcome.error is not None else ["no error raised"]
+            found[(lib, scene)] = in_clear(error, harness.make_key()) if error is not None else ["no error raised"]
     return found
 
 
@@ -312,7 +352,7 @@ class Promises(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertEqual(where, [])
 
-    def test_an_error_raised_to_the_client_shows_no_key_in_the_sdks_frames(self):
+    def test_an_error_raised_to_the_client_shows_no_key_in_any_frame(self):
         for (lib, scene), shown in errors_in_clear().items():
             with self.subTest(lib=lib, scene=scene):
                 self.assertEqual(shown, [])
@@ -482,6 +522,20 @@ class Broken(unittest.TestCase):
             made = real(response)
             return types.SimpleNamespace(content=made.content, url=made.url, status=made.status, read=made.read, close=made.close,
                                          release=made.release, hook=lambda: key)
+        with mock.patch.object(reflexer.aiobotocore, "forgotten", keeping):
+            self.assertTrue(what_the_client_is_handed()["aiobotocore"])
+
+    def test_a_key_kept_in_a_functions_attributes_on_the_answer_turns_it_red(self):
+        real, key = reflexer.aiobotocore.forgotten, harness.make_key()
+
+        def keeping(response):
+            made = real(response)
+
+            def hook():
+                return None
+            hook.__wrapped__ = types.SimpleNamespace(kept=key)
+            return types.SimpleNamespace(content=made.content, url=made.url, status=made.status, read=made.read, close=made.close,
+                                         release=made.release, hook=hook)
         with mock.patch.object(reflexer.aiobotocore, "forgotten", keeping):
             self.assertTrue(what_the_client_is_handed()["aiobotocore"])
 

@@ -225,7 +225,7 @@ def ours_on_signed_calls():
     """{(lib, how): (the headers of ours that reached Bedrock but the signature does not cover, whether it held)}: a
     signed call given a namespace of ours, where each library puts a call's headers, and on boto3 also after signing."""
     found = {}
-    for lib, how in [(lib, "call") for lib in LINES] + [("boto3", "after signing")]:
+    for lib, how in [(lib, "call") for lib in LINES] + [("boto3", "after signing"), ("aiobotocore", "after signing")]:
         made, calls = world(lib)
         SCENES["busy"](made)  # a signed call on Bedrock's runtime goes to reflexer first: here, its fallback
         client = calls.client(keyed=False)
@@ -240,29 +240,23 @@ def ours_on_signed_calls():
     return found
 
 
-def holders(thing, secret, depth=0, seen=None):
-    """Where in what a client is handed `secret` is held: its attributes, items, and a response's request and headers."""
-    seen = set() if seen is None else seen
-    if id(thing) in seen or depth > 8:
-        return []
-    seen.add(id(thing))
-    if isinstance(thing, (str, bytes)):
-        return ["here"] if (secret in thing if isinstance(thing, str) else secret.encode() in thing) else []
-    found = []
-    try:
-        items = list(thing.items()) if hasattr(thing, "items") and not isinstance(thing, type) else []
-    except Exception:
-        items = []
-    if isinstance(thing, (list, tuple)):
-        items += list(enumerate(thing))
-    named = list((getattr(thing, "__dict__", None) or {}).items())
-    for name in ("request_info", "headers", "raw", "content"):
-        try:
-            named.append((name, getattr(thing, name)))
-        except Exception:
-            pass
-    for name, value in items + named:
-        found += [f"{name}.{where}" for where in holders(value, secret, depth + 1, seen)]
+def holders(roots, secret, most=500000):
+    """The paths by which `secret` is reached from `roots`, following every object reference (`gc.get_referents`), a
+    bound method's object included, as any code the client runs could follow it; not into modules, classes, code or
+    functions, whose globals are the program's own."""
+    import gc
+    seen, pending, found = set(), [(root, "root") for root in roots], []
+    while pending and len(seen) < most:
+        thing, path = pending.pop()
+        if id(thing) in seen:
+            continue
+        seen.add(id(thing))
+        if isinstance(thing, (str, bytes, bytearray)):
+            found += [path] if (secret in thing if isinstance(thing, str) else secret.encode() in thing) else []
+            continue
+        if isinstance(thing, type) or type(thing).__name__ in ("module", "function", "code", "frame", "cell"):
+            continue
+        pending += [(held, f"{path}>{type(held).__name__}") for held in gc.get_referents(thing)]
     return found
 
 
@@ -274,14 +268,16 @@ def what_the_client_is_handed():
         made, calls = world(lib)
         client, handed = calls.client(), []
         client.meta.events.register("after-call.bedrock-runtime", lambda http_response=None, **_: handed.append(http_response))
-        out = {}
+        out, message = {}, [{"role": "user", "content": [{"text": bedrock.TEXT}]}]
 
-        async def invoke():
+        async def answered():
             out["answer"] = await client.invoke_model(modelId=bedrock.MODEL, body=bedrock.invoke_body(None))
+            out["stream"] = await client.converse_stream(modelId=bedrock.MODEL, messages=message)  # its body still to read
         if calls.loop:
-            calls.run(invoke())
+            calls.run(answered())
         else:
             out["answer"] = client.invoke_model(modelId=bedrock.MODEL, body=bedrock.invoke_body(None))
+            out["stream"] = client.converse_stream(modelId=bedrock.MODEL, messages=message)
         found[lib] = holders([handed, out], harness.make_key())
         calls.close()
     return found
@@ -549,10 +545,18 @@ class Broken(unittest.TestCase):
         with mock.patch.object(reflexer.bedrock, "straight", keeping), mock.patch.object(reflexer.boto3, "straight", keeping), \
                 mock.patch.object(reflexer.aiobotocore, "straight", keeping), mock.patch.object(reflexer.transport, "stays_straight", keeping_shipped):
             found = ours_on_signed_calls()
-        self.assertTrue(found[("boto3", "after signing")][0] and found[("litellm", "call")][0], found)
+        self.assertTrue(all(found[(lib, how)][0] for lib, how in (("boto3", "after signing"), ("aiobotocore", "after signing"), ("litellm", "call"))), found)
+
+    def test_reflexers_answer_still_keeping_our_headers_goes_straight(self):
+        """A release of aiohttp keeping the request's headers where they cannot be forgotten: the answer is not handed on."""
+        made, calls = world("aiobotocore")
+        with mock.patch.object(reflexer.aiobotocore.gc, "get_referents", lambda held: []):
+            outcome = calls.call(calls.client())
+        calls.close()
+        self.assertEqual((outcome.text, bool(made.provider.seen)), (harness.STRAIGHT_TEXT, True))
 
     def test_reflexers_own_answer_handed_on_turns_it_red(self):
-        with mock.patch.object(reflexer.aiobotocore, "Answer", lambda response: response):
+        with mock.patch.object(reflexer.aiobotocore, "forgotten", lambda response: response):
             self.assertTrue(what_the_client_is_handed()["aiobotocore"])
 
     def test_a_private_name_read_at_each_call_turns_it_red(self):

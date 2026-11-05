@@ -89,6 +89,7 @@ rules:
           metavariable: $NAME
           regex: ^(sys|os|subprocess|socket|ssl|builtins|importlib|ctypes|handlers|request|client|shutil|signal|threading)$
       - pattern-not: threading.$NAME
+      - pattern-not: boto3.client  # boto3's own function making a client, not http's module
 
   - id: log-only-kinds-js
     message: The SDK logs what kind of thing happened, never a request's or an answer's content, nor the key.

@@ -53,13 +53,14 @@ CONTROLS = {
     "straight_dressed_as_served": [("fields_an_answer_that_went_straight_carries_none", "*")],
     "prices_a_pass_through": [("fields_a_pass_through_keeps_the_providers_cost", "*")],  # gemini's object takes no price: `stock` shows it
     "flag_not_read": [("skip_goes_straight_and_its_flag_stays_here", "*"), ("new_provider_skip_goes_straight", "acme"),
+                      ("bedrock_skip_as_a_header_goes_straight", "litellm"), ("bedrock_skip_as_a_header_goes_straight", "anthropic-bedrock"),
                       ("async_skip_goes_straight", "*"), ("stream_skip_goes_straight", "*")],
     "skip_sticks": [("skip_holds_for_one_call_only", "*")],
     "hop_loses_its_mark": [("redirect_on_a_straight_call_stays_straight", "*")],
     "share_ignored": [("sampling_none_sends_all_straight", "*"), ("sampling_a_tenth_sends_about_a_tenth", "*")],
     "routes_everything": [("routing_other_calls_go_straight", "*")],
     "routes_chat_only": [("routing_openai_responses_reach_reflexer", "openai"), ("routing_azure_responses_reach_reflexer", "azure")],
-    "key_not_checked": [("bad_key_raises_before_anything_is_sent", "*")],
+    "key_not_checked": [("bad_key_raises_before_anything_is_sent", "*"), ("bad_key_on_bedrock_raises_before_anything_is_sent", "*")],
     "reaches_this_machine": [("routing_a_runner_on_this_machine_goes_straight", "*"), ("routing_a_plain_http_base_goes_straight", "*"),
                              ("kept_proxy_http_proxy_takes_a_plain_http_runner", "*")],
     "no_upstream": [("routing_a_router_is_named_as_the_upstream", "*"), ("routing_a_hosted_runner_is_named_as_the_upstream", "openai"),
@@ -70,9 +71,12 @@ CONTROLS = {
     "trips_on_providers_status": [("breaker_a_providers_status_never_trips_it", "*"), ("kept_a_providers_error_raises_the_sdks_own_class", "openai")],
     "connection_counted": [("breaker_provider_unreachable_is_not_counted", "*")],
     "busy_with_straight_counted": [("breaker_busy_with_straight_goes_straight_uncounted", "*")],
-    "redirect_is_an_answer": [("redirect_relayed_by_reflexer_goes_straight", "*"), ("async_redirect_goes_straight", "*")],
-    "balancer_is_an_answer": [("no_harm_balancers_own_answer", "*"), ("redirect_with_none_of_our_headers_goes_straight", "*")],
+    "redirect_is_an_answer": [("redirect_relayed_by_reflexer_goes_straight", "*"), ("async_redirect_goes_straight", "*"),
+                              ("redirect_on_bedrock_relayed_by_reflexer_goes_straight", "*")],
+    "balancer_is_an_answer": [("no_harm_balancers_own_answer", "*"), ("redirect_with_none_of_our_headers_goes_straight", "*"),
+                              ("no_harm_on_bedrock_balancers_own_answer", "*")],
     "busy_is_an_answer": [("no_harm_reflexer_busy", "*"), ("no_harm_reflexer_500", "*"), ("no_harm_reflexer_429", "*"),
+                          ("no_harm_on_bedrock_reflexer_busy", "*"), ("no_harm_on_bedrock_a_key_bedrock_refuses_is_the_clients_error_sent_once", "*"), ("no_harm_on_bedrock_reflexer_500", "*"),
                           ("new_provider_busy_goes_straight", "acme"), ("routing_the_body_is_the_clients_on_both_legs", "*")],
     "no_grace": [("grace_a_key_expired_under_a_day_goes_straight_with_a_warning", "*")],
     "expired_goes_straight": [("grace_a_key_expired_over_a_day_raises_to_the_client", "*")],
@@ -92,6 +96,7 @@ CONTROLS = {
     "body_not_read_counted": [("no_harm_a_body_not_read_goes_straight_and_counts_no_failure", "openai")],
     "streams_go_straight": [("routing_a_stream_call_reaches_reflexer", "*"), ("stream_served_through_reflexer", "*")],
     "reads_answers_whole": [("stream_arrives_event_by_event", "*"), ("no_harm_an_answer_cut_is_an_error_never_sent_twice", "*"),
+                            ("no_harm_on_bedrock_an_answer_cut_is_an_error_never_sent_twice", "anthropic-bedrock"),
                             ("no_harm_an_answer_broken_is_an_error_never_sent_twice", "*")],
     "edits_bytes": [("fields_leave_a_responses_bytes_untouched", "*")],
     "takes_no_gzip": [("gzip_a_served_answer_with_its_fields", "*"), ("gzip_a_pass_through", "*"), ("gzip_a_straight_answer", "*")],
@@ -114,10 +119,39 @@ CONTROLS = {
                                       ("kept_a_cost_tool_patching_after_the_client_was_made_sees_it_too", "openai")],
     "errors_of_our_own": [("kept_a_providers_error_raises_the_sdks_own_class", "openai")],
     "gemini_answer_dressed": [("fields_leave_geminis_object_what_it_was", "gemini")],
+    # Bedrock's
+    "bedrock_stock": [("bedrock_a_keyed_call_reaches_reflexer_with_both_keys", "*"), ("bedrock_each_operation_is_served", "*"),
+                      ("skip_on_bedrock_holds_for_one_call_only", "*"), ("bedrock_the_sdks_own_copy_stays_on_reflexer", "*"),
+                      ("no_harm_on_bedrock_a_handshake_refused_once_is_tried_again", "*"), ("bedrock_a_closed_client_leaves_no_connection_to_reflexer", "*"),
+                      ("bedrock_the_key_stays_out_of_what_the_client_can_log", "*")],
+    "bedrock_streams_not_routed": [("bedrock_each_operation_is_served", "boto3"), ("bedrock_each_operation_is_served", "aiobotocore"),
+                                   ("bedrock_each_operation_is_served", "litellm"), ("bedrock_each_operation_is_served", "anthropic-bedrock")],
+    "bedrock_every_operation_routed": [("bedrock_count_tokens_goes_straight", "*")],
+    "bedrock_signed_routed": [("bedrock_a_signed_call_never_reaches_reflexer_and_is_as_stock", "*")],
+    "bedrock_straight_changed": [("bedrock_a_signed_call_never_reaches_reflexer_and_is_as_stock", "*"),
+                                 ("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "litellm")],
+    "bedrock_skip_not_taken": [("bedrock_skip_as_an_argument_goes_straight", "*"),
+                               ("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "boto3")],
+    "bedrock_share_ignored": [("sampling_on_bedrock_none_sends_all_straight", "*")],
+    "bedrock_no_fallback": [("no_harm_on_bedrock_reflexer_dead", "*"), ("no_harm_on_bedrock_connection_reset", "*"), ("no_harm_on_bedrock_answer_dropped", "*"),
+                            ("no_harm_on_bedrock_answer_not_http", "*"), ("no_harm_on_bedrock_certificate_not_trusted", "*"),
+                            ("bedrock_the_clients_timeout_holds_on_reflexers_leg", "boto3"), ("bedrock_a_failure_opens_the_breaker", "*")],
+    "bedrock_connection_is_an_answer": [("no_harm_on_bedrock_provider_unreachable_from_reflexer", "*")],
+    "bedrock_cut_sent_again": [("no_harm_on_bedrock_an_answer_cut_is_an_error_never_sent_twice", "aiobotocore")],
+    "bedrock_no_tls_retry": [("no_harm_on_bedrock_a_handshake_refused_once_is_tried_again", "*")],
+    "bedrock_no_replay_guard": [("bedrock_a_replay_reflexer_does_not_take_never_reaches_bedrock", "*")],
+    "bedrock_timeout_not_read": [("bedrock_the_clients_timeout_holds_on_reflexers_leg", "litellm")],
+    "bedrock_handlers_answer_ignored": [("bedrock_a_handler_of_the_clients_that_answers_is_the_answer", "*")],
+    "bedrock_copy_is_stock": [("bedrock_the_sdks_own_copy_stays_on_reflexer", "*")],
+    "bedrock_key_on_the_clients_request": [("no_harm_on_bedrock_reflexer_busy", "boto3"), ("no_harm_on_bedrock_reflexer_busy", "aiobotocore")],
+    "bedrock_own_session": [("bedrock_a_closed_client_leaves_no_connection_to_reflexer", "boto3")],
+    "bedrock_first_loops_session": [("bedrock_aiobotocore_a_client_entered_in_a_second_event_loop_is_served", "aiobotocore")],
+    "bedrock_route_logs_its_headers": [("bedrock_the_key_stays_out_of_what_the_client_can_log", "*")],
 }
 # A slow machine's moment of faults.py's CONDITIONS -> the cases it must leave green: a busy machine turns none red.
 SLOW_MACHINE = {
-    "late_notice": ["timeout_the_clients_holds_on_reflexers_leg", "async_the_clients_timeout_holds_on_reflexers_leg"],
+    "late_notice": ["timeout_the_clients_holds_on_reflexers_leg", "async_the_clients_timeout_holds_on_reflexers_leg",
+                    "bedrock_the_clients_timeout_holds_on_reflexers_leg"],
     "a_stall_on_the_return": ["breaker_outage_trace_at_the_full_share", "breaker_outage_trace_at_the_one_percent_share"],
     "a_freeze": sorted(faults.FREEZES),  # each `steady` case, frozen where it breaks
 }
@@ -135,7 +169,6 @@ NOT_JUDGED = {
     "measure_how_far_apart_clients_return": "records the spread of waits; a shared machine's noise is as large; tests/test_logic.py holds it",
     "measure_what_each_4xx_of_reflexers_does": "records which 4xx reach the client; nothing yet decides which should",
     "open_a_stalled_reflexer_told_from_a_slow_provider": "open: fails today, by a gap not built yet",
-    "open_bedrock": "cannot: no Bedrock client to run it on",
 }
 
 
@@ -278,6 +311,30 @@ class DeadStandIn(unittest.TestCase):
         self.standin.set("ok")
         socket.create_connection(("127.0.0.1", self.port), timeout=2).close()
 
+
+class StalledStandIn(unittest.TestCase):
+    """A stalled stand-in waits on any descriptor: a long test process's sockets pass `select()`'s FD_SETSIZE, past
+    which it refuses one, and the call, cut, would go straight as from an outage."""
+    FD_SETSIZE = 1024  # select()'s limit on Linux
+
+    def test_its_wait_takes_a_descriptor_past_selects_limit(self):
+        import resource
+        from harness import standins
+        past = 2 * self.FD_SETSIZE
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard != resource.RLIM_INFINITY and hard <= past:
+            self.skipTest(f"this process may open {hard} descriptors, not past {past}")
+        if soft != resource.RLIM_INFINITY and soft <= past:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (past + 1, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        ours, theirs = socket.socketpair()
+        self.addCleanup(theirs.close)
+        self.addCleanup(ours.close)
+        os.dup2(ours.fileno(), past)
+        high = socket.socket(fileno=past)
+        self.addCleanup(high.close)
+        theirs.sendall(b"x")
+        self.assertEqual(standins.select.select([high], [], [], 2)[0], [high])
 
 if __name__ == "__main__":
     unittest.main()

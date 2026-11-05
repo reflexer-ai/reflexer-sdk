@@ -16,6 +16,13 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "gemini.py": {"httpx", "httpx2", "inspect", "google"},
     "langchain_openai.py": {"langchain_openai", "openai", "os"},  # os: LangChain's own proxy variable, read as LangChain does
     "langchain_gemini.py": {"langchain_google_genai"},
+    "bedrock.py": {"copy", "inspect", "re"},  # Bedrock's wire and what its lines share: the standard library only
+    "boto3.py": {"boto3", "botocore", "urllib3"},  # urllib3: botocore's own HTTP library, whose read timeout botocore names its own
+    # aiohttp, yarl: the session aiobotocore sends by, and its URL; gc.get_referents, gc's one function used here: the one
+    # way to the request headers aiohttp keeps with an answer (P27)
+    "aiobotocore.py": {"aiobotocore", "botocore", "aiohttp", "yarl", "asyncio", "gc.get_referents"},
+    "anthropic_bedrock.py": {"anthropic"},
+    "litellm.py": {"litellm", "httpx"},  # httpx: LiteLLM's own HTTP library
 }
 
 
@@ -31,9 +38,10 @@ def imports_not_allowed(root):
             found.append(f"{path.name}: a file with no import allowlist")
             continue
         for node in ast.walk(ast.parse(path.read_text())):
-            names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else \
-                [node.module] if isinstance(node, ast.ImportFrom) and node.level == 0 else []
-            found += [f"{path.name}: {name}" for name in names if name not in allowed and name.split(".")[0] not in allowed]
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module not in allowed and node.module.split(".")[0] not in allowed:
+                found += [f"{path.name}: {node.module}.{alias.name}" for alias in node.names if f"{node.module}.{alias.name}" not in allowed]
+            elif isinstance(node, ast.Import):  # a module's one function allowed is not the module
+                found += [f"{path.name}: {alias.name}" for alias in node.names if alias.name not in allowed and alias.name.split(".")[0] not in allowed]
     return found
 
 
@@ -88,8 +96,7 @@ class Gates(unittest.TestCase):
         self.assertEqual(imports_not_allowed(ROOT), [])
 
     def test_within_budget(self):
-        self.assertEqual(budget.over(budget.measure(ROOT / "reflexer"), tomllib.loads((ROOT / "pyproject.toml").read_text())
-                                     ["tool"]["reflexer"]["budget"]), [])
+        self.assertEqual(budget.problems(ROOT / "reflexer", tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]), [])
 
     def test_ruff_clean(self):
         self.assertEqual(ruff(), 0)
@@ -102,7 +109,7 @@ class Gates(unittest.TestCase):
 
     def test_the_majors_check_reads_every_provider_file(self):
         self.assertEqual(majors.tested(ROOT), {"openai": [3], "anthropic": [2], "google-genai": [2], "langchain-openai": [1],
-                                               "langchain-google-genai": [4]})
+                                               "langchain-google-genai": [4], "boto3": [1], "aiobotocore": [3], "litellm": [1]})
 
     def test_every_promise_is_held_and_can_fail(self):
         self.assertEqual(promises.problems(ROOT), [])
@@ -146,6 +153,16 @@ class Broken(unittest.TestCase):
         self.plant("__init__.py", "import made_up_module")
         self.assertEqual(imports_not_allowed(self.root), ["__init__.py: made_up_module"])
 
+    def test_more_of_a_module_than_its_function_allowed_turns_it_red(self):
+        self.plant("aiobotocore.py", "import gc\nfrom gc import get_referrers")
+        self.assertEqual(imports_not_allowed(self.root), ["aiobotocore.py: gc", "aiobotocore.py: gc.get_referrers"])
+
+    def test_a_way_past_names_counted_where_not_allowed_turns_it_red(self):
+        limits = tomllib.loads((self.root / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]
+        self.plant("transport.py", "import gc\ndef made_up(thing):\n    return gc.get_referents(thing)")
+        self.assertEqual([problem.split(",")[0] for problem in budget.problems(self.root / "reflexer", limits) if "private" in problem],
+                         ["private_names: 1"])
+
     def test_a_file_with_no_allowlist_turns_it_red(self):
         (self.root / "reflexer" / "made_up.py").write_text("")
         self.assertEqual(imports_not_allowed(self.root), ["made_up.py: a file with no import allowlist"])
@@ -154,9 +171,31 @@ class Broken(unittest.TestCase):
         self.plant("__init__.py", "\n".join(f"made_up_{n} = 1 if True else 0" for n in range(400)))
         self.assertTrue(budget.over(budget.measure(self.root / "reflexer"), {"lines": 300, "ifs": 35, "private_names": 0}))
 
+    def test_growth_in_a_shared_file_is_not_bedrocks_to_hold(self):
+        limits = tomllib.loads((self.root / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]
+        self.plant("transport.py", "made_up = 1 if True else 0")
+        self.assertEqual([problem.split(",")[0] for problem in budget.problems(self.root / "reflexer", limits)],
+                         [f"lines: {limits['lines'] + 1}", f"ifs: {limits['ifs'] + 1}"])
+        self.setUp()
+        self.plant("boto3.py", "made_up = 1 if True else 0")
+        apart = limits["bedrock"]
+        self.assertEqual([problem.split(",")[0] for problem in budget.problems(self.root / "reflexer", limits)],
+                         [f"bedrock lines: {apart['lines'] + 1}", f"bedrock ifs: {apart['ifs'] + 1}"])
+
     def test_another_private_name_turns_it_red(self):
         self.plant("__init__.py", "def made_up(other):\n    return other._made_up_private")
-        self.assertEqual(budget.measure(self.root / "reflexer")["private_names"], ["_made_up_private"])
+        allowed = tomllib.loads((self.root / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]["private_names_allowed"]
+        self.assertEqual(budget.measure(self.root / "reflexer", allowed)["private_names"], ["_made_up_private"])
+
+    def test_a_private_name_allowed_to_another_file_turns_it_red(self):
+        allowed = tomllib.loads((self.root / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]["private_names_allowed"]
+        self.assertEqual(budget.measure(self.root / "reflexer", allowed)["private_names"], [])
+        self.plant("transport.py", "def made_up(client):\n    return client._endpoint")  # boto3.py's, read in a shared file
+        self.plant("boto3.py", "def made_up_too(client):\n    return client._made_up_private")  # one boto3.py does not name
+        self.assertEqual(budget.measure(self.root / "reflexer", allowed)["private_names"], ["_endpoint", "_made_up_private"])
+        limits = tomllib.loads((self.root / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]
+        self.assertEqual([problem.split(",")[0] for problem in budget.problems(self.root / "reflexer", limits) if "private" in problem],
+                         ["private_names: 1", "bedrock private_names: 1"])  # each in the budget of its own file
 
     def test_a_socket_turns_ruff_red(self):
         self.plant("__init__.py", "import socket")
@@ -251,8 +290,12 @@ class Broken(unittest.TestCase):
         self.assertEqual(majors.untested({"openai": [3]}, {"openai": "3.99.0"}), [])
 
     def test_a_module_reached_through_another_turns_semgrep_red(self):
-        self.plant("__init__.py", 'import logging\nmade_up = logging.sys.modules["socket"]')
-        self.assertNotEqual(semgrep(self.root), 0)
+        for text in ('import logging\nmade_up = logging.sys.modules["socket"]', 'import http\nmade_up = http.client',
+                     'import boto3\nmade_up = boto3.session.client'):  # boto3's own `boto3.client` excepted, nothing past it
+            with self.subTest(text):
+                self.setUp()
+                self.plant("__init__.py", text)
+                self.assertNotEqual(semgrep(self.root), 0, text)
 
     def test_a_socket_handler_turns_semgrep_red(self):
         self.plant("__init__.py", 'import logging.handlers\nmade_up = logging.handlers.SocketHandler("made-up", 1)')

@@ -4,7 +4,7 @@ import httpx
 
 import reflexer.anthropic, reflexer.gemini, reflexer.openai
 from reflexer.transport import setup_http_client
-from harness import acme
+from harness import acme, bedrock
 
 
 def one_line_class(sdk, is_async):
@@ -29,3 +29,9 @@ def client(world, sdk, is_async=False, **config):
     if sdk == "acme":
         return acme.Acme(**config | {"http_client": acme_http_client(world.key, own=config.get("http_client"), sample=world.share)})
     return one_line_class(sdk, is_async)(reflexer_key=world.key, sample=world.share, **config)
+
+
+def bedrock_client(world, lib, keyed=True, **settings):
+    """A Bedrock library's client as a client writes it with reflexer's line (`harness/bedrock.py`, each `make`): with a
+    Bedrock API key (`keyed`), or signing its calls. A coroutine on aiobotocore."""
+    return bedrock.LIBS[lib].make(world.key, keyed, settings | {"share": world.share})

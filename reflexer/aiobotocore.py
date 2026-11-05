@@ -1,0 +1,128 @@
+"""aiobotocore's bedrock-runtime clients, through reflexer: `reflexer.aiobotocore.through(client, key)` on a client made
+by `session.create_client("bedrock-runtime", ...)`, once entered. As `reflexer.boto3`, async: aiobotocore emits
+`before-send` and awaits its handlers, ours after them all.
+
+Reflexer's leg goes by the client's own aiohttp session, the one its endpoint sends by, with the client's connector,
+proxy, TLS and timeouts, asked to follow no redirect: aiobotocore's own `send` follows them, our key on. No public name
+reaches that session: `client._endpoint`'s `_get_session` and `_proxy_config`, read once, here; a release that renames
+one fails this line as the client makes it, never a call. So does an aiohttp whose kept request headers `forget` cannot
+reach (below), and a session of a subclass, whose own hooks (aiohttp trace configs, middlewares) would see our headers.
+"""
+import asyncio
+from gc import get_referents
+import aiohttp, yarl
+import aiobotocore.awsrequest, aiobotocore.httpsession, botocore.awsrequest, botocore.exceptions
+from . import BASE, OURS, Reflexer, supported
+from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, skip_taken, straight
+
+supported("aiobotocore", [3])
+EVENT = "before-send."
+
+
+def through(client, reflexer_key, base=BASE, sample=1.0):
+    """Ours after every `before-send` handler of the client's, on its own emitter; reflexer's leg by its own aiohttp
+    session. A client on another HTTP session class (`AioConfig(http_session_cls=...)`) raises here: its session takes
+    no aiohttp request, and every call would go straight."""
+    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample)
+    own, events = client._endpoint.http_session, client.meta.events
+    if type(own) is not aiobotocore.httpsession.AIOHTTPSession:
+        raise TypeError(f"reflexer's line takes aiobotocore's own aiohttp session, not {type(own).__name__}")
+    if not forgettable():
+        raise TypeError("this aiohttp keeps a request's headers where reflexer's line cannot forget them")
+    if getattr(events, "reflexer_through", False):
+        raise ValueError("this client already goes through reflexer")
+    session_for, proxy_url_for, proxy_headers_for = own._get_session, own._proxy_config.proxy_url_for, own._proxy_config.proxy_headers_for
+    emit = events.emit
+
+    async def send(leg):
+        """As aiobotocore's own `send` makes the request (a model call is a POST), by the session it would use, with no
+        redirect followed, and the call's own read timeout, if it has one, as aiobotocore's own send takes it."""
+        proxy = proxy_url_for(leg.url)
+        session = await session_for(proxy)
+        read = (leg.context or {}).get("read_timeout")
+        timeout = {} if read is None else {"timeout": type(session.timeout)(sock_connect=session.timeout.sock_connect, sock_read=read)}
+        response = await session.post(yarl.URL(leg.url, encoded=True), headers=lower(leg.headers) | {"accept-encoding": "identity"},
+                                      data=leg.body, proxy=proxy, proxy_headers=proxy_headers_for(leg.url), allow_redirects=False, **timeout)
+        headers = {name.decode().lower(): value.decode() for name, value in response.raw_headers}
+        return aiobotocore.awsrequest.AioAWSResponse(str(response.url), response.status, headers, forgotten(response))
+
+    async def asked(request):
+        """Reflexer's answer, or None. Its frame ends before anything reaches the client, and holds no key past it."""
+        route = leg = None
+        try:
+            route = botocore_route(reflexer, request)
+            if route is None:
+                return None
+            leg = botocore.awsrequest.AWSRequest(request.method, route[0], data=request.body, headers=route[1], stream_output=True).prepare()
+            leg.context = request.context  # the call's own settings for its session, such as a read timeout of its own
+            answer = await aagain_if_refused(lambda: send(leg))
+        except Exception as failure:
+            reflexer.failed(failure)
+            return None
+        except BaseException as stopped:  # a cancel, a ^C: raised on without the frames below, which hold the leg
+            raise stopped.with_traceback(None)
+        finally:
+            route = leg = None  # what an error's traceback, raised on, would show of this frame
+        if reflexer.goes_straight(answer.status_code, answer.headers):
+            answer.raw.close()  # its body unread, its connection not reused
+            return None
+        return answer
+
+    async def before_send(request):
+        answer = await asked(request)
+        if answer is not None:
+            return await read_served(answer, request)
+        straight(request, request.headers, request.body if isinstance(request.body, bytes) else None)
+        return None
+
+    async def emitted(event_name, **kwargs):
+        skip_taken(event_name, kwargs, before=True)
+        responses = await emit(event_name, **kwargs)
+        skip_taken(event_name, kwargs, before=False)
+        if event_name.startswith(EVENT) and not answered(responses):
+            responses.append((before_send, await before_send(kwargs["request"])))
+        return responses
+
+    events.emit, events.reflexer_through = emitted, True
+    return client
+
+
+def forget(headers):
+    """Ours forgotten from a request's headers aiohttp keeps, read by `headers`, its proxy of them: aiohttp keeps them
+    with the answer, which a stream's own reader keeps alive, where a client's `after-call` handler and the body it is
+    handed would reach our key. The request has left; no public name reaches what the proxy reads but `get_referents`.
+    True when none of ours is left."""
+    for kept in get_referents(headers):
+        for name in [name for name in kept if name.lower().startswith(OURS)] if hasattr(kept, "popall") else ():
+            kept.popall(name)
+    return not any(name.lower().startswith(OURS) for name in headers)
+
+
+def forgettable():
+    """Whether `forget` holds on this aiohttp, tried on a request of its own made up here, never sent."""
+    loop = asyncio.new_event_loop()
+    try:
+        return forget(aiohttp.ClientRequest("POST", yarl.URL(BASE), headers={OURS + "made-up": "made-up"}, loop=loop).request_info.headers)
+    finally:
+        loop.close()
+
+
+def forgotten(response):
+    """Reflexer's aiohttp answer, our headers forgotten from what it keeps of its request."""
+    if not forget(response.request_info.headers):  # held when the line was made; an answer kept otherwise, not handed on
+        response.close()
+        raise RuntimeError("reflexer's answer still keeps our headers: not handed on, the call goes straight")
+    return response
+
+
+async def read_served(answer, request):
+    """Reflexer's answer, as aiobotocore's own session gives one: read here unless the client streams it. A body cut after
+    its head is the client's error, as from the provider, never sent to the provider too."""
+    if not request.stream_output:
+        try:
+            await answer.content
+        except asyncio.TimeoutError as error:
+            raise botocore.exceptions.ReadTimeoutError(endpoint_url=request.url, error=error) from None
+        except Exception as error:
+            raise botocore.exceptions.ConnectionClosedError(endpoint_url=request.url, error=error) from None
+    return answer

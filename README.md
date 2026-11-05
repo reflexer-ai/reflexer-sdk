@@ -95,6 +95,45 @@ Its providers take the provider SDK's client; give them reflexer's:
     AnthropicProvider(anthropic_client=reflexer.anthropic.AsyncAnthropic(api_key=anthropic_key, reflexer_key=reflexer_key))
     GoogleProvider(client=reflexer.gemini.Client(api_key=gemini_key, reflexer_key=reflexer_key))
 
+## Amazon Bedrock
+
+A call carrying a Bedrock API key goes through reflexer, the key passed on with it as any provider's key; a call your library signs (SigV4) goes to Bedrock as before, and is not sent to reflexer.
+
+    # client = boto3.client("bedrock-runtime", region_name=region)
+    client = reflexer.boto3.client("bedrock-runtime", region_name=region, reflexer_key=reflexer_key)
+
+    # a client made elsewhere: its botocore client
+    reflexer.boto3.through(client, reflexer_key)  # on aiobotocore, once entered: reflexer.aiobotocore.through(client, reflexer_key)
+
+    # client = anthropic.AnthropicBedrock(aws_region=region, api_key=bedrock_key)
+    client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=region, api_key=bedrock_key, reflexer_key=reflexer_key)
+
+    # litellm.completion(model="bedrock/...", api_key=bedrock_key, messages=messages)
+    bedrock_http = reflexer.litellm.client(reflexer_key)  # made once, given to each call: its connections and breaker last
+    litellm.completion(model="bedrock/...", api_key=bedrock_key, messages=messages, client=bedrock_http)
+
+boto3 and aiobotocore take the key from `AWS_BEARER_TOKEN_BEDROCK`. Also `AsyncAnthropicBedrock`, `AnthropicBedrockMantle` and `AsyncAnthropicBedrockMantle`; `reflexer.litellm.async_client` for `acompletion`. What is built on a boto3 client takes reflexer's: `ChatBedrockConverse(client=...)` (langchain-aws), `BedrockProvider(bedrock_client=...)` (Pydantic AI); Strands' `BedrockModel` holds its own, `reflexer.boto3.through(model.client, reflexer_key)`. Bedrock's OpenAI and Anthropic routes take the lines above, `base_url` theirs.
+
+One call straight: on boto3 and aiobotocore, `client.converse(..., ReflexerPassThrough=True)`; on any line, the `Reflexer-Pass-Through` header (botocore's: by a `before-sign` handler of yours).
+
+TypeScript:
+
+    import * as bedrock from "@reflexer-ai/sdk/bedrock";
+
+    // client = new BedrockRuntimeClient({ region, token: { token: bedrockKey }, authSchemePreference: ["httpBearerAuth"] })
+    client = bedrock.wrap(new BedrockRuntimeClient({ region, token: { token: bedrockKey }, authSchemePreference: ["httpBearerAuth"] }), reflexerKey);
+
+    // chat = new ChatBedrockConverse({ model, client })
+    chat = new ChatBedrockConverse({ model, client: bedrock.wrap(client, reflexerKey) });
+
+    // client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey })
+    client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey), middleware: [bedrock.anthropicMiddleware] });
+
+    // model = createAmazonBedrock({ region, apiKey: bedrockKey })(modelId)
+    model = wrapLanguageModel({ model: createAmazonBedrock({ region, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey) })(modelId), middleware: bedrock.aiMiddleware });
+
+`bedrock.requestHandler(reflexerKey, { handler })` is the handler `wrap` gives AWS JS, for a client that sets its own `requestHandler`. One call straight: AWS JS `client.send(command, { reflexerPassThrough: true })`; the AI SDK `providerOptions: { reflexer: { passThrough: true } }`; or the `Reflexer-Pass-Through` header (AWS JS by a middleware of yours, AnthropicBedrock and the AI SDK in the call's headers). What each line cannot do: SECURITY.md, **Known limits**.
+
 ## What reflexer's answer looks like
 
 The answer is your provider's format, unchanged by this SDK. A served answer's `model` ends in `-reflexer`, and its price in USD is at `usage.cost`, where cost tools already read it. Every response carries `Reflexer-Request-Id`, `Reflexer-Answered-By` and `Reflexer-Cost` (nano USD) headers. An answer cut mid-way raises your provider SDK's own error, as a cut from the provider would, with no price on it; reflexer's bill holds the price.
@@ -108,7 +147,7 @@ The answer is your provider's format, unchanged by this SDK. A served answer's `
 
 ## Develop
 
-    uv sync --group dev --group test
+    uv sync --group dev --group test --group frameworks --group bedrock
     uv run python -m unittest discover -s tests -t .
     uv run python tests/acceptance/run.py                     # acceptance: tests/acceptance/README.md
     uv run python -m unittest tests.acceptance.test_controls  # each fault planted in the SDK turns its cases red

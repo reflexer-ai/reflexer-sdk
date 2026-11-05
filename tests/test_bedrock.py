@@ -210,6 +210,50 @@ def anthropic_attempts_with_no_leg(headers=None):
     return text, len(seen), arrival is not None and bedrock.signature_holds(arrival)
 
 
+def in_clear(value, key, depth=0):
+    """Whether `value` shows `key` as text: itself, or inside the dicts, lists and tuples an error tracker writes out."""
+    if isinstance(value, (str, bytes)):
+        return (key in value) if isinstance(value, str) else key.encode() in value
+    if depth > 4 or not isinstance(value, (dict, list, tuple)):
+        return False
+    items = [*value.keys(), *value.values()] if isinstance(value, dict) else value
+    return any(in_clear(each, key, depth + 1) for each in items)
+
+
+def key_in_the_errors_frames(error, key):
+    """The frames' locals that hold the reflexer key in clear, in `error`'s traceback and every error chained to it:
+    what a client's error tracker capturing locals would write out. The client's own argument, the key itself, aside."""
+    found, seen, pending = [], set(), [error]
+    while pending:
+        each = pending.pop()
+        if each is None or id(each) in seen:
+            continue
+        seen.add(id(each))
+        frame = each.__traceback__
+        while frame is not None:
+            code = frame.tb_frame.f_code
+            found += [f"{code.co_name}.{name}" for name, value in frame.tb_frame.f_locals.items()
+                      if name != "reflexer_key" and code.co_filename != __file__ and in_clear(value, key)]
+            frame = frame.tb_next
+        pending += [each.__cause__, each.__context__]
+    return found
+
+
+def anthropic_error_after_a_leg():
+    """AnthropicBedrock's signed call, reflexer busy, Bedrock unreachable: where the reflexer key is held in the frames of
+    the error the client gets."""
+    made, _ = world("anthropic-bedrock")
+    made.reflexer.set("busy")
+    made.provider.set("dead")
+    client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY, aws_secret_key=bedrock.SECRET,
+                                                         max_retries=0, reflexer_key=made.key)
+    try:
+        client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}])
+    except Exception as error:
+        return key_in_the_errors_frames(error, made.key)
+    return ["no error"]
+
+
 def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
     """LiteLLM's signed call, reflexer stalled, the window shortened to `seconds` at Bedrock's stand-in and in the line:
     (what the client saw, the seconds it took, whether Bedrock took it). `is_async`: by `acompletion` and its line."""
@@ -391,6 +435,9 @@ class Promises(unittest.TestCase):
         for headers in (None, {"Reflexer-Namespace": "made-up"}):  # one of ours under the signature: kept, as signed
             with self.subTest(headers=headers):
                 self.assertEqual(anthropic_attempts_with_no_leg(headers), (harness.STRAIGHT_TEXT, 1, True))
+
+    def test_anthropic_an_error_after_reflexers_leg_holds_no_key_in_its_frames(self):
+        self.assertEqual(anthropic_error_after_a_leg(), [])
 
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):

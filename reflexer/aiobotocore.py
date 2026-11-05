@@ -32,18 +32,21 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
 
     async def send(leg):
         """As aiobotocore's own `send` makes the request (a model call is a POST), by the session it would use, with no
-        redirect followed."""
+        redirect followed, and the call's own read timeout, if it has one, as aiobotocore's own send takes it."""
         proxy = proxy_url_for(leg.url)
         session = await session_for(proxy)
+        read = (leg.context or {}).get("read_timeout")
+        timeout = {} if read is None else {"timeout": type(session.timeout)(sock_connect=session.timeout.sock_connect, sock_read=read)}
         response = await session.post(yarl.URL(leg.url, encoded=True), headers=lower(leg.headers) | {"accept-encoding": "identity"},
-                                      data=leg.body, proxy=proxy, proxy_headers=proxy_headers_for(leg.url), allow_redirects=False)
+                                      data=leg.body, proxy=proxy, proxy_headers=proxy_headers_for(leg.url), allow_redirects=False, **timeout)
         headers = {name.decode().lower(): value.decode() for name, value in response.raw_headers}
-        return aiobotocore.awsrequest.AioAWSResponse(str(response.url), response.status, headers, response)
+        return aiobotocore.awsrequest.AioAWSResponse(str(response.url), response.status, headers, Answer(response))
 
     async def before_send(request):
         route = botocore_route(reflexer, request)
         if route is not None:
             leg = botocore.awsrequest.AWSRequest(request.method, route[0], data=request.body, headers=route[1], stream_output=True).prepare()
+            leg.context = request.context  # the call's own settings for its session, such as a read timeout of its own
             try:
                 answer = await aagain_if_refused(lambda: send(leg))
             except Exception as failure:
@@ -65,6 +68,15 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
 
     events.emit, events.reflexer_through = emitted, True
     return client
+
+
+class Answer:
+    """Reflexer's aiohttp answer, as aiobotocore reads a body, without the request it answered: aiohttp keeps that
+    request's headers, our key among them, where a client's `after-call` handler and the body's stream would reach them."""
+
+    def __init__(self, response):
+        self.content, self.url, self.status = response.content, response.url, response.status
+        self.read, self.close, self.release = response.read, response.close, response.release
 
 
 async def read_served(answer, request):

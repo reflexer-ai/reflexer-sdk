@@ -257,6 +257,10 @@ class Standin:
         if mode in ("dead", "reset", "badcert"):  # on a connection opened before: nothing answers on it
             handler.close_connection = True
             return None
+        refused = None if self.is_reflexer or arrival.host.split(":")[0] not in bedrock.NAMES else bedrock.refusal(arrival)
+        if refused:  # Bedrock takes no call without its key or a signature that holds
+            status, headers, body = refused
+            return handler.reply(status, headers, json.dumps(body).encode())
         if params.get("delay"):
             time.sleep(params["delay"])
         if mode == "stall":

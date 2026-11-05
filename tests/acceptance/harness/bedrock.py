@@ -15,6 +15,7 @@ MANTLE = f"bedrock-mantle.{REGION}.api.aws"
 NAMES = [RUNTIME, MANTLE]
 MODEL = "anthropic.frontier-b-made-up-v1:0"  # made up, of Anthropic's family on Bedrock: LiteLLM's invoke route reads the body's format from it
 BEARER = "ABSKbWFkZS11cC1iZWRyb2NrLWtleQ=="  # a Bedrock API key's form, made up
+REFUSED = "ABSK-made-up-one-bedrock-refuses"  # another, which Bedrock's stand-in does not take
 ACCESS_KEY, SECRET = "AKIDMADEUPMADEUP0001", "made-up-secret-access-key-of-the-suite"  # not of AWS's key form: no scanner takes it for one
 EVENT_STREAM = "application/vnd.amazon.eventstream"
 ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, as a client writes it
@@ -83,6 +84,22 @@ def events_for(wire, text):
              {"type": "content_block_stop", "index": 0}, {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}},
              {"type": "message_stop"}]
     return [event("chunk", {"bytes": base64.b64encode(json.dumps(step).encode()).decode()}) for step in steps]
+
+
+def refusal(arrival):
+    """Bedrock's own refusal of a call whose key or signature it does not take, (status, headers, body), in the route's
+    format, as Bedrock answers each; None for a call it takes. Its own operations: AWS's error; its compatible routes:
+    their format's, with no AWS error type."""
+    auth = arrival.headers.get("authorization") or ""
+    if auth == f"Bearer {BEARER}" or arrival.headers.get("x-api-key") == BEARER or (auth.startswith("AWS4-HMAC-SHA256 ") and signature_holds(arrival)):
+        return None
+    path, mantle = arrival.path.split("?")[0], arrival.host.split(":")[0] == MANTLE
+    message = "made-up: the key or signature is not valid"
+    if wire_of(path):
+        return 403, {"x-amzn-errortype": "AccessDeniedException"}, {"message": message}
+    if path.endswith("/chat/completions"):
+        return 401, {}, {"error": {"type": "permission_denied_error", "code": "invalid_api_key" if mantle else "access_denied", "message": message}}
+    return (401 if mantle else 403), {}, {"type": "error", "error": {"type": "authentication_error" if mantle else "permission_error", "message": message}}
 
 
 def signature_holds(arrival):
@@ -245,7 +262,7 @@ class Strands(Lib):
         import reflexer.boto3
         from strands.models import BedrockModel
         model = BedrockModel(model_id=MODEL, region_name=REGION, boto_client_config=botocore_config(settings), streaming=False,
-                             max_tokens=8, **({"api_key": BEARER} if keyed else {}))
+                             max_tokens=8, **({"api_key": settings.get("bedrock_key", BEARER)} if keyed else {}))
         if key:
             reflexer.boto3.through(model.client, key, sample=settings.get("share", 1.0))
         return model
@@ -293,7 +310,7 @@ class Litellm(Lib):
     def make(self, key, keyed, settings):
         import reflexer.litellm
         made = {"aws_region_name": REGION, "num_retries": 0, "timeout": settings.get("timeout") or 60}
-        made |= {"api_key": BEARER} if keyed else {"aws_access_key_id": ACCESS_KEY, "aws_secret_access_key": SECRET}
+        made |= {"api_key": settings.get("bedrock_key", BEARER)} if keyed else {"aws_access_key_id": ACCESS_KEY, "aws_secret_access_key": SECRET}
         if key:
             made["client"] = reflexer.litellm.client(key, sample=settings.get("share", 1.0))
         return made
@@ -319,7 +336,7 @@ class AnthropicBedrock(Lib):
     def make(self, key, keyed, settings):
         stock, line = self.classes()
         config = {"aws_region": REGION, "max_retries": settings.get("retries", 0), "timeout": settings.get("timeout") or 60}
-        config |= {"api_key": BEARER} if keyed else {"aws_access_key": ACCESS_KEY, "aws_secret_key": SECRET}
+        config |= {"api_key": settings.get("bedrock_key", BEARER)} if keyed else {"aws_access_key": ACCESS_KEY, "aws_secret_key": SECRET}
         return line(**config, reflexer_key=key, sample=settings.get("share", 1.0)) if key else stock(**config)
 
     def call(self, client, op, headers=None, args=None, extra=None):
@@ -344,7 +361,7 @@ class AnthropicCompat(AnthropicBedrock):
 
     def make(self, key, keyed, settings):
         import anthropic, reflexer.anthropic
-        config = {"base_url": f"https://{RUNTIME}/anthropic", "api_key": BEARER, "max_retries": settings.get("retries", 0),
+        config = {"base_url": f"https://{RUNTIME}/anthropic", "api_key": settings.get("bedrock_key", BEARER), "max_retries": settings.get("retries", 0),
                   "timeout": settings.get("timeout") or 60}
         return reflexer.anthropic.Anthropic(**config, reflexer_key=key, sample=settings.get("share", 1.0)) if key else anthropic.Anthropic(**config)
 
@@ -355,7 +372,7 @@ class OpenaiCompat(Lib):
 
     def make(self, key, keyed, settings):
         import openai, reflexer.openai
-        config = {"base_url": f"https://{RUNTIME}/openai/v1", "api_key": BEARER, "max_retries": settings.get("retries", 0),
+        config = {"base_url": f"https://{RUNTIME}/openai/v1", "api_key": settings.get("bedrock_key", BEARER), "max_retries": settings.get("retries", 0),
                   "timeout": settings.get("timeout") or 60}
         return reflexer.openai.OpenAI(**config, reflexer_key=key, sample=settings.get("share", 1.0)) if key else openai.OpenAI(**config)
 
@@ -389,7 +406,7 @@ class Calls:
     def client(self, line=True, keyed=True, **settings):
         """`keyed`: a Bedrock API key, which botocore takes from its variable as a client is made; else the suite's credentials."""
         if keyed and self.lib.botocore and self.lib.name != "strands":
-            self.t.env(AWS_BEARER_TOKEN_BEDROCK=BEARER)
+            self.t.env(AWS_BEARER_TOKEN_BEDROCK=settings.get("bedrock_key", BEARER))
         else:
             os.environ.pop("AWS_BEARER_TOKEN_BEDROCK", None)
         made = self.t.lines.bedrock_client(self.t.world, self.t.sdk, keyed, **settings) if line else self.lib.make(None, keyed, settings)

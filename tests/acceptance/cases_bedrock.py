@@ -54,6 +54,9 @@ def signed_as_stock(t, calls, headers=None):
                      if name not in VOLATILE and not name.startswith("reflexer-")} for each in (arrival, as_stock))
     # botocore's user agent names the features its process used so far (` m/`): two stock clients differ there too
     t.check(ours == stocks and arrival.body == as_stock.body, f"not as stock: {sorted(set(ours.items()) ^ set(stocks.items()))}")
+    signed = arrival.headers.get("authorization", "").partition("SignedHeaders=")[2].split(",")[0].split(";")
+    uncovered = [name for name in arrival.headers if name.startswith("reflexer-") and name not in signed]
+    t.check(not uncovered, f"a header of ours its signature does not cover reached Bedrock: {uncovered}")
 
 
 # ---- routing: a call carrying a key reaches reflexer with both keys; a signed call never does
@@ -183,6 +186,18 @@ SIGNS_EVERY_HEADER = {lib: "it signs every header: on a call it signs, the flag 
 def bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds(t):
     calls = Calls(t)
     signed_as_stock(t, calls, headers=t.skip_headers())
+
+
+@bedrock_case("bedrock no harm")
+def no_harm_on_bedrock_a_key_bedrock_refuses_is_the_clients_error_sent_once(t):
+    """A key Bedrock does not take, reflexer busy: the client gets Bedrock's own refusal, in its route's format, as its
+    library's error, and Bedrock is asked once."""
+    calls = Calls(t)
+    client = calls.client(bedrock_key=bedrock.REFUSED)
+    reflexer_status(t, 503, body={"message": "made-up"})
+    outcome = calls.call(client)
+    t.check(outcome.error is not None, f"a refused key answered: {outcome}")
+    t.check(len(t.provider.seen) == 1, f"Bedrock asked {len(t.provider.seen)} times")
 
 
 # ---- the key, the replay, a redirect

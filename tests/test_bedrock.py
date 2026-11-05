@@ -105,6 +105,108 @@ def reached_bedrock_after(scene, extra=None):
 REPLAYING = ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle")  # those whose calls take a field at the body's top
 
 
+def signed_replays_reaching_bedrock():
+    """{lib: whether a signed call carrying a replay reached Bedrock}, reflexer busy."""
+    found = {}
+    for lib in REPLAYING:
+        made, calls = world(lib)
+        SCENES["busy"](made)
+        calls.call(calls.client(keyed=False), {"boto3": "invoke", "aiobotocore": "invoke"}.get(lib, calls.lib.ops[0]),
+                   extra={"replay_response": {"id": "made-up"}})
+        calls.close()
+        found[lib] = bool(made.provider.seen)
+    return found
+
+
+def after_signing(client):
+    """A `before-send` handler of the client's, first of all, putting a header of ours on the call after it is signed."""
+    def add(request, **_):
+        request.headers["Reflexer-Namespace"] = "made-up"
+    client.meta.events.register_first("before-send.bedrock-runtime.*", add)
+
+
+def ours_on_signed_calls():
+    """{(lib, how): (the headers of ours that reached Bedrock but the signature does not cover, whether it held)}: a
+    signed call given a namespace of ours, where each library puts a call's headers, and on boto3 also after signing."""
+    found = {}
+    for lib, how in [(lib, "call") for lib in LINES] + [("boto3", "after signing")]:
+        made, calls = world(lib)
+        client = calls.client(keyed=False)
+        if how == "after signing":
+            after_signing(client)
+        calls.call(client, headers={"Reflexer-Namespace": "made-up"} if how == "call" else None)
+        calls.close()
+        arrival = made.provider.seen[-1]
+        signed = arrival.headers.get("authorization", "").partition("SignedHeaders=")[2].split(",")[0].split(";")
+        found[(lib, how)] = (sorted(name for name in arrival.headers if name.startswith("reflexer-") and name not in signed),
+                             bedrock.signature_holds(arrival))
+    return found
+
+
+def holders(thing, secret, depth=0, seen=None):
+    """Where in what a client is handed `secret` is held: its attributes, items, and a response's request and headers."""
+    seen = set() if seen is None else seen
+    if id(thing) in seen or depth > 8:
+        return []
+    seen.add(id(thing))
+    if isinstance(thing, (str, bytes)):
+        return ["here"] if (secret in thing if isinstance(thing, str) else secret.encode() in thing) else []
+    found = []
+    try:
+        items = list(thing.items()) if hasattr(thing, "items") and not isinstance(thing, type) else []
+    except Exception:
+        items = []
+    if isinstance(thing, (list, tuple)):
+        items += list(enumerate(thing))
+    named = list((getattr(thing, "__dict__", None) or {}).items())
+    for name in ("request_info", "headers", "raw", "content"):
+        try:
+            named.append((name, getattr(thing, name)))
+        except Exception:
+            pass
+    for name, value in items + named:
+        found += [f"{name}.{where}" for where in holders(value, secret, depth + 1, seen)]
+    return found
+
+
+def what_the_client_is_handed():
+    """{lib: where the reflexer key is held in what a served call hands the client: its `after-call` handler's response,
+    and the answer it returns, a body's raw stream within}."""
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        made, calls = world(lib)
+        client, handed = calls.client(), []
+        client.meta.events.register("after-call.bedrock-runtime", lambda http_response=None, **_: handed.append(http_response))
+        out = {}
+
+        async def invoke():
+            out["answer"] = await client.invoke_model(modelId=bedrock.MODEL, body=bedrock.invoke_body(None))
+        if calls.loop:
+            calls.run(invoke())
+        else:
+            out["answer"] = client.invoke_model(modelId=bedrock.MODEL, body=bedrock.invoke_body(None))
+        found[lib] = holders([handed, out], harness.make_key())
+        calls.close()
+    return found
+
+
+def straight_within(seconds):
+    """{lib: whether a call whose own read timeout (`read_timeout` in its context, set by a handler of the client's)
+    is `seconds` went straight within twice it, reflexer stalled and the client's config allowing minutes}."""
+    import time
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        made, calls = world(lib)
+        client = calls.client(timeout=60)
+        client.meta.events.register_first("before-send.bedrock-runtime.*", lambda request, **_: request.context.update(read_timeout=seconds))
+        made.reflexer.set("stall")
+        began = time.monotonic()
+        outcome = calls.call(client)
+        found[lib] = outcome.text == harness.STRAIGHT_TEXT and bool(made.reflexer.seen) and time.monotonic() - began < 2 * seconds + 1
+        calls.close()
+    return found
+
+
 class Promises(unittest.TestCase):
     def test_through_each_bedrock_line_the_key_reaches_only_reflexer(self):
         for lib, who in holding(arrivals(), harness.make_key()).items():
@@ -135,6 +237,22 @@ class Promises(unittest.TestCase):
         for lib in REPLAYING:
             with self.subTest(lib=lib):
                 self.assertEqual(found[lib], (None, False))
+
+    def test_a_signed_replay_never_reaches_bedrock(self):
+        self.assertEqual(signed_replays_reaching_bedrock(), {lib: False for lib in REPLAYING})
+
+    def test_a_signed_call_carries_no_header_of_ours_its_signature_does_not_cover(self):
+        for (lib, how), (uncovered, held) in ours_on_signed_calls().items():
+            with self.subTest(lib=lib, how=how):
+                self.assertEqual((uncovered, held), ([], True))
+
+    def test_nothing_a_served_call_hands_the_client_holds_the_key(self):
+        for lib, where in what_the_client_is_handed().items():
+            with self.subTest(lib=lib):
+                self.assertEqual(where, [])
+
+    def test_a_calls_own_read_timeout_holds_on_reflexers_leg(self):
+        self.assertEqual(straight_within(0.5), {"boto3": True, "aiobotocore": True})
 
     def test_a_private_name_renamed_fails_the_line_as_it_is_made(self):
         """What no public name reaches, read as the line is made: a release renaming it raises there, before any call."""
@@ -241,6 +359,27 @@ class Broken(unittest.TestCase):
                 mock.patch.object(reflexer.transport, "is_replay", lambda body: False):
             found = reached_bedrock_after(SCENES["busy"], extra={"replay_response": {"id": "made-up"}})
         self.assertTrue(all(found[lib][1] for lib in REPLAYING), found)
+
+    def test_no_replay_guard_on_a_signed_call_turns_it_red(self):
+        real = reflexer.bedrock.straight
+
+        def unguarded(request, headers, body):
+            return real(request, headers, body if reflexer.bedrock.keyed(headers) else None)
+        with mock.patch.object(reflexer.bedrock, "straight", unguarded), mock.patch.object(reflexer.boto3, "straight", unguarded), \
+                mock.patch.object(reflexer.aiobotocore, "straight", unguarded):
+            self.assertTrue(all(signed_replays_reaching_bedrock().values()))
+
+    def test_headers_of_ours_kept_on_a_signed_call_turns_it_red(self):
+        def keeping(request, headers, body):
+            return request
+        with mock.patch.object(reflexer.bedrock, "straight", keeping), mock.patch.object(reflexer.boto3, "straight", keeping), \
+                mock.patch.object(reflexer.aiobotocore, "straight", keeping):
+            found = ours_on_signed_calls()
+        self.assertTrue(found[("boto3", "after signing")][0] and found[("litellm", "call")][0], found)
+
+    def test_reflexers_own_answer_handed_on_turns_it_red(self):
+        with mock.patch.object(reflexer.aiobotocore, "Answer", lambda response: response):
+            self.assertTrue(what_the_client_is_handed()["aiobotocore"])
 
     def test_a_private_name_read_at_each_call_turns_it_red(self):
         """A line that reads the client's HTTP session only as each call is sent: renamed, the line is made with no error."""

@@ -76,7 +76,7 @@ CONTROLS = {
     "balancer_is_an_answer": [("no_harm_balancers_own_answer", "*"), ("redirect_with_none_of_our_headers_goes_straight", "*"),
                               ("no_harm_on_bedrock_balancers_own_answer", "*")],
     "busy_is_an_answer": [("no_harm_reflexer_busy", "*"), ("no_harm_reflexer_500", "*"), ("no_harm_reflexer_429", "*"),
-                          ("no_harm_on_bedrock_reflexer_busy", "*"), ("no_harm_on_bedrock_reflexer_500", "*"),
+                          ("no_harm_on_bedrock_reflexer_busy", "*"), ("no_harm_on_bedrock_a_key_bedrock_refuses_is_the_clients_error_sent_once", "*"), ("no_harm_on_bedrock_reflexer_500", "*"),
                           ("new_provider_busy_goes_straight", "acme"), ("routing_the_body_is_the_clients_on_both_legs", "*")],
     "no_grace": [("grace_a_key_expired_under_a_day_goes_straight_with_a_warning", "*")],
     "expired_goes_straight": [("grace_a_key_expired_over_a_day_raises_to_the_client", "*")],

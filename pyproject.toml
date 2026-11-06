@@ -45,14 +45,14 @@ select = ["S", "TID251", "F"]  # bandit's security rules, banned modules, real e
 "tools/**" = ["S"]
 
 [tool.reflexer.budget]  # provisional: grows only in a pull request that says why
-lines = 427  # every file but Bedrock's; was 420: Gemini's async close in a later event loop leaves that loop's connections, as stock; was 346: Gemini's shared client_args, one client's close cutting no other's call, on every path of a call; was 340: LangChain's configurable_fields; was 320: LangChain's two lines; was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
-ifs = 46  # was 45: the same close; was 37: Gemini's shared client_args; was 35: LangChain's configurable_fields
+lines = 436  # every file but Bedrock's; was 429: Gemini's async close in a later event loop leaves that loop's connections, as stock; was 420: a cancel or a ^C on reflexer's leg, or as its failure is counted, raised on alone, without the frames below it or the errors it came while handling, which hold our request; was 346: Gemini's shared client_args, one client's close cutting no other's call, on every path of a call; was 340: LangChain's configurable_fields; was 320: LangChain's two lines; was 300: an audit's fixes, the SDK's own copies and gemini's two HTTP libraries
+ifs = 46  # was 45: Gemini's close in a later loop; was 37: Gemini's shared client_args; was 35: LangChain's configurable_fields
 private_names = 0  # in every file, but those each Bedrock line names below
 
 [tool.reflexer.budget.bedrock]  # Bedrock's files, apart from every other file's: an audit of another provider's path reads none of them
 files = ["bedrock.py", "boto3.py", "aiobotocore.py", "anthropic_bedrock.py", "litellm.py"]
 private_names = 0  # but those allowed below
-lines = 465  # was 300: a signed call through reflexer, its fallback signed anew (the botocore family's signer, anthropic's middleware) or, on LiteLLM, its leg bounded by the signature's window
+lines = 469  # was 465: the botocore lines' cancel or ^C raised on alone, as the shared transport's (`alone`); was 300: a signed call through reflexer, its fallback signed anew (the botocore family's signer, anthropic's middleware) or, on LiteLLM, its leg bounded by the signature's window
 ifs = 74  # was 42: the same
 
 [tool.reflexer.budget.private_names_allowed]  # no public name reaches the client's own HTTP session, which reflexer's leg goes by; each read once, as the line is made, so a release renaming one fails the line, never a call

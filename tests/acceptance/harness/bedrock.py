@@ -156,7 +156,10 @@ def botocore_config(settings):
 
 
 def boto3_kwargs(settings):
-    return {"region_name": REGION, "config": botocore_config(settings)}
+    """`session_token`: the suite's credentials given with it, explicitly: a session's credentials, once resolved from
+    the variables, are kept for every client it makes after."""
+    token = {"aws_access_key_id": ACCESS_KEY, "aws_secret_access_key": SECRET, "aws_session_token": settings["session_token"]} if settings.get("session_token") else {}
+    return {"region_name": REGION, "config": botocore_config(settings), **token}
 
 
 def one_call_headers(client, headers):
@@ -351,6 +354,7 @@ class AnthropicBedrock(Lib):
         stock, line = self.classes()
         config = {"aws_region": REGION, "max_retries": settings.get("retries", 0), "timeout": settings.get("timeout") or 60}
         config |= {"api_key": settings.get("bedrock_key", BEARER)} if keyed else {"aws_access_key": ACCESS_KEY, "aws_secret_key": SECRET}
+        config |= {"aws_session_token": settings["session_token"]} if settings.get("session_token") and not keyed else {}
         return line(**config, reflexer_key=key, sample=settings.get("share", 1.0)) if key else stock(**config)
 
     def call(self, client, op, headers=None, args=None, extra=None):

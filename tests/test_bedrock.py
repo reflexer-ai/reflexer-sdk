@@ -228,20 +228,24 @@ def anthropic_error_after_a_leg():
 
 
 def anthropic_sampled_out(hook=None, provider="ok"):
-    """AnthropicBedrock's signed call sampled out of reflexer, `hook` the client's own httpx request hook: (the headers of
-    ours that reached Bedrock but its signature does not cover, whether Bedrock took it, where the error the client got,
-    if any, shows the access key's id in clear in the SDK's frames)."""
+    """AnthropicBedrock's signed call, with a session token, sampled out of reflexer, `hook` the client's own httpx request
+    hook: (the headers of ours that reached Bedrock but its signature does not cover, whether Bedrock took it, where the
+    error the client got, if any, shows the access key's id or the session token in clear in the frames; the last
+    "no session token on the call" if none of its requests carried it)."""
     made, _ = world("anthropic-bedrock")
     made.provider.set(provider)
+    tokens = []
     client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY, aws_secret_key=bedrock.SECRET,
-                                                         max_retries=0, reflexer_key=made.key, sample=0.0,
-                                                         http_client=reflexer.anthropic_bedrock.anthropic.DefaultHttpxClient(event_hooks={"request": [hook] if hook else []}))
+                                                         aws_session_token=TOKEN, max_retries=0, reflexer_key=made.key, sample=0.0,
+                                                         http_client=reflexer.anthropic_bedrock.anthropic.DefaultHttpxClient(event_hooks={"request": [
+                                                             *([hook] if hook else []), lambda request: tokens.append(request.headers.get("x-amz-security-token"))]}))
     shown = []
     try:
         client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}],
                                extra_headers={"Reflexer-Namespace": "made-up"})
     except Exception as error:
-        shown = in_clear(error, bedrock.ACCESS_KEY)
+        shown = sorted({*in_clear(error, bedrock.ACCESS_KEY), *in_clear(error, TOKEN)})
+    shown += [] if TOKEN in tokens else ["no session token on the call"]
     arrival = made.provider.seen[-1] if made.provider.seen else None
     if arrival is None:
         return None, False, shown
@@ -249,9 +253,9 @@ def anthropic_sampled_out(hook=None, provider="ok"):
     return sorted(name for name in arrival.headers if name.startswith("reflexer-") and name not in signed), bedrock.signature_holds(arrival), shown
 
 
-def per_attempt_body():
-    """{lib: whether a signed call whose client's `before-sign` handler changes the body differently at each signing (a
-    count of its runs) reached Bedrock taken, with the body its signature covers}, reflexer busy."""
+def per_attempt_change():
+    """{lib: whether a signed call whose client's `before-sign` handler changes the body and the URL differently at each
+    signing (a count of its runs) reached Bedrock taken, with the body and URL its signature covers}, reflexer busy."""
     found = {}
     for lib in ("boto3", "aiobotocore"):
         runs = []
@@ -259,6 +263,7 @@ def per_attempt_body():
         def handler(request, **_):
             runs.append(1)
             request.data = json.dumps(json.loads(request.data) | {"system": [{"text": f"made-up run {len(runs)}"}]}).encode()
+            request.url = request.url.split("?")[0] + f"?made-up-run={len(runs)}"
         made, calls = world(lib)
         client = calls.client(keyed=False)
         client.meta.events.register("before-sign.bedrock-runtime.*", handler)
@@ -267,7 +272,7 @@ def per_attempt_body():
         calls.close()
         arrival = made.provider.seen[-1] if made.provider.seen else None
         found[lib] = (outcome.text == harness.STRAIGHT_TEXT and arrival is not None and bedrock.signature_holds(arrival)
-                      and json.loads(arrival.body)["system"] == [{"text": f"made-up run {len(runs)}"}])
+                      and json.loads(arrival.body)["system"] == [{"text": f"made-up run {len(runs)}"}] and arrival.path.endswith(f"?made-up-run={len(runs)}"))
     return found
 
 
@@ -475,16 +480,17 @@ def scene_client(calls, keyed, own):
     """A scene's client: keyed, or signed with a session token; the botocore family's own requests and their headers kept
     in `own`, as they reach its `before-send` handlers."""
     def client():
-        if not keyed:
-            os.environ["AWS_SESSION_TOKEN"] = TOKEN
-        try:
-            made = calls.client(keyed=keyed)
-        finally:
-            os.environ.pop("AWS_SESSION_TOKEN", None)
+        made = calls.client(keyed=keyed, **({} if keyed else {"session_token": TOKEN}))
         if calls.lib.botocore:
             made.meta.events.register("before-send", lambda request, **_: own.extend((request, request.headers)))
         return made
     return client
+
+
+def token_carried(made, own):
+    """Whether a signed scene's call carried its session token: on the client's own request, or as reflexer or Bedrock got it."""
+    arrived = [arrival.headers.get("x-amz-security-token") for arrival in (*made.reflexer.seen, *made.provider.seen)]
+    return TOKEN in arrived or any(TOKEN in repr(each) for each in own)
 
 
 def errors_in_clear():
@@ -498,7 +504,8 @@ def errors_in_clear():
             own = []
             error = made_by(made, calls, scene_client(calls, keyed, own))
             calls.close()
-            shown = [] if keyed else [*in_clear(error, bedrock.ACCESS_KEY, own), *in_clear(error, TOKEN, own)]
+            shown = [] if keyed else [*in_clear(error, bedrock.ACCESS_KEY, own), *in_clear(error, TOKEN, own),
+                                      *([] if token_carried(made, own) else ["no session token on the call"])]
             found[(lib, scene, keyed)] = sorted({*in_clear(error, harness.make_key()), *shown}) if error is not None else ["no error raised"]
     return found
 
@@ -610,8 +617,8 @@ class Promises(Case):
     def test_anthropic_an_error_after_a_call_never_sent_to_reflexer_shows_no_signature_in_the_sdks_frames(self):
         self.assertEqual(anthropic_sampled_out(provider="dead")[2], [])
 
-    def test_a_fallback_signed_anew_carries_the_body_its_signature_covers(self):
-        self.assertEqual(per_attempt_body(), {"boto3": True, "aiobotocore": True})
+    def test_a_fallback_signed_anew_carries_the_body_and_url_its_signature_covers(self):
+        self.assertEqual(per_attempt_change(), {"boto3": True, "aiobotocore": True})
 
     def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
         for is_async in (False, True):
@@ -845,7 +852,19 @@ class Broken(Case):
         for line in (reflexer.boto3, reflexer.aiobotocore):
             self.addCleanup(setattr, line, "signed_anew", getattr(line, "signed_anew"))
             setattr(line, "signed_anew", headers_only)
-        self.assertEqual(per_attempt_body(), {"boto3": False, "aiobotocore": False})
+        self.assertEqual(per_attempt_change(), {"boto3": False, "aiobotocore": False})
+
+    def test_a_fallback_without_its_url_signed_anew_turns_it_red(self):
+        real = reflexer.bedrock.signed_anew
+
+        def url_kept(request, made):  # the URL as first signed, the signature over the URL signed anew
+            url = request.url
+            real(request, made)
+            request.url = url
+        for line in (reflexer.boto3, reflexer.aiobotocore):
+            self.addCleanup(setattr, line, "signed_anew", getattr(line, "signed_anew"))
+            setattr(line, "signed_anew", url_kept)
+        self.assertEqual(per_attempt_change(), {"boto3": False, "aiobotocore": False})
 
     def test_litellm_a_leg_unbounded_turns_it_red(self):
         with mock.patch.object(reflexer.litellm, "within", lambda seconds, send: send()), \
@@ -934,6 +953,32 @@ class Broken(Case):
         straight = made["straight"]
         with mock.patch.object(reflexer.boto3, "straight", straight):
             self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy", False)])
+
+    def test_a_session_token_kept_where_an_errors_frames_reach_it_turns_it_red(self):
+        real = reflexer.anthropic_bedrock.Again.first
+
+        def keeping(request):  # the call's session token alone kept on the call, which our middleware's frame holds
+            held = real(request)
+            reflexer.anthropic_bedrock.CALL.get()["token"] = request.headers.get("x-amz-security-token")
+            return held
+        with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(keeping)):
+            self.assertTrue(errors_in_clear()[("anthropic-bedrock", "replay, reflexer busy", False)])
+            self.assertTrue(anthropic_sampled_out(provider="dead")[2])
+
+    def test_anthropic_every_header_of_ours_put_back_on_a_call_never_sent_turns_it_red(self):
+        real = reflexer.anthropic_bedrock.Again.first
+
+        def every(request):  # put back on a call never sent: every header of ours, those its signature does not cover among them
+            held = real(request)
+            call = reflexer.anthropic_bedrock.CALL.get()
+            call["ours"] = {name: value for name, value in request.headers.items() if name.lower().startswith(reflexer.OURS)}
+            return held
+
+        def hook(request):
+            request.headers["Reflexer-Made-Up"] = "made-up"
+        with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(every)):
+            uncovered, _, _ = anthropic_sampled_out(hook)
+        self.assertTrue(uncovered)
 
     def test_a_key_kept_in_a_closure_on_the_answer_turns_it_red(self):
         real, key = reflexer.aiobotocore.forgotten, harness.make_key()

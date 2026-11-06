@@ -1,8 +1,8 @@
 name: ci
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "29 6 * * 1"  # weekly, for its minutes; before a merge every check runs locally: tools/ci.sh
+  workflow_dispatch:
   workflow_call:  # the release runs every check again, from this one definition
 
 concurrency:  # a newer push to a pull request stops the run it replaces

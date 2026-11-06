@@ -9,4 +9,6 @@ Every change keeps each promise in [SECURITY.md](SECURITY.md): a new promise nam
 
     cd typescript && npm ci && npm run build && npm test      # TypeScript: types, gates, tests, each with its planted fault
 
+Before a merge, every check of CI runs here, each Python and Node version it covers: `sh tools/ci.sh` (`sh tools/ci.sh check`, `PYTHONS=3.14 NODES=24 ...` to narrow it). GitHub runs the same workflow weekly only.
+
 The code stays within the size budget in `pyproject.toml` (TypeScript: in `typescript/package.json`); a pull request that raises it says why there. No dependency is added to either package: the provider SDKs are the client's.

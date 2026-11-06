@@ -4,8 +4,6 @@ name: scorecard
 on:
   schedule:
     - cron: "41 5 * * 1"
-  push:
-    branches: [main]
 
 permissions:
   contents: read

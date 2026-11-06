@@ -2,7 +2,7 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, datetime, json, os, socket, sys, tempfile, shutil, time, types, unittest
+import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -56,8 +56,10 @@ def world(lib):
     for standin in SAVED.pop("standins", ()):
         standin._cut_connections()
         standin._close()
+    for server in SAVED.pop("servers", ()):  # the last world's proxy: its loop ends within its poll, then its socket closes
+        threading.Thread(target=lambda server=server: (server.shutdown(), server.server_close()), daemon=True).start()
     made = harness.World((SAVED["certs"].context(), SAVED["certs"].untrusted()))
-    SAVED["standins"] = [made.reflexer, made.provider, made.elsewhere, made.runner]
+    SAVED["standins"], SAVED["servers"] = [made.reflexer, made.provider, made.elsewhere, made.runner], [made.proxy.server]
     test = harness.Test(lines, lib, made)
     import logging
     logging.getLogger().removeHandler(test.logs)
@@ -466,12 +468,24 @@ def stopped(made, calls, client):
             return error
 
 
+def stopped_counting(made, calls, client):
+    """A scene: reflexer down, a `BaseException` lands as the SDK counts its leg's failure (in its log's handler, say)."""
+    made.reflexer.set("dead")
+    client = client()
+    with mock.patch.object(reflexer.Reflexer, "failed", lambda *_: stop()):
+        try:
+            calls.run(calls.lib.call(client, calls.lib.ops[0], None, None, None))
+        except Stop as error:
+            return error
+
+
 ERRORS = {  # scene: (the call, raising to the client, the line having taken it; the libraries it is made on)
     "cut": (asked(lambda w: w.reflexer.set("cut")), ("boto3", "aiobotocore", "anthropic-bedrock", "litellm")),
     "replay, reflexer busy": (asked(lambda w: w.reflexer.set("busy"), "invoke", {"replay_response": {"id": "made-up"}}),
                               ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle", "anthropic-compat", "openai-compat")),
     "the client's deadline, reflexer stalled": (deadline, ("aiobotocore",)),
     "not an Exception, in the leg": (stopped, ("boto3",)),
+    "not an Exception, as the leg's failure is counted": (stopped_counting, ("boto3", "aiobotocore")),
 }
 SIGNED_ERRORS = {"boto3", "aiobotocore", "anthropic-bedrock"}  # whose signed call also raises in a scene but "cut", which falls back
 
@@ -493,10 +507,214 @@ def token_carried(made, own):
     return TOKEN in arrived or any(TOKEN in repr(each) for each in own)
 
 
+HTTPX = ("anthropic-bedrock", "anthropic-mantle", "litellm", "anthropic-compat", "openai-compat", "gemini")  # the lines on httpx:
+# Bedrock's (`Keyed`), and the shipped ones (`Through`), Gemini's at its own route
+LONG = 60  # seconds: past every deadline of a scene's
+DEADLINE = 0.5  # seconds: a client's own deadline on a call reflexer stalls
+
+
+def on_httpx(lib, key, keyed, is_async, http2):
+    """An httpx line's call, as a client makes it (a coroutine when async), its client closed after it: with a Bedrock API
+    key, or on anthropic's Bedrock client signed with a session token; its own HTTP client on HTTP/2 when asked, LiteLLM's
+    by LiteLLM's own setting."""
+    import anthropic, httpx, litellm, openai
+    import reflexer.anthropic, reflexer.gemini, reflexer.openai
+    message, prefix = [{"role": "user", "content": bedrock.TEXT}], "Async" if is_async else ""
+    if lib == "litellm":
+        os.environ["LITELLM_HTTP2"] = str(http2)
+        handler = (reflexer.litellm.async_client if is_async else reflexer.litellm.client)(key)
+        given = dict(model=f"bedrock/converse/{bedrock.MODEL}", messages=message, max_tokens=8, aws_region_name=bedrock.REGION,
+                     api_key=bedrock.BEARER, num_retries=0, timeout=LONG, client=handler)
+        return closing(lambda: (litellm.acompletion if is_async else litellm.completion)(**given), handler.close, is_async)
+    if lib == "gemini":
+        own = {f"httpx{'_async' if is_async else ''}_client": getattr(httpx, f"{prefix}Client")(http2=True)} if http2 else {}
+        client = reflexer.gemini.Client(api_key="made-up", reflexer_key=key, http_options=own)
+        return closing(lambda: (client.aio if is_async else client).models.generate_content(model="made-up", contents=bedrock.TEXT),
+                       client.aio.aclose if is_async else client.close, is_async)
+    sdk = openai if lib == "openai-compat" else anthropic
+    own = {"http_client": getattr(sdk, f"Default{prefix}HttpxClient")(http2=True)} if http2 else {}
+    if lib.endswith("-compat"):
+        made = {"base_url": f"https://{bedrock.RUNTIME}/{'openai/v1' if sdk is openai else 'anthropic'}", "api_key": bedrock.BEARER}
+        client = getattr(reflexer.openai if sdk is openai else reflexer.anthropic, f"{prefix}{'OpenAI' if sdk is openai else 'Anthropic'}")
+    else:
+        made = {"aws_region": bedrock.REGION} | ({"api_key": bedrock.BEARER} if keyed else {
+            "aws_access_key": bedrock.ACCESS_KEY, "aws_secret_key": bedrock.SECRET, "aws_session_token": TOKEN})
+        client = getattr(reflexer.anthropic_bedrock, f"{prefix}AnthropicBedrock{'Mantle' if lib == 'anthropic-mantle' else ''}")
+    client = client(**made, **own, max_retries=0, reflexer_key=key)
+    if sdk is openai:
+        return closing(lambda: client.chat.completions.create(model=bedrock.MODEL, messages=message), client.close, is_async)
+    return closing(lambda: client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=message), client.close, is_async)
+
+
+def closing(call, close, is_async):
+    """`call`, then `close` (a coroutine function when async, run in the call's own event loop), whatever the call raised:
+    the scenes' clients left open would hold the process's descriptors."""
+    import contextlib
+
+    def ran():
+        try:
+            return call()
+        finally:
+            with contextlib.suppress(Exception):
+                close()
+
+    async def aran():
+        try:
+            return await call()
+        finally:
+            with contextlib.suppress(Exception):
+                await close()
+    return aran if is_async else ran
+
+
+def at_our_headers(sync, carried, asynced=None):
+    """httpcore's network streams patched, httpcore's and httpcore2's, sync and async: as one writes reflexer's leg's request
+    headers, HTTP/1.1's or HTTP/2's (`_send_request_headers` below it, for reflexer's host), `sync()` runs on a sync
+    stream, and on an async one `asynced()` is awaited (by default, the call waits past its client's deadline). Their
+    headers' text kept in `carried`."""
+    import contextlib, httpcore, httpcore2
+
+    def ours():
+        frame = sys._getframe(2)
+        while frame is not None and frame.f_code.co_name != "_send_request_headers":
+            frame = frame.f_back
+        request = frame and frame.f_locals.get("request")
+        if request is not None and request.url.host.decode() in harness.REFLEXER_NAMES:
+            carried.append(repr(request.headers))
+            return True
+        return False
+
+    def write(real):
+        return lambda stream, *args, **kwargs: (ours() and sync()) or real(stream, *args, **kwargs)
+
+    def awrite(real):
+        async def written(stream, *args, **kwargs):
+            if ours():
+                await (asynced or hold)()
+            return await real(stream, *args, **kwargs)
+        return written
+    patched = contextlib.ExitStack()
+    for core in (httpcore, httpcore2):
+        patched.enter_context(mock.patch.object(core._backends.sync.SyncStream, "write", write(core._backends.sync.SyncStream.write)))
+        patched.enter_context(mock.patch.object(core._backends.anyio.AnyIOStream, "write", awrite(core._backends.anyio.AnyIOStream.write)))
+    return patched
+
+
+def stop():
+    raise Stop()
+
+
+async def hold():
+    await asyncio.sleep(LONG)
+
+
+async def cancel():
+    """The client cancels its call (`task.cancel()`) here."""
+    asyncio.current_task().cancel()
+    await hold()
+
+
+def fail():
+    raise OSError("made up")
+
+
+async def afail():
+    fail()
+
+
+def deadline_of(call):
+    """The error the client's own deadline (`asyncio.wait_for`) raises on its call."""
+    async def called():
+        await asyncio.wait_for(call(), DEADLINE)
+    try:
+        asyncio.run(called())
+    except asyncio.TimeoutError as error:
+        return error
+
+
+def stopped_at_our_headers(made, call, carried):
+    """A scene, sync: a `BaseException` raised as reflexer's leg writes its request headers, as gevent's `Timeout` or a ^C is."""
+    with at_our_headers(stop, carried):
+        try:
+            call()
+        except Stop as error:
+            return error
+
+
+def cancelled_of(call):
+    """The error the client gets cancelling its call (`asyncio.run` raising the cancel)."""
+    try:
+        asyncio.run(call())
+    except asyncio.CancelledError as error:
+        return error
+
+
+def cancelled_at_our_headers(made, call, carried):
+    """A scene, async: the client cancels its call as reflexer's leg writes its request headers."""
+    with at_our_headers(None, carried, cancel):
+        return cancelled_of(call)
+
+
+def stopped_counting_a_failure(made, call, carried):
+    """A scene, sync: reflexer's leg fails at its header write, and a `BaseException` lands as the SDK counts that failure
+    (in its log's handler, say)."""
+    with at_our_headers(fail, carried), mock.patch.object(reflexer.Reflexer, "failed", lambda *_: stop()):
+        try:
+            call()
+        except Stop as error:
+            return error
+
+
+def cancelled_handling_a_failure(made, call, carried):
+    """A scene, async: reflexer's leg fails at its header write, and the client cancels its call while a library below the
+    leg handles that failure, as LiteLLM's aiohttp transport does retrying a session found closed."""
+    import contextlib, httpcore, httpcore2
+
+    def handling(real):
+        async def handled(pool, *args, **kwargs):
+            try:
+                return await real(pool, *args, **kwargs)
+            except OSError:
+                await cancel()
+        return handled
+    with at_our_headers(None, carried, afail), contextlib.ExitStack() as patched:
+        for core in (httpcore, httpcore2):
+            patched.enter_context(mock.patch.object(core.AsyncConnectionPool, "handle_async_request",
+                                                    handling(core.AsyncConnectionPool.handle_async_request)))
+        return cancelled_of(call)
+
+
+def deadline_while_stalled(made, call, carried):
+    """A scene, async: the client's own deadline cancels its call while reflexer stalls."""
+    made.reflexer.set("stall")
+    return deadline_of(call)
+
+
+HTTPX_ERRORS = {  # scene: (the call, raising to the client; whether its client is async, and whether it runs on HTTP/2 too)
+    "not an Exception, at the header write": (stopped_at_our_headers, False, True),
+    "the client's cancel, at the header write": (cancelled_at_our_headers, True, True),
+    "the client's deadline, reflexer stalled": (deadline_while_stalled, True, False),  # the stand-ins speak HTTP/1.1 only
+    "not an Exception, as the leg's failure is counted": (stopped_counting_a_failure, False, True),
+    "the client's cancel, as a library below handles the leg's failure": (cancelled_handling_a_failure, True, True),
+}
+
+
+def httpx_scenes():
+    """(lib, scene, keyed, is_async, http2): each httpx line in each scene, and a signed call where `SIGNED_ERRORS` has one."""
+    for scene, (made_by, is_async, on_http2) in HTTPX_ERRORS.items():
+        for lib in HTTPX:
+            for http2 in (False, True) if on_http2 else (False,):
+                if lib == "litellm" and is_async and made_by is not deadline_while_stalled and not http2:
+                    continue  # by aiohttp on HTTP/1.1, whose writes these scenes do not reach: its scene, reflexer stalled
+                for keyed in (True, False) if lib in SIGNED_ERRORS else (True,):
+                    yield lib, scene, keyed, is_async, http2
+
+
 def errors_in_clear():
     """{(lib, scene, keyed): the frames' locals on the error the client got showing the key, or on a signed call the
     access key's id (on its signature's header) or the session token past the client's own request} (empty: none),
-    through the Bedrock lines and the shipped lines at Bedrock's routes."""
+    through the Bedrock lines and the shipped lines at Bedrock's routes, and the httpx lines each sync and async and on
+    HTTP/1.1 and HTTP/2 (Gemini's at its own route)."""
     found = {}
     for scene, (made_by, libs) in ERRORS.items():
         for lib, keyed in [(lib, True) for lib in libs] + [(lib, False) for lib in libs if lib in SIGNED_ERRORS and scene != "cut"]:
@@ -504,10 +722,27 @@ def errors_in_clear():
             own = []
             error = made_by(made, calls, scene_client(calls, keyed, own))
             calls.close()
-            shown = [] if keyed else [*in_clear(error, bedrock.ACCESS_KEY, own), *in_clear(error, TOKEN, own),
-                                      *([] if token_carried(made, own) else ["no session token on the call"])]
-            found[(lib, scene, keyed)] = sorted({*in_clear(error, harness.make_key()), *shown}) if error is not None else ["no error raised"]
+            found[(lib, scene, keyed)] = shown(error, made, keyed, own, own)
+    for lib, scene, keyed, is_async, http2 in httpx_scenes():
+        made, _ = world(lib if lib in bedrock.LIBS else "openai-compat")  # Gemini's stand-ins: any line's
+        if http2:
+            made.reflexer.context.set_alpn_protocols(["h2", "http/1.1"])  # the world's stand-ins, reflexer's among them, take HTTP/2
+        carried, made_by = [], HTTPX_ERRORS[scene][0]
+        error = made_by(made, on_httpx(lib, made.key, keyed, is_async, http2), carried)
+        landed = made.reflexer.seen if made_by is deadline_while_stalled else carried  # the scene ran where it says
+        found[(lib, f"{scene}{', HTTP/2' if http2 else ''}{', async' if is_async else ''}", keyed)] = \
+            shown(error, made, keyed, (), carried) + ([] if landed else ["the scene did not land on reflexer's leg"])
     return found
+
+
+def shown(error, made, keyed, own, carried):
+    """What the frames' locals on `error` show (`errors_in_clear`); `carried`, what of the call the line sent, beside
+    what reached the stand-ins, to check a signed call carried its session token."""
+    if error is None:
+        return ["no error raised"]
+    signed = [] if keyed else [*in_clear(error, bedrock.ACCESS_KEY, own), *in_clear(error, TOKEN, own),
+                               *([] if token_carried(made, carried) else ["no session token on the call"])]
+    return sorted({*in_clear(error, harness.make_key()), *signed})
 
 
 def what_the_client_is_handed():
@@ -928,6 +1163,20 @@ class Broken(Case):
             outcome = calls.call(client)
         calls.close()
         self.assertEqual((outcome.text, bool(made.provider.seen)), (harness.STRAIGHT_TEXT, True))
+
+    def test_reflexers_leg_raising_a_cancel_on_with_the_frames_below_turns_it_red(self):
+        # each leg raises a cancel or a ^C on as it came: the frames below it, and the errors it came while handling
+        as_it_came = lambda stopped: stopped  # noqa: E731
+        with mock.patch.object(reflexer.transport, "alone", as_it_came), mock.patch.object(reflexer.boto3, "alone", as_it_came), \
+             mock.patch.object(reflexer.aiobotocore, "alone", as_it_came):
+            found = errors_in_clear()
+        httpx = [scene for scene in found if scene[0] in HTTPX and scene[1].split(", HTTP/2")[0].split(", async")[0] in HTTPX_ERRORS]
+        self.assertTrue(httpx)
+        # reflexer stalled, httpcore's frames no longer hold the headers it sent: only aiohttp's (LiteLLM's async) go red
+        self.assertEqual([scene for scene in httpx if not found[scene] and "stalled" not in scene[1]], [])
+        for scene in [("litellm", "the client's deadline, reflexer stalled, async", True), ("boto3", "not an Exception, in the leg", True),
+                      *[(lib, "not an Exception, as the leg's failure is counted", keyed) for lib in ("boto3", "aiobotocore") for keyed in (True, False)]]:
+            self.assertTrue(found[scene], scene)
 
     def test_a_key_in_a_frame_of_the_lines_on_an_error_turns_it_red(self):
         # a frame of the line's own file holding the key as a replay raises through it

@@ -1,30 +1,33 @@
 # reflexer
 
-Put reflexer in front of your LLM calls by changing the line that makes your client, and its import:
+Put reflexer in front of your LLM calls, from the provider SDK you already use: change one import and one line.
 
 <!-- example: served python -->
 ```diff
-  import openai
-+ import os, reflexer.openai
-- client = openai.OpenAI()
-+ client = reflexer.openai.OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
-  answer = client.chat.completions.create(model="your-model", messages=[{"role": "user", "content": "Hi"}])
-  print(answer.choices[0].message.content)
+  import os
+- from openai import OpenAI
++ from reflexer.openai import OpenAI
+
+- client = OpenAI()
++ client = OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
+  reply = client.chat.completions.create(model="frontier-x", messages=[{"role": "user", "content": "Hi"}])
+  print(reply.choices[0].message.content)
 ```
 
-<!-- example: served js -->
-```diff
-- import OpenAI from "openai";
-+ import { OpenAI } from "@reflexer-ai/sdk/openai";
-- const client = new OpenAI();
-+ const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY });
-  const answer = await client.chat.completions.create({ model: "your-model", messages: [{ role: "user", content: "Hi" }] });
-  console.log(answer.choices[0].message.content);
+```text
+Hello! How can I help you today?
 ```
 
-- Your code reads the same answers: your provider's format, unchanged.
-- If reflexer does not answer a call, or cannot be reached, the call goes to your provider as before.
-- No dependencies: it plugs into the provider SDK you already have. Its security promises: [SECURITY.md](SECURITY.md).
+The reply is OpenAI's format, as before. Remove the line and your code is as it was.
+
+What you get:
+
+- Your provider's answers, types and errors, unchanged.
+- A call reflexer does not answer, or cannot be reached for, goes to your provider.
+- No dependencies: the SDK plugs into the provider SDK you have. [Security](SECURITY.md).
+- Every example in these docs runs in the tests.
+
+Python 3.10+ · Node 20.3+
 
 ## Install
 
@@ -41,12 +44,20 @@ cd reflexer-sdk/typescript && npm ci && npm pack  # makes reflexer-ai-sdk-VERSIO
 npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz  # in your project
 ```
 
-Then set `REFLEXER_KEY` to the key you got at onboarding, and run your changed code. To check that reflexer answered: `answer.model` ends in `-reflexer`.
+Then set `REFLEXER_KEY` to the key you got at onboarding.
 
-## Your library
+## Pick your library
 
-- Python: [OpenAI and Azure](docs/python.md#openai), [Anthropic](docs/python.md#anthropic), [Gemini](docs/python.md#gemini), [LangChain](docs/python.md#langchain), [Pydantic AI](docs/python.md#pydantic-ai), [Amazon Bedrock](docs/python.md#amazon-bedrock) (boto3, aiobotocore, LangChain, Pydantic AI, Strands, Anthropic's Bedrock clients, LiteLLM).
-- TypeScript: [OpenAI and Azure](docs/typescript.md#openai), [Anthropic](docs/typescript.md#anthropic), [Gemini](docs/typescript.md#gemini), [the AI SDK](docs/typescript.md#the-ai-sdk), [LangChain.js](docs/typescript.md#langchainjs), [Amazon Bedrock](docs/typescript.md#amazon-bedrock) (the AWS SDK, LangChain.js, AnthropicBedrock, the AI SDK).
-- Don't see yours? If it takes your provider SDK's client, an HTTP client or a `fetch`: [Python](docs/python.md#keeping-your-librarys-own-class), [TypeScript](docs/typescript.md#keeping-your-librarys-own-class).
+| Library | Python | TypeScript |
+|---|---|---|
+| [OpenAI](docs/openai.md), Azure OpenAI | `openai` | `openai` |
+| [Anthropic](docs/anthropic.md) | `anthropic` | `@anthropic-ai/sdk` |
+| [Gemini](docs/gemini.md) | `google-genai` | `@google/genai` |
+| [Amazon Bedrock](docs/bedrock.md) | boto3, aiobotocore, langchain-aws, Pydantic AI, Strands, Anthropic's Bedrock clients, LiteLLM | the AWS SDK, LangChain.js, AnthropicBedrock, the AI SDK |
+| [LangChain](docs/langchain.md) | `langchain-openai`, `langchain-google-genai` | `@langchain/openai` |
+| [Pydantic AI](docs/pydantic-ai.md) | `pydantic-ai` | |
+| [The AI SDK](docs/ai-sdk.md) | | `ai` |
 
-Each page also covers skipping reflexer for one call, sending it a share of the calls, and who answered. What happens when reflexer is down or slow: [What your code sees](docs/behaviour.md). Every limit: [Known limits](SECURITY.md#known-limits). Every example here runs in the tests: [Contributing](CONTRIBUTING.md).
+Don't see yours? If it takes your provider SDK's client, an HTTP client or a `fetch`: [another library](docs/other-libraries.md).
+
+Then: [When reflexer fails](docs/when-reflexer-fails.md) · [Advanced](docs/advanced.md) (skip one call, sampling, timeouts) · [Reference](docs/reference.md) · [Known limits](SECURITY.md#known-limits) · [Contributing](CONTRIBUTING.md)

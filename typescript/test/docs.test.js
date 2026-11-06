@@ -1,7 +1,8 @@
 // The documentation's `js` examples, each run as written, offline: every `fetch` and AWS JS's Node handlers answer as
-// reflexer and the providers would, with made-up keys in the environment. Each block's comment says what it must show,
-// as `tests/acceptance/test_docs.py` reads it: served or straight, and `bedrock` to run it with a Bedrock API key and
-// signed. A share of calls (`sample`) is drawn at the middle of its range, as there.
+// reflexer and the providers would, both with the same made-up reply, and with made-up keys in the environment. Each
+// block's comment says what it must show, and a ```text block after it is its output, as `tests/acceptance/test_docs.py`
+// reads them: served, straight or raises, and `bedrock` to run it with a Bedrock API key and signed. A share of calls
+// (`sample`) is drawn at the middle of its range, as there.
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -16,8 +17,8 @@ import * as check from "./checks.js";
 const { key } = await check.load();
 const ROOT = join(check.PACKAGE, "..");
 const DOCS = [join(ROOT, "README.md"), ...(await readdir(join(ROOT, "docs"), { recursive: true })).filter((name) => name.endsWith(".md")).map((name) => join(ROOT, "docs", name))];
-const BLOCK = /(?:<!-- example: ([a-z ]+) -->\n)?```(js|diff)\n([\s\S]*?)^```/gm; // a diff: its comment names its language
-const TEXT = { served: "served by reflexer", straight: "from the provider" };
+const BLOCK = /(?:<!-- example: ([a-z ]+) -->\n)?```(js|diff)\n([\s\S]*?)^```\n(?:\n```text\n([\s\S]*?)^```\n)?/gm; // a diff: its comment names its language
+const REPLY = "Hello! How can I help you today?"; // made up: reflexer's and the providers' answer, in the docs' outputs
 const WAYS = { key: "Bearer", signed: "AWS4-HMAC-SHA256" }; // Bedrock's, by the scheme its calls carry
 const ENVIRONMENT = {
   REFLEXER_KEY: key, OPENAI_API_KEY: "sk-made-up", ANTHROPIC_API_KEY: "sk-ant-made-up", GOOGLE_API_KEY: "ai-made-up",
@@ -31,7 +32,7 @@ const LIMIT = 30_000; // ms a block may take: one that hangs fails
 
 /** A provider's answer to a call, in its format, by its path: [content type, body]. @param {string} path @param {string} text */
 function answer(path, text, served = false) {
-  const model = served ? "your-model-reflexer" : "your-model";
+  const model = served ? "frontier-x-reflexer" : "frontier-x";
   const usage = { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4, input_tokens: 3, output_tokens: 1, ...(served ? { cost: 1.2e-05 } : {}) };
   if (path.endsWith("/chat/completions")) {
     return { id: "made-up", object: "chat.completion", created: 1, model, usage,
@@ -60,10 +61,10 @@ const world = { /** @type {{ url: URL, headers: Headers, body: string, message: 
 /** @param {URL} url @param {Headers} headers @param {any} sent @returns {{ status: number, headers: Record<string, string>, body: string }} */
 function far(url, headers, sent) {
   const ours = url.host === check.REFLEXER;
-  const body = answer(url.pathname, ours ? TEXT.served : TEXT.straight, ours);
+  const body = answer(url.pathname, REPLY, ours);
   const text = sent == null || typeof sent === "string" ? sent ?? "" : ArrayBuffer.isView(sent) ? new TextDecoder().decode(sent) : `(a body not read: ${sent})`;
+  if (!ours && !/(^|\.)(openai\.com|anthropic\.com|googleapis\.com|azure\.com|amazonaws\.com)$/.test(url.hostname)) throw new TypeError(`offline: ${url.host}`); // reaches no one
   world.seen.push({ url, headers, body: text, message: Boolean(body) });
-  if (!ours && !/(^|\.)(openai\.com|anthropic\.com|googleapis\.com|azure\.com|amazonaws\.com)$/.test(url.hostname)) throw new TypeError(`offline: ${url.host}`);
   if (!body) return { status: 404, headers: {}, body: "" };
   const reflexers = ours ? { "reflexer-status-origin": "reflexer", "reflexer-answered-by": "reflexer", "reflexer-cost": "12000" } : {};
   return { status: 200, headers: { "content-type": "application/json", ...reflexers }, body: JSON.stringify(body) };
@@ -101,7 +102,7 @@ async function tooNew(code) {
   return false;
 }
 
-/** The blocks of the docs: [where, marker words, code]. */
+/** The blocks of the docs: [where, marker words, code, output or undefined]. */
 async function blocks() {
   const found = [];
   for (const path of DOCS) {
@@ -110,7 +111,7 @@ async function blocks() {
       const words = (match[1] ?? "").split(" ");
       if (match[2] === "diff" && !words.includes("js")) continue;
       const code = match[2] === "diff" ? match[3].split("\n").filter((line) => /^[+ ]|^$/.test(line)).map((line) => line.slice(2)).join("\n") : match[3];
-      found.push([`${path.slice(ROOT.length + 1)}:${text.slice(0, match.index).split("\n").length}`, words, code]);
+      found.push([`${path.slice(ROOT.length + 1)}:${text.slice(0, match.index).split("\n").length}`, words, code, match[4]]);
     }
   }
   return found;
@@ -136,26 +137,41 @@ async function run(t, code, way) {
     printed.push(format(...values));
     if (values.some((value) => value == null || Number.isNaN(value))) printed.push("(a value printed is missing)");
   });
-  t.mock.method(console, "warn", () => {});
+  t.mock.method(console, "warn", (/** @type {any[]} */ ...values) => printed.push(format(...values))); // as a terminal shows it
   t.mock.method(Math, "random", () => 0.5);
   for (const name of Object.keys(process.env).filter((name) => AMBIENT.test(name))) delete process.env[name];
   Object.assign(process.env, ENVIRONMENT, way === "key" ? { AWS_BEARER_TOKEN_BEDROCK: BEARER } : {});
   await writeFile(join(folder, "example.mjs"), code);
-  await import(pathToFileURL(join(folder, "example.mjs")).href);
-  return { printed: printed.join("\n"), seen: world.seen };
+  let raised;
+  await import(pathToFileURL(join(folder, "example.mjs")).href).catch((/** @type {any} */ error) => { raised = error; });
+  return { printed: printed.join("\n"), seen: world.seen, raised };
 }
 
-/** Whether what a block printed, and what reached where, is what its comment says. @param {any} ran @param {string} outcome @param {string | null} way */
-function judge({ printed, seen }, outcome, way) {
-  assert.ok(!printed.includes("(a value printed is missing)"), `a value printed is missing: ${printed}`);
-  const answers = outcome === "served" ? [TEXT.served] : [TEXT.straight];
-  const given = Object.values(TEXT).filter((text) => printed.includes(text));
-  assert.ok(given.length && given.every((text) => answers.includes(text)), `each answer printed must be ${outcome}: ${printed}`);
-  const count = given.reduce((sum, text) => sum + printed.split(text).length - 1, 0);
+/**
+ * Whether what a block printed, and what reached where, is what its comment says, and its output the one shown.
+ * @param {any} ran @param {string} outcome @param {string | null} way @param {string} [output]
+ */
+function judge({ printed, seen, raised }, outcome, way, output) {
   const calls = seen.filter((/** @type {any} */ call) => call.message);
-  assert.ok(count >= calls.length, `an answer printed for each call: ${printed}`);
+  if (outcome === "raises") {
+    assert.ok(raised, "the block did not raise");
+    assert.deepEqual(calls.map(({ url }) => url.host), [], "a call was made");
+    if (output !== undefined) assert.equal(`${raised.name}: ${raised.message}`, output.trim().split("\n").at(-1), "the error is not as shown");
+    return;
+  }
+  if (raised) throw raised;
+  if (output !== undefined) assert.equal(printed.trim(), output.trim(), "the output is not as shown");
+  assert.ok(!printed.includes("(a value printed is missing)"), `a value printed is missing: ${printed}`);
+  if (output === undefined) assert.ok(printed.split(REPLY).length - 1 >= calls.length, `a reply printed for each call: ${printed}`); // an output shown pins it
   const reached = calls.filter(({ url }) => url.host === check.REFLEXER);
-  if (outcome === "straight") assert.deepEqual(reached.map(({ url }) => url.pathname), [], "reflexer got the call");
+  const provided = calls.filter(({ url }) => url.host !== check.REFLEXER);
+  if (outcome === "served") {
+    assert.deepEqual(provided.map(({ url }) => url.host), [], "a call reached the provider");
+    assert.ok(reached.length, "reflexer got no call");
+  } else {
+    assert.deepEqual(reached.map(({ url }) => url.pathname), [], "reflexer got the call");
+    assert.ok(provided.length, "the provider got no call");
+  }
   if (way) {
     const bedrock = calls.filter(({ url }) => url.pathname.startsWith("/bedrock/") || url.hostname.endsWith("amazonaws.com"));
     const schemes = [...new Set(bedrock.map(({ headers }) => (headers.get("authorization") ?? "").split(" ")[0]))];
@@ -168,11 +184,11 @@ function judge({ printed, seen }, outcome, way) {
 describe("The docs' examples", async () => {
   const found = await blocks();
   test("there are some", () => assert.ok(found.length));
-  for (const [where, words, code] of found) {
+  for (const [where, words, code, output] of found) {
     for (const way of words.includes("bedrock") ? Object.keys(WAYS) : [null]) {
       test(`${where}${way ? ` (Bedrock, ${way})` : ""}`, { skip: await tooNew(code), timeout: LIMIT }, async (t) => {
-        assert.ok(["served", "straight"].includes(words[0]) && words.slice(1).every((word) => ["bedrock", "js"].includes(word)), "no <!-- example: ... --> it knows");
-        judge(await run(t, code, way), words[0], way);
+        assert.ok(["served", "straight", "raises"].includes(words[0]) && words.slice(1).every((word) => ["bedrock", "js"].includes(word)), "no <!-- example: ... --> it knows");
+        judge(await run(t, code, way), words[0], way, output);
       });
     }
   }
@@ -187,12 +203,11 @@ describe("A planted fault turns it red", () => {
   const aws = `import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import * as bedrock from "@reflexer-ai/sdk/bedrock";
 const client = bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1" }), process.env.REFLEXER_KEY);`;
-  /** name: [outcome, code, Bedrock's way, the check that must fail] */
+  /** name: [outcome, code, Bedrock's way, the check that must fail, the output shown] */
   const PLANTED = {
-    "a stock client, said to be served": ["served", `${stock}\nconsole.log(${text});`, null, /must be served/],
-    "an answer not printed": ["served", `${ours}\nawait ${call};\nconsole.log(${text});`, null, /an answer printed for each call/],
-    "a call to reflexer, said to go straight": ["straight", `${ours}\nconsole.log(${text}.replace("served by reflexer", "from the provider"));`, null,
-      /reflexer got the call/],
+    "a stock client, said to be served": ["served", `${stock}\nconsole.log(${text});`, null, /a call reached the provider/],
+    "an answer not printed": ["served", `${ours}\nawait ${call};\nconsole.log(${text});`, null, /a reply printed for each call/],
+    "a call to reflexer, said to go straight": ["straight", `${ours}\nconsole.log(${text});`, null, /reflexer got the call/],
     "the reflexer key sent to a provider": ["straight", `${stock}\nconsole.log((await client.withOptions({ defaultHeaders: { "x-made-up": process.env.REFLEXER_KEY } }).chat.completions.create({ model: "m", messages: [] })).choices[0].message.content);`,
       null, /the reflexer key reached a provider/],
     "a Bedrock key where a signed call is said": ["served", `process.env.AWS_BEARER_TOKEN_BEDROCK = "${BEARER}";\n${aws}\n${converse}\nconsole.log(answer.output.message.content[0].text);`,
@@ -201,9 +216,14 @@ const client = bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1" }), p
     "a value missing": ["served", `${ours}\nconsole.log(${text}, (await ${call}).usage.cots);`, null, /a value printed is missing/],
     "a socket off this machine": ["served", 'import net from "node:net";\nnet.connect({ host: "192.0.2.1", port: 80 });', null, /offline/],
     "a share that has no effect": ["straight", `import { OpenAI } from "@reflexer-ai/sdk/openai";\nconst client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY, sample: 0.9 });\nconsole.log(${text});`,
-      null, /must be straight/],
+      null, /reflexer got the call/],
+    "an output not as shown": ["served", `${ours}\nconsole.log(${text});\nconsole.log("more");`, null, /the output is not as shown/, `${REPLY}\n`],
+    "an error not as shown": ["raises", 'import { OpenAI } from "@reflexer-ai/sdk/openai";\nnew OpenAI({ reflexerKey: "rfx1_made-up" });', null,
+      /the error is not as shown/, "Error: a different message\n"],
+    "said to raise, but runs": ["raises", `${ours}\nconsole.log(${text});`, null, /did not raise/],
   };
-  for (const [name, [outcome, code, way, failure]] of Object.entries(PLANTED)) {
-    test(name, { timeout: LIMIT }, async (t) => assert.rejects(async () => judge(await run(t, String(code), /** @type {any} */ (way)), String(outcome), /** @type {any} */ (way)), failure));
+  for (const [name, [outcome, code, way, failure, output]] of Object.entries(PLANTED)) {
+    test(name, { timeout: LIMIT }, async (t) => assert.rejects(async () => judge(await run(t, String(code), /** @type {any} */ (way)), String(outcome),
+      /** @type {any} */ (way), /** @type {any} */ (output)), /** @type {any} */ (failure)));
   }
 });

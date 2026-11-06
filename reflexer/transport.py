@@ -122,6 +122,8 @@ class Through:
                 answer.close()
         except Exception as failure:
             self.reflexer.failed(failure)
+        except BaseException as stopped:  # a cancel, a ^C: raised on without the frames below, which hold our request in clear
+            raise stopped.with_traceback(None)
         return self.send(stays_straight(request))
 
     async def handle_async_request(self, request):
@@ -135,6 +137,8 @@ class Through:
                 await answer.aclose()
         except Exception as failure:
             self.reflexer.failed(failure)
+        except BaseException as stopped:
+            raise stopped.with_traceback(None)
         return await self.send(stays_straight(request))
 
     def close(self):

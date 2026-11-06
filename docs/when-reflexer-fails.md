@@ -62,7 +62,7 @@ Hello! How can I help you today?
 
 **Problem:** reflexer took longer than your timeout to answer.
 
-**What happens, Python:** your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
+**What happens, Python:** your client's own timeout covers the call to reflexer (google-genai sets none by default: set one in `http_options={"timeout": ...}`). When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
 
 **What happens, TypeScript:** the call to reflexer waits for its answer to start for `headersTimeout`, 300 seconds by default, then goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to your provider; if reflexer had already forwarded the call, your provider may run it, and bill it, twice. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
 

@@ -118,6 +118,7 @@ Hello! How can I help you today?
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
 - A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
 - `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class: `TypeError`.
+- TypeScript, Bedrock: `bedrock.wrap` or `requestHandler` on a handler already wrapped, or on the AWS SDK's fetch handler: `Error`, when wrapped.
 - Anything else your code sees is your provider SDK's own error, as before.
 
 ## What reflexer adds to a response

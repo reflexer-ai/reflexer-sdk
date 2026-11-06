@@ -124,6 +124,7 @@ frontier-x-reflexer
 - **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to your provider. A key revoked less than a day ago still sends calls to your provider, with a warning.
 - **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
 - **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to forward the call to your provider when it does not answer. The reflexer key goes to reflexer only.
+- **Gemini, no timeout by default:** google-genai sets none, so nothing of yours bounds the wait at reflexer: give `ChatGoogleGenerativeAI` a `timeout=`.
 - **Not covered:** `ChatAnthropic` (Python and LangChain.js) and `@langchain/google-genai`: [Known limits](limits.md).
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 

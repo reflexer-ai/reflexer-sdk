@@ -110,6 +110,6 @@ All of them: [Advanced](advanced.md).
 
 ## Supported versions
 
-`openai` 3 on Python 3.10+, `openai` 7 on Node 20.3+. Another major raises at import, before any call.
+`openai` 3 on Python 3.10+, `openai` 7 on Node 20.3+ (openai 7 itself asks for Node 22; the tests run on Node 20 too). Another major raises at import, before any call.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Advanced](advanced.md) · [Reference](reference.md)

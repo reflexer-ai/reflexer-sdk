@@ -2,7 +2,7 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, os, socket, sys, tempfile, shutil, types, unittest
+import asyncio, datetime, json, os, socket, sys, tempfile, shutil, time, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -15,7 +15,13 @@ import reflexer.aiobotocore, reflexer.anthropic_bedrock, reflexer.bedrock, refle
 import importlib.util  # noqa: E402
 LINES = tuple(lib for lib in bedrock.SIGNING  # Bedrock's own lines: each library that can carry a key and sign; pydantic-ai's
               if lib != "pydantic-ai" or importlib.util.find_spec("pydantic_ai"))  # group is its own, as for the shipped lines
+RUNTIME = tuple(lib for lib in LINES if lib != "anthropic-mantle")  # whose signed calls go to reflexer: the runtime's only
+SIGNS_ANEW = tuple(lib for lib in RUNTIME if lib != "litellm")  # whose line reaches the library's own signer for the fallback
+VOLATILE = {"authorization", "x-amz-date", "amz-sdk-invocation-id", "amz-sdk-request", "x-stainless-retry-count", "content-length",
+            "x-stainless-read-timeout", "x-stainless-raw-response"}  # what differs between two calls made alike; the last, anthropic's with any middleware
 SAVED = {}
+TOKEN = "made-up-session-token-of-the-suite"  # a session token's place, made up
+TIMEZONE = "America/Sao_Paulo"  # CI runs in UTC, where a signing time read as local time would pass unseen
 
 
 def setUpModule():
@@ -24,7 +30,10 @@ def setUpModule():
     SAVED["folder"], SAVED["certs"] = folder, certs.Certs(folder, harness.NAMES)
     for name in bedrock.AMBIENT:
         os.environ.pop(name, None)
-    os.environ.update(bedrock.ENVIRONMENT, SSL_CERT_FILE=SAVED["certs"].ca, AWS_CA_BUNDLE=SAVED["certs"].ca)
+    os.environ.update(bedrock.ENVIRONMENT, SSL_CERT_FILE=SAVED["certs"].ca, AWS_CA_BUNDLE=SAVED["certs"].ca, TZ=TIMEZONE)
+    if hasattr(time, "tzset"):
+        time.tzset()
+    SAVED["base"] = dict(os.environ)
     harness.resolver.install()
 
 
@@ -32,15 +41,23 @@ def tearDownModule():
     socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex = SAVED["socket"]
     os.environ.clear()
     os.environ.update(SAVED["env"])
+    if hasattr(time, "tzset"):
+        time.tzset()
     shutil.rmtree(SAVED["folder"], ignore_errors=True)
 
 
 def world(lib):
     """A world of stand-ins of its own, as each acceptance case's process has. LiteLLM keeps its HTTP clients across
-    calls, connected to the last world's stand-ins: dropped, as a process of its own would start with none."""
+    calls, connected to the last world's stand-ins: dropped, as a process of its own would start with none. The last
+    world's stand-ins are closed, as a case's process ends with them: a process holding every world's sockets passes
+    the descriptor numbers a stand-in's `select` takes."""
     import litellm
     litellm.in_memory_llm_clients_cache.flush_cache()
+    for standin in SAVED.pop("standins", ()):
+        standin._cut_connections()
+        standin._close()
     made = harness.World((SAVED["certs"].context(), SAVED["certs"].untrusted()))
+    SAVED["standins"] = [made.reflexer, made.provider, made.elsewhere, made.runner]
     test = harness.Test(lines, lib, made)
     import logging
     logging.getLogger().removeHandler(test.logs)
@@ -72,21 +89,212 @@ def holding(found, secret):
                          or secret.encode() in (arrival.body or b"")}) for lib, seen in found.items()}
 
 
-def signed_as_stock():
-    """{lib: whether a signed call reached Bedrock only, its signature held, and its headers as a stock client's}."""
+def signed_as_stock(scene=lambda w: w.reflexer.set("busy")):
+    """{lib: whether a signed call, reflexer giving no answer, went to reflexer first (the runtime's) or never (Mantle's),
+    and reached Bedrock taken, its signature holding, its headers and body as a stock client's but what differs between
+    any two calls}."""
     found = {}
     for lib in LINES:
         made, calls = world(lib)
         outcome = calls.call(calls.client(line=False, keyed=False))
         assert made.provider.seen, f"{lib}: {outcome} {outcome.error!r}"
         stock = made.provider.seen[-1]
-        calls.call(calls.client(keyed=False))
+        scene(made)
+        outcome = calls.call(calls.client(keyed=False))
         ours = made.provider.seen[-1]
         calls.close()
-        same = [name for name in ("content-type", "host", "accept") if stock.headers.get(name) != ours.headers.get(name)]
-        found[lib] = (not made.reflexer.seen and bedrock.signature_holds(ours) and ours.body == stock.body and not same
-                      and set(ours.headers) == set(stock.headers))
+        kept = [{name: value for name, value in each.headers.items() if name not in VOLATILE and name != "user-agent"} for each in (ours, stock)]
+        found[lib] = (outcome.text == harness.STRAIGHT_TEXT and bool(made.reflexer.seen) == (lib in RUNTIME)
+                      and bedrock.signature_holds(ours) and ours.body == stock.body and kept[0] == kept[1])
     return found
+
+
+def held_with_a_header_of_the_clients():
+    """{lib: whether a signed call whose client sets a header in a `before-sign` handler of its own (as botocore's docs
+    show) reached Bedrock taken, the header on it, reflexer busy}: the botocore family, whose fallback is signed anew."""
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        made, calls = world(lib)
+        client = calls.client(keyed=False)
+        client.meta.events.register("before-sign.bedrock-runtime.*", lambda request, **_: request.headers.__setitem__("X-Made-Up-Team", "made-up"))
+        made.reflexer.set("busy")
+        outcome = calls.call(client)
+        calls.close()
+        arrival = made.provider.seen[-1]
+        found[lib] = (outcome.text == harness.STRAIGHT_TEXT and bedrock.signature_holds(arrival)
+                      and arrival.headers.get("x-made-up-team") == "made-up")
+    return found
+
+
+def held_with_a_body_or_url_of_the_clients():
+    """{(lib, what): whether a signed call whose client changes its body or its URL in a `before-sign` handler of its
+    own reached Bedrock taken and changed once, as stock's, reflexer busy}: the botocore family, signing anew."""
+    def body(request, **_):
+        data = json.loads(request.data)
+        request.data = json.dumps(data | {"system": data.get("system", []) + [{"text": "made-up house rule"}]}).encode()
+
+    def url(request, **_):
+        request.url += ("&" if "?" in request.url else "?") + "made-up-tag=1"
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        for what, handler in (("body", body), ("url", url)):
+            made, calls = world(lib)
+            client = calls.client(keyed=False)
+            client.meta.events.register("before-sign.bedrock-runtime.*", handler)
+            made.reflexer.set("busy")
+            outcome = calls.call(client)
+            calls.close()
+            arrival = made.provider.seen[-1] if made.provider.seen else None
+            once = arrival is not None and (len(json.loads(arrival.body).get("system", [])) == 1 if what == "body"
+                                            else arrival.path.count("made-up-tag=1") == 1)
+            found[(lib, what)] = outcome.text == harness.STRAIGHT_TEXT and once and bedrock.signature_holds(arrival)
+    return found
+
+
+def signing_times(delay=1.1):
+    """{lib: (reflexer's x-amz-date, Bedrock's)}: a signed call whose leg to reflexer took `delay` seconds and no answer."""
+    found = {}
+    for lib in RUNTIME:
+        made, calls = world(lib)
+        made.reflexer.set("busy", delay=delay)
+        calls.call(calls.client(keyed=False))
+        calls.close()
+        found[lib] = (made.reflexer.seen[-1].headers.get("x-amz-date"), made.provider.seen[-1].headers.get("x-amz-date"))
+    return found
+
+
+def async_anthropic_signing_times(delay=1.1):
+    """AsyncAnthropicBedrock's signed call, reflexer busy after `delay` seconds: (reflexer's x-amz-date, Bedrock's, the text)."""
+    made, _ = world("anthropic-bedrock")
+    made.reflexer.set("busy", delay=delay)
+
+    async def call():
+        client = reflexer.anthropic_bedrock.AsyncAnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY,
+                                                                  aws_secret_key=bedrock.SECRET, max_retries=0, reflexer_key=made.key)
+        answer = await client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}])
+        await client.close()
+        return answer.content[0].text
+    text = asyncio.run(call())
+    return made.reflexer.seen[-1].headers.get("x-amz-date"), made.provider.seen[-1].headers.get("x-amz-date"), text
+
+
+def fallback_when_the_signer_fails():
+    """boto3's signed call, reflexer busy, the client's signer failing when asked to sign it anew: (what the client saw,
+    how many calls Bedrock got, whether the one it got carries the call's first signature)."""
+    made, calls = world("boto3")
+    client = calls.client(keyed=False)
+    made.reflexer.set("busy")
+    real, signed = client._request_signer.sign, []
+
+    def sign(operation, request, **kwargs):
+        if signed:
+            raise RuntimeError("made-up: the signer failed")
+        real(operation, request, **kwargs)
+        signed.append(request.headers.get("authorization"))
+    client._request_signer.sign = sign
+    outcome = calls.call(client)
+    return outcome.text, len(made.provider.seen), made.provider.seen[-1].headers.get("authorization") == signed[0]
+
+
+def anthropic_attempts_with_no_leg(headers=None):
+    """AnthropicBedrock's signed call sampled out of reflexer (share none), `headers` the call's own: (what the client
+    saw, how many attempts its HTTP client's hooks saw, whether Bedrock took its signature)."""
+    made, calls = world("anthropic-bedrock")
+    seen = []
+    client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY, aws_secret_key=bedrock.SECRET,
+                                                         max_retries=0, reflexer_key=made.key, sample=0.0,
+                                                         http_client=reflexer.anthropic_bedrock.anthropic.DefaultHttpxClient(event_hooks={"request": [seen.append]}))
+    try:
+        text = client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}], extra_headers=headers).content[0].text
+    except Exception as error:
+        text = type(error).__name__
+    arrival = made.provider.seen[-1] if made.provider.seen else None
+    return text, len(seen), arrival is not None and bedrock.signature_holds(arrival)
+
+
+def anthropic_error_after_a_leg():
+    """AnthropicBedrock's signed call, reflexer busy, Bedrock unreachable: where the reflexer key is held in the frames of
+    the error the client gets."""
+    made, _ = world("anthropic-bedrock")
+    made.reflexer.set("busy")
+    made.provider.set("dead")
+    client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY, aws_secret_key=bedrock.SECRET,
+                                                         max_retries=0, reflexer_key=made.key)
+    try:
+        client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}])
+    except Exception as error:
+        return in_clear(error, made.key)
+    return ["no error"]
+
+
+def anthropic_sampled_out(hook=None, provider="ok"):
+    """AnthropicBedrock's signed call, with a session token, sampled out of reflexer, `hook` the client's own httpx request
+    hook: (the headers of ours that reached Bedrock but its signature does not cover, whether Bedrock took it, where the
+    error the client got, if any, shows the access key's id or the session token in clear in the frames; the last
+    "no session token on the call" if none of its requests carried it)."""
+    made, _ = world("anthropic-bedrock")
+    made.provider.set(provider)
+    tokens = []
+    client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, aws_access_key=bedrock.ACCESS_KEY, aws_secret_key=bedrock.SECRET,
+                                                         aws_session_token=TOKEN, max_retries=0, reflexer_key=made.key, sample=0.0,
+                                                         http_client=reflexer.anthropic_bedrock.anthropic.DefaultHttpxClient(event_hooks={"request": [
+                                                             *([hook] if hook else []), lambda request: tokens.append(request.headers.get("x-amz-security-token"))]}))
+    shown = []
+    try:
+        client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=[{"role": "user", "content": "Hi"}],
+                               extra_headers={"Reflexer-Namespace": "made-up"})
+    except Exception as error:
+        shown = sorted({*in_clear(error, bedrock.ACCESS_KEY), *in_clear(error, TOKEN)})
+    shown += [] if TOKEN in tokens else ["no session token on the call"]
+    arrival = made.provider.seen[-1] if made.provider.seen else None
+    if arrival is None:
+        return None, False, shown
+    signed = arrival.headers.get("authorization", "").partition("SignedHeaders=")[2].split(",")[0].split(";")
+    return sorted(name for name in arrival.headers if name.startswith("reflexer-") and name not in signed), bedrock.signature_holds(arrival), shown
+
+
+def per_attempt_change():
+    """{lib: whether a signed call whose client's `before-sign` handler changes the body and the URL differently at each
+    signing (a count of its runs) reached Bedrock taken, with the body and URL its signature covers}, reflexer busy."""
+    found = {}
+    for lib in ("boto3", "aiobotocore"):
+        runs = []
+
+        def handler(request, **_):
+            runs.append(1)
+            request.data = json.dumps(json.loads(request.data) | {"system": [{"text": f"made-up run {len(runs)}"}]}).encode()
+            request.url = request.url.split("?")[0] + f"?made-up-run={len(runs)}"
+        made, calls = world(lib)
+        client = calls.client(keyed=False)
+        client.meta.events.register("before-sign.bedrock-runtime.*", handler)
+        made.reflexer.set("busy")
+        outcome = calls.call(client)
+        calls.close()
+        arrival = made.provider.seen[-1] if made.provider.seen else None
+        found[lib] = (outcome.text == harness.STRAIGHT_TEXT and arrival is not None and bedrock.signature_holds(arrival)
+                      and json.loads(arrival.body)["system"] == [{"text": f"made-up run {len(runs)}"}] and arrival.path.endswith(f"?made-up-run={len(runs)}"))
+    return found
+
+
+def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
+    """LiteLLM's signed call, reflexer stalled, the window shortened to `seconds` at Bedrock's stand-in and in the line:
+    (what the client saw, the seconds it took, whether Bedrock took it). `is_async`: by `acompletion` and its line."""
+    import time, litellm
+    made, calls = world("litellm")
+    made.provider.window = seconds
+    made.reflexer.set("stall")
+    with mock.patch.dict(reflexer.litellm.WINDOW, seconds=seconds, margin=margin):
+        began = time.monotonic()
+        if is_async:
+            given = calls.client(keyed=False, timeout=10 * seconds, line=False) | {"client": reflexer.litellm.async_client(made.key)}
+            try:
+                text = asyncio.run(litellm.acompletion(model=f"bedrock/converse/{bedrock.MODEL}", messages=[{"role": "user", "content": "Hi"}],
+                                                       max_tokens=8, **given)).choices[0].message.content
+            except Exception:
+                text = None
+        else:
+            text = calls.call(calls.client(keyed=False, timeout=10 * seconds)).text
+    return text, time.monotonic() - began, bool(made.provider.seen) and made.provider.seen[-1].headers.get("authorization", "")[:4] == "AWS4"
 
 
 def reached_bedrock_after(scene, extra=None):
@@ -131,6 +339,7 @@ def ours_on_signed_calls():
     found = {}
     for lib, how in [(lib, "call") for lib in LINES] + [("boto3", "after signing"), ("aiobotocore", "after signing")]:
         made, calls = world(lib)
+        SCENES["busy"](made)  # a signed call on Bedrock's runtime goes to reflexer first: here, its fallback
         client = calls.client(keyed=False)
         if how == "after signing":
             after_signing(client)
@@ -186,11 +395,21 @@ def cell_holds(cell):
         return False
 
 
-def in_clear(error, secret):
+def in_clear(error, secret, own=()):
     """The locals of every frame but the tests' own, the SDK's and its libraries', on an error's traceback and those it
     chains, that show `secret` as an error tracker capturing locals writes them: by their `repr`, a container's holding
     its items'. The line's own state stays reachable from them, as the client's HTTP client holds it; what such a tracker
-    ships is what is written."""
+    ships is what is written. `own`: the client's own requests, which show their signature as a stock client's frames
+    show them, so a local shows the secret only past them."""
+    def shows(value, within=()):
+        if any(value is each for each in own) or id(value) in within:  # a container holding itself: shown once
+            return False
+        if type(value) is dict:
+            return secret in repr(list(value)) or any(shows(each, (*within, id(value))) for each in value.values())
+        if type(value) in (list, tuple, set):
+            return any(shows(each, (*within, id(value))) for each in value)
+        return secret in repr(value)
+
     found, seen, pending = [], set(), [error]
     while pending:
         each = pending.pop()
@@ -202,7 +421,7 @@ def in_clear(error, secret):
         while step is not None:
             frame = step.tb_frame
             if not os.path.abspath(frame.f_code.co_filename).startswith(TESTS):
-                found += [f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if secret in repr(value)]
+                found += [f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}.{name}" for name, value in frame.f_locals.items() if shows(value)]
             step = step.tb_next
     return sorted(set(found))
 
@@ -212,28 +431,29 @@ class Stop(BaseException):
 
 
 def asked(arrange, op=None, extra=None):
-    """A scene: reflexer arranged, a call made (`op`, with its own fields), whose error the client gets."""
-    def scene(made, calls):
+    """A scene: reflexer arranged, a call made (`op`, with its own fields), whose error the client gets. `client()` makes
+    the client."""
+    def scene(made, calls, client):
         arrange(made)
         given = op if op in calls.lib.ops else ("messages" if "messages" in calls.lib.ops else calls.lib.ops[0])
-        return calls.call(calls.client(), given, extra=extra).error
+        return calls.call(client(), given, extra=extra).error
     return scene
 
 
-def deadline(made, calls):
+def deadline(made, calls, client):
     """A scene: the client's own deadline (`asyncio.wait_for`) cancels its call while reflexer stalls."""
     made.reflexer.set("stall")
-    client = calls.client()
+    client = client()
     try:
         calls.run(asyncio.wait_for(calls.lib.call(client, calls.lib.ops[0], None, None, None), 0.5))
     except asyncio.TimeoutError as error:
         return error
 
 
-def stopped(made, calls):
+def stopped(made, calls, client):
     """A scene: a `BaseException` raised in urllib3 as reflexer's leg is sent."""
     import urllib3.connectionpool
-    real, client = urllib3.connectionpool.HTTPConnectionPool._make_request, calls.client()
+    real, client = urllib3.connectionpool.HTTPConnectionPool._make_request, client()
 
     def stopping(pool, *args, **kwargs):
         if pool.host in harness.REFLEXER_NAMES:
@@ -253,18 +473,40 @@ ERRORS = {  # scene: (the call, raising to the client, the line having taken it;
     "the client's deadline, reflexer stalled": (deadline, ("aiobotocore",)),
     "not an Exception, in the leg": (stopped, ("boto3",)),
 }
+SIGNED_ERRORS = {"boto3", "aiobotocore", "anthropic-bedrock"}  # whose signed call also raises in a scene but "cut", which falls back
+
+
+def scene_client(calls, keyed, own):
+    """A scene's client: keyed, or signed with a session token; the botocore family's own requests and their headers kept
+    in `own`, as they reach its `before-send` handlers."""
+    def client():
+        made = calls.client(keyed=keyed, **({} if keyed else {"session_token": TOKEN}))
+        if calls.lib.botocore:
+            made.meta.events.register("before-send", lambda request, **_: own.extend((request, request.headers)))
+        return made
+    return client
+
+
+def token_carried(made, own):
+    """Whether a signed scene's call carried its session token: on the client's own request, or as reflexer or Bedrock got it."""
+    arrived = [arrival.headers.get("x-amz-security-token") for arrival in (*made.reflexer.seen, *made.provider.seen)]
+    return TOKEN in arrived or any(TOKEN in repr(each) for each in own)
 
 
 def errors_in_clear():
-    """{(lib, scene): the frames' locals showing the key on the error the client got} (empty: none), through the
-    Bedrock lines and the shipped lines at Bedrock's routes."""
+    """{(lib, scene, keyed): the frames' locals on the error the client got showing the key, or on a signed call the
+    access key's id (on its signature's header) or the session token past the client's own request} (empty: none),
+    through the Bedrock lines and the shipped lines at Bedrock's routes."""
     found = {}
     for scene, (made_by, libs) in ERRORS.items():
-        for lib in libs:
+        for lib, keyed in [(lib, True) for lib in libs] + [(lib, False) for lib in libs if lib in SIGNED_ERRORS and scene != "cut"]:
             made, calls = world(lib)
-            error = made_by(made, calls)
+            own = []
+            error = made_by(made, calls, scene_client(calls, keyed, own))
             calls.close()
-            found[(lib, scene)] = in_clear(error, harness.make_key()) if error is not None else ["no error raised"]
+            shown = [] if keyed else [*in_clear(error, bedrock.ACCESS_KEY, own), *in_clear(error, TOKEN, own),
+                                      *([] if token_carried(made, own) else ["no session token on the call"])]
+            found[(lib, scene, keyed)] = sorted({*in_clear(error, harness.make_key()), *shown}) if error is not None else ["no error raised"]
     return found
 
 
@@ -308,24 +550,82 @@ def straight_within(seconds):
     return found
 
 
-class Promises(unittest.TestCase):
+class Case(unittest.TestCase):
+    """Each test starts from the module's environment: a harness client sets a Bedrock API key's variable, which a client
+    made after it, in the same process, would take."""
+
+    def setUp(self):
+        os.environ.clear()
+        os.environ.update(SAVED["base"])
+
+
+class Promises(Case):
     def test_through_each_bedrock_line_the_key_reaches_only_reflexer(self):
         for lib, who in holding(arrivals(), harness.make_key()).items():
             with self.subTest(lib=lib):
                 self.assertEqual(who, ["reflexer"])
 
-    def test_a_bedrock_key_reaches_only_bedrock_or_reflexer_and_a_signature_only_bedrock(self):
+    def test_a_bedrock_key_or_signature_reaches_only_bedrock_or_reflexer_and_the_secret_no_one(self):
         keyed, signed = arrivals(), arrivals(keyed=False)
         for lib in LINES:
             with self.subTest(lib=lib):
                 self.assertEqual(holding(keyed, bedrock.BEARER)[lib], ["bedrock", "reflexer"])
-                self.assertEqual(holding(signed, "AWS4-HMAC-SHA256")[lib], ["bedrock"])
+                self.assertEqual(holding(signed, "AWS4-HMAC-SHA256")[lib], ["bedrock", "reflexer"] if lib in RUNTIME else ["bedrock"])
                 self.assertEqual(holding(signed, bedrock.BEARER)[lib] + holding(keyed, bedrock.SECRET)[lib] + holding(signed, bedrock.SECRET)[lib], [])
 
-    def test_a_signed_call_never_goes_to_reflexer_and_is_as_stock(self):
+    def test_a_signed_call_goes_to_reflexer_and_falls_back_as_stock(self):
         for lib, held in signed_as_stock().items():
             with self.subTest(lib=lib):
                 self.assertTrue(held)
+
+    def test_a_signed_calls_fallback_is_signed_after_reflexers_leg(self):
+        """The line reaches the library's own signer: the fallback's signing time is after the leg's, so a leg of any
+        length leaves it fresh. LiteLLM's reuses its signature: its leg is bounded by the window instead (below)."""
+        for lib, (at_reflexer, at_bedrock) in signing_times().items():
+            with self.subTest(lib=lib):
+                self.assertTrue(at_reflexer and at_bedrock)
+                self.assertEqual(at_bedrock > at_reflexer, lib in SIGNS_ANEW, (at_reflexer, at_bedrock))
+
+    def test_a_signed_calls_fallback_holds_with_a_before_sign_handler_of_the_clients(self):
+        self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": True, "aiobotocore": True})
+
+    def test_async_anthropic_a_signed_calls_fallback_is_signed_after_reflexers_leg(self):
+        at_reflexer, at_bedrock, text = async_anthropic_signing_times()
+        self.assertEqual(text, harness.STRAIGHT_TEXT)
+        self.assertGreater(at_bedrock, at_reflexer)
+
+    def test_a_signer_failing_anew_sends_the_call_as_first_signed(self):
+        self.assertEqual(fallback_when_the_signer_fails(), (harness.STRAIGHT_TEXT, 1, True))
+
+    def test_a_signed_calls_fallback_holds_with_a_body_or_url_handler_of_the_clients(self):
+        self.assertEqual([key for key, held in held_with_a_body_or_url_of_the_clients().items() if not held], [])
+
+    def test_anthropic_a_signed_call_never_sent_to_reflexer_is_attempted_once(self):
+        for headers in (None, {"Reflexer-Namespace": "made-up"}):  # one of ours under the signature: kept, as signed
+            with self.subTest(headers=headers):
+                self.assertEqual(anthropic_attempts_with_no_leg(headers), (harness.STRAIGHT_TEXT, 1, True))
+
+    def test_anthropic_an_error_after_reflexers_leg_holds_no_key_in_its_frames(self):
+        self.assertEqual(anthropic_error_after_a_leg(), [])
+
+    def test_anthropic_a_call_never_sent_to_reflexer_keeps_out_a_header_of_ours_its_signature_does_not_cover(self):
+        def hook(request):  # the client's own, after the SDK signed: uncovered
+            request.headers["Reflexer-Made-Up"] = "made-up"
+        uncovered, held, _ = anthropic_sampled_out(hook)
+        self.assertEqual((uncovered, held), ([], True))
+
+    def test_anthropic_an_error_after_a_call_never_sent_to_reflexer_shows_no_signature_in_the_sdks_frames(self):
+        self.assertEqual(anthropic_sampled_out(provider="dead")[2], [])
+
+    def test_a_fallback_signed_anew_carries_the_body_and_url_its_signature_covers(self):
+        self.assertEqual(per_attempt_change(), {"boto3": True, "aiobotocore": True})
+
+    def test_litellm_a_signed_calls_leg_ends_while_its_signature_holds(self):
+        for is_async in (False, True):
+            with self.subTest(is_async=is_async):
+                text, took, taken = litellm_leg(is_async=is_async)
+                self.assertEqual((text, taken), (harness.STRAIGHT_TEXT, True))
+                self.assertLess(took, 2.0)
 
     def test_through_each_bedrock_line_a_call_reflexer_does_not_take_still_reaches_bedrock(self):
         for scene in ("busy", "dead"):
@@ -352,9 +652,20 @@ class Promises(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertEqual(where, [])
 
-    def test_an_error_raised_to_the_client_shows_no_key_in_any_frame(self):
-        for (lib, scene), shown in errors_in_clear().items():
-            with self.subTest(lib=lib, scene=scene):
+    def test_the_frame_check_reads_a_local_holding_itself(self):
+        made = {}  # a frame of the line's file, as a library's frame may hold a dict that holds itself
+        exec(compile("def outer(fail, key):\n    looped = {}\n    looped['itself'] = looped\n    looped['held'] = key\n    fail()", reflexer.boto3.__file__, "exec"), made)
+
+        def fail():
+            raise RuntimeError("made up")
+        try:
+            made["outer"](fail, harness.make_key())
+        except RuntimeError as error:
+            self.assertEqual(in_clear(error, harness.make_key()), ["boto3.py:outer.key", "boto3.py:outer.looped"])
+
+    def test_an_error_raised_to_the_client_shows_no_key_signature_or_token_in_any_frame(self):
+        for (lib, scene, keyed), shown in errors_in_clear().items():
+            with self.subTest(lib=lib, scene=scene, keyed=keyed):
                 self.assertEqual(shown, [])
 
     def test_a_calls_own_read_timeout_holds_on_reflexers_leg(self):
@@ -425,7 +736,7 @@ class Promises(unittest.TestCase):
                 reflexer.litellm.asked(None, moved)
 
 
-class Broken(unittest.TestCase):
+class Broken(Case):
     """Each check above, red with one fault planted in the SDK."""
 
     def test_the_key_on_the_clients_own_request_turns_it_red(self):
@@ -457,18 +768,123 @@ class Broken(unittest.TestCase):
             with self.subTest(lib=lib):
                 self.assertIn("elsewhere", held[lib])
 
-    def test_a_signed_call_sent_to_reflexer_turns_it_red(self):
+    def test_a_signed_mantle_call_sent_to_reflexer_turns_it_red(self):
         with mock.patch.object(reflexer.bedrock, "keyed", lambda headers: True):
             signed = arrivals(keyed=False, scenes={"served": SCENES["served"]})
-            self.assertTrue(all("reflexer" in who for who in holding(signed, "AWS4-HMAC-SHA256").values()))
-            self.assertFalse(any(signed_as_stock().values()))
+            self.assertIn("reflexer", holding(signed, "AWS4-HMAC-SHA256")["anthropic-mantle"])
+            self.assertFalse(signed_as_stock()["anthropic-mantle"])
+
+    def test_a_signed_call_not_sent_to_reflexer_turns_it_red(self):
+        with mock.patch.object(reflexer.bedrock, "signed", lambda headers: False):
+            self.assertEqual([lib for lib in RUNTIME if "reflexer" in holding(arrivals(keyed=False), "AWS4-HMAC-SHA256")[lib]], [])
+            self.assertFalse(any(signed_as_stock()[lib] for lib in RUNTIME))
+
+    def test_the_secret_sent_turns_it_red(self):
+        real = reflexer.bedrock.lower
+        with mock.patch.object(reflexer.bedrock, "lower", lambda headers: real(headers) | {"x-made-up": bedrock.SECRET}):
+            self.assertTrue(all(holding(arrivals(keyed=False), bedrock.SECRET)[lib] for lib in ("boto3", "aiobotocore")))
+
+    def test_a_fallback_not_signed_anew_turns_it_red(self):
+        with mock.patch.object(reflexer.bedrock, "signing_anew", lambda request, unprepared: None), \
+                mock.patch.object(reflexer.boto3, "signing_anew", lambda request, unprepared: None), \
+                mock.patch.object(reflexer.aiobotocore, "signing_anew", lambda request, unprepared: None), \
+                mock.patch.object(reflexer.anthropic_bedrock, "withheld", lambda request: False):
+            found = signing_times()
+        self.assertEqual([lib for lib, (at_reflexer, at_bedrock) in found.items() if at_bedrock > at_reflexer], [])
+
+    def test_a_fallback_signed_over_the_headers_its_handlers_already_set_turns_it_red(self):
+        real = reflexer.bedrock.skip_taken
+
+        def late(event_name, kwargs, before):  # the headers kept for signing anew, after the client's handlers ran
+            real(event_name, kwargs, before)
+            if not before and event_name.startswith("before-sign."):
+                request = kwargs["request"]
+                request.context[reflexer.bedrock.UNSIGNED] = (request.url, request.data, reflexer.bedrock.lower(request.headers))
+        with mock.patch.object(reflexer.boto3, "skip_taken", late), mock.patch.object(reflexer.aiobotocore, "skip_taken", late):
+            self.assertEqual(held_with_a_header_of_the_clients(), {"boto3": False, "aiobotocore": False})
+            self.assertEqual([key for key, held in held_with_a_body_or_url_of_the_clients().items() if held], [])
+
+    def test_async_anthropic_not_attempted_anew_turns_it_red(self):
+        with mock.patch.object(reflexer.anthropic_bedrock, "withheld", lambda request: False):
+            at_reflexer, at_bedrock, text = async_anthropic_signing_times()
+        self.assertEqual(at_bedrock, at_reflexer)
+
+    def test_a_fallback_signed_for_another_scope_turns_it_red(self):
+        """The client's signer asked for another region or service on its second signing: Bedrock's stand-in refuses the
+        scope, as Bedrock does, so the check goes red."""
+        real = reflexer.bedrock.signing_anew
+        for scope in ({"region_name": "eu-west-1"}, {"signing_name": "made-up-service"}):
+            def elsewhere(request, unprepared, scope=scope):
+                made = real(request, unprepared)
+                if made is None:
+                    return None
+                signer, operation, copy = made
+
+                class Elsewhere:  # the client's signer, given another scope
+                    def sign(self, operation, request):
+                        return signer.sign(operation, request, **scope)
+                return Elsewhere(), operation, copy
+            with self.subTest(scope=scope), mock.patch.object(reflexer.boto3, "signing_anew", elsewhere):
+                made, calls = world("boto3")
+                made.reflexer.set("busy")
+                outcome = calls.call(calls.client(keyed=False))
+                calls.close()
+                self.assertNotEqual(outcome.text, harness.STRAIGHT_TEXT)
+
+    def test_litellm_a_signing_time_read_as_local_time_turns_it_red(self):
+        def local(headers):  # the window's clock slipped: x-amz-date read in this machine's time zone, not UTC
+            try:
+                at = datetime.datetime.strptime(headers.get("x-amz-date") or "", "%Y%m%dT%H%M%SZ")
+            except ValueError:
+                return None
+            return at.timestamp() + reflexer.litellm.WINDOW["seconds"] - reflexer.litellm.WINDOW["margin"] - time.time()
+        with mock.patch.object(reflexer.litellm, "left", local):
+            text, took, taken = litellm_leg()
+        self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < 2.0)
+
+    def test_a_fallback_without_its_body_signed_anew_turns_it_red(self):
+        real = reflexer.bedrock.signed_anew
+
+        def headers_only(request, made):  # the body as first signed, the signature over the body signed anew
+            body = request.body
+            real(request, made)
+            request.body = body
+        for line in (reflexer.boto3, reflexer.aiobotocore):
+            self.addCleanup(setattr, line, "signed_anew", getattr(line, "signed_anew"))
+            setattr(line, "signed_anew", headers_only)
+        self.assertEqual(per_attempt_change(), {"boto3": False, "aiobotocore": False})
+
+    def test_a_fallback_without_its_url_signed_anew_turns_it_red(self):
+        real = reflexer.bedrock.signed_anew
+
+        def url_kept(request, made):  # the URL as first signed, the signature over the URL signed anew
+            url = request.url
+            real(request, made)
+            request.url = url
+        for line in (reflexer.boto3, reflexer.aiobotocore):
+            self.addCleanup(setattr, line, "signed_anew", getattr(line, "signed_anew"))
+            setattr(line, "signed_anew", url_kept)
+        self.assertEqual(per_attempt_change(), {"boto3": False, "aiobotocore": False})
+
+    def test_litellm_a_leg_unbounded_turns_it_red(self):
+        with mock.patch.object(reflexer.litellm, "within", lambda seconds, send: send()), \
+                mock.patch.object(reflexer.litellm, "awithin", lambda seconds, sent: sent):
+            for is_async in (False, True):
+                with self.subTest(is_async=is_async):
+                    text, took, taken = litellm_leg(is_async=is_async)
+                    self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < 2.0)
 
     def test_a_signed_call_changed_turns_it_red(self):
         def changed(request, headers, body):
             headers["x-made-up"] = "1"
             return request
+        real = reflexer.transport.stays_straight
+
+        def changed_shipped(request):  # LiteLLM's signed call falls back by the shipped legs
+            request.headers["x-made-up"] = "1"
+            return real(request)
         with mock.patch.object(reflexer.bedrock, "straight", changed), mock.patch.object(reflexer.boto3, "straight", changed), \
-                mock.patch.object(reflexer.aiobotocore, "straight", changed):
+                mock.patch.object(reflexer.aiobotocore, "straight", changed), mock.patch.object(reflexer.transport, "stays_straight", changed_shipped):
             self.assertFalse(any(signed_as_stock().values()))
 
     def test_no_fallback_turns_it_red(self):
@@ -488,14 +904,19 @@ class Broken(unittest.TestCase):
         def unguarded(request, headers, body):
             return real(request, headers, body if reflexer.bedrock.keyed(headers) else None)
         with mock.patch.object(reflexer.bedrock, "straight", unguarded), mock.patch.object(reflexer.boto3, "straight", unguarded), \
-                mock.patch.object(reflexer.aiobotocore, "straight", unguarded):
+                mock.patch.object(reflexer.aiobotocore, "straight", unguarded), \
+                mock.patch.object(reflexer.transport, "is_replay", lambda body: False):  # anthropic's signed call: the shipped legs' guard too
             self.assertTrue(all(signed_replays_reaching_bedrock().values()))
 
     def test_headers_of_ours_kept_on_a_signed_call_turns_it_red(self):
         def keeping(request, headers, body):
             return request
+
+        def keeping_shipped(request):  # LiteLLM's signed call falls back by the shipped legs
+            request.extensions[reflexer.transport.STRAIGHT] = True
+            return request
         with mock.patch.object(reflexer.bedrock, "straight", keeping), mock.patch.object(reflexer.boto3, "straight", keeping), \
-                mock.patch.object(reflexer.aiobotocore, "straight", keeping):
+                mock.patch.object(reflexer.aiobotocore, "straight", keeping), mock.patch.object(reflexer.transport, "stays_straight", keeping_shipped):
             found = ours_on_signed_calls()
         self.assertTrue(all(found[(lib, how)][0] for lib, how in (("boto3", "after signing"), ("aiobotocore", "after signing"), ("litellm", "call"))), found)
 
@@ -513,7 +934,51 @@ class Broken(unittest.TestCase):
         straight = eval(compile("lambda request, headers, body, kept=key: real(request, headers, body)", reflexer.boto3.__file__, "eval"),
                         {"real": reflexer.bedrock.straight, "key": harness.make_key()})
         with mock.patch.object(reflexer.boto3, "straight", straight):
-            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy")])
+            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy", True)])
+
+    def test_a_signature_kept_where_an_errors_frames_reach_it_turns_it_red(self):
+        real = reflexer.anthropic_bedrock.Again.first
+
+        def keeping(request):  # the call's signed headers kept on the call, which our middleware's frame holds
+            held = real(request)
+            reflexer.anthropic_bedrock.CALL.get()["signed"] = dict(request.headers)
+            return held
+        with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(keeping)):
+            self.assertTrue(anthropic_sampled_out(provider="dead")[2])
+
+    def test_a_signature_in_a_frame_of_the_lines_on_an_error_turns_it_red(self):
+        # a frame of the line's own file holding a copy of the signed headers as a replay raises through it
+        made = {"real": reflexer.bedrock.straight}
+        exec(compile("def straight(request, headers, body):\n    kept = dict(headers)\n    return real(request, headers, body)", reflexer.boto3.__file__, "exec"), made)
+        straight = made["straight"]
+        with mock.patch.object(reflexer.boto3, "straight", straight):
+            self.assertTrue(errors_in_clear()[("boto3", "replay, reflexer busy", False)])
+
+    def test_a_session_token_kept_where_an_errors_frames_reach_it_turns_it_red(self):
+        real = reflexer.anthropic_bedrock.Again.first
+
+        def keeping(request):  # the call's session token alone kept on the call, which our middleware's frame holds
+            held = real(request)
+            reflexer.anthropic_bedrock.CALL.get()["token"] = request.headers.get("x-amz-security-token")
+            return held
+        with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(keeping)):
+            self.assertTrue(errors_in_clear()[("anthropic-bedrock", "replay, reflexer busy", False)])
+            self.assertTrue(anthropic_sampled_out(provider="dead")[2])
+
+    def test_anthropic_every_header_of_ours_put_back_on_a_call_never_sent_turns_it_red(self):
+        real = reflexer.anthropic_bedrock.Again.first
+
+        def every(request):  # put back on a call never sent: every header of ours, those its signature does not cover among them
+            held = real(request)
+            call = reflexer.anthropic_bedrock.CALL.get()
+            call["ours"] = {name: value for name, value in request.headers.items() if name.lower().startswith(reflexer.OURS)}
+            return held
+
+        def hook(request):
+            request.headers["Reflexer-Made-Up"] = "made-up"
+        with mock.patch.object(reflexer.anthropic_bedrock.Again, "first", staticmethod(every)):
+            uncovered, _, _ = anthropic_sampled_out(hook)
+        self.assertTrue(uncovered)
 
     def test_a_key_kept_in_a_closure_on_the_answer_turns_it_red(self):
         real, key = reflexer.aiobotocore.forgotten, harness.make_key()

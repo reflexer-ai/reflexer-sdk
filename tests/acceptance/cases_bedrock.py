@@ -1,7 +1,10 @@
 """Amazon Bedrock's cases, on each library a client calls it with (`harness/bedrock.py`), over the suite's stand-ins.
 
-A call carrying a Bedrock API key goes to reflexer and falls back straight, as any provider's; a call the library signs
-(SigV4) never goes to reflexer, and reaches Bedrock as the library made it. Registered beside `cases.py`'s, by its import.
+A call carrying a Bedrock API key goes to reflexer and falls back straight, as any provider's. A call the library signs
+(SigV4) on Bedrock's runtime goes to reflexer as signed, and falls back to a call Bedrock takes: signed anew by the
+library's own signer, or, on LiteLLM, the same call, reflexer's leg bounded by what is left of its signature's window.
+Bedrock's stand-in judges each signature as Bedrock does, its time within the window at arrival. Mantle's signed calls
+never go to reflexer. Registered beside `cases.py`'s, by its import.
 """
 import gc, json, re, time, warnings
 
@@ -11,6 +14,10 @@ from harness import STRAIGHT_TEXT, bedrock, standins
 from harness.bedrock import BOTOCORE, SIGNING, Calls
 
 ALL = bedrock.COLUMNS
+RUNTIME_SIGNING = tuple(lib for lib in SIGNING if lib != "anthropic-mantle")  # whose signed calls go to reflexer: the runtime's only
+SIGNS_ANEW = tuple(lib for lib in RUNTIME_SIGNING if lib != "litellm")  # their line reaches the library's own signer
+MANTLE_SIGNED = {lib: "Mantle's signed calls go to Mantle as stock: reflexer takes signed calls on Bedrock's runtime only" for lib in ("anthropic-mantle",)}
+SHORT_WINDOW = 2.0  # seconds a signature holds at Bedrock's stand-in, in the cases that outlast it
 HTTPX_LINES = ("anthropic-bedrock", "anthropic-mantle", "litellm")  # Bedrock's own lines on LiteLLM's and anthropic's HTTP clients
 RUNTIME = f"https://{bedrock.RUNTIME}"
 UPSTREAM = {"anthropic-mantle": f"https://{bedrock.MANTLE}/anthropic", "openai-compat": f"{RUNTIME}/openai",
@@ -19,7 +26,8 @@ PATH = {"anthropic-mantle": "/anthropic/v1/messages", "openai-compat": "/openai/
 NO_TOP_FIELD = "its calls put no field of the client's at the body's top"
 SHIPPED = {lib: "the shipped line, at Bedrock's compatible route: its own cases are the shipped suite's" for lib in ("openai-compat", "anthropic-compat")}
 VOLATILE = {"authorization", "x-amz-date", "amz-sdk-invocation-id", "amz-sdk-request", "x-stainless-retry-count", "x-stainless-read-timeout",
-            "content-length"}  # what differs between two calls made alike: their time, their id, their signature
+            "content-length",  # what differs between two calls made alike: their time, their id, their signature
+            "x-stainless-raw-response"}  # anthropic's, on every call of a client given any middleware, ours as a client's own
 
 
 def bedrock_case(behaviour, libs=ALL, **options):
@@ -38,16 +46,16 @@ def straight(t, outcome):
     t.check(t.provider.seen, "answered, yet Bedrock saw nothing")
 
 
-def signed_as_stock(t, calls, headers=None):
-    """A signed call: straight, never at reflexer, its signature checked as Bedrock checks it, and what reached Bedrock as
-    a stock client's same call, but for what differs between any two calls, and for `headers`, ours, which a stock client
-    would send on."""
+def signed_as_stock(t, calls, headers=None, reflexer=False, **settings):
+    """A signed call: straight, at reflexer first only if `reflexer`, its signature checked as Bedrock checks it, and what
+    reached Bedrock as a stock client's same call, but for what differs between any two calls, and for `headers`, ours,
+    which a stock client would send on."""
     stock = calls.client(line=False, keyed=False)
     calls.call(stock)
     as_stock = t.provider.seen[-1]
-    outcome = calls.call(calls.client(keyed=False), headers=headers)
+    outcome = calls.call(calls.client(keyed=False, **settings), headers=headers)
     straight(t, outcome)
-    t.check(not t.reflexer.seen, f"a signed call reached reflexer: {t.reflexer.seen}")
+    t.check(bool(t.to_reflexer()) == reflexer, f"reflexer saw {len(t.to_reflexer())} calls, the call signed")
     arrival = t.provider.seen[-1]
     t.check(bedrock.signature_holds(arrival), f"Bedrock refuses its signature: {arrival.headers.get('authorization', '')[:60]}")
     ours, stocks = ({name: re.sub(r" m/[^ ]+", "", value) if name == "user-agent" else value for name, value in each.headers.items()
@@ -92,8 +100,39 @@ def bedrock_count_tokens_goes_straight(t):
     t.check(not t.reflexer.seen and t.provider.seen, f"reflexer {len(t.reflexer.seen)}, Bedrock {len(t.provider.seen)}")
 
 
-@bedrock_case("bedrock routing", libs=SIGNING)
-def bedrock_a_signed_call_never_reaches_reflexer_and_is_as_stock(t):
+@bedrock_case("bedrock routing", libs=RUNTIME_SIGNING)
+def bedrock_a_signed_call_reaches_reflexer_as_signed(t):
+    calls = Calls(t)
+    served(t, calls.call(calls.client(keyed=False)))
+    arrival = t.to_reflexer()[-1]
+    t.check(arrival.headers.get("reflexer-key") == t.world.key, "reflexer's key missing")
+    t.check(arrival.headers.get("authorization", "").startswith("AWS4-HMAC-SHA256 ") and arrival.headers.get("x-amz-date"),
+            f"not as signed: {arrival.headers.get('authorization', '')[:30]}")
+    t.check(arrival.headers.get("reflexer-upstream") == RUNTIME, f"upstream: {arrival.headers.get('reflexer-upstream')}")
+    t.check(arrival.path.startswith("/bedrock/model/"), f"reached {arrival.path}")
+
+
+@bedrock_case("bedrock routing", libs=RUNTIME_SIGNING)
+def bedrock_a_signed_calls_fallback_is_as_stock(t):
+    """Reflexer busy: the signed call's fallback reaches Bedrock as a stock client's same call, its signature taken."""
+    calls = Calls(t)
+    reflexer_status(t, 503, body={"message": "made-up"})
+    signed_as_stock(t, calls, reflexer=True)
+
+
+@bedrock_case("bedrock routing", libs=SIGNS_ANEW)
+def bedrock_a_signed_calls_fallback_keeps_a_header_the_client_sets_as_it_signs(t):
+    """A header of the client's set where its library signs (a `before-sign` handler on botocore, the call's own
+    elsewhere), reflexer busy: the fallback signed anew carries it once, and Bedrock takes it, as stock's."""
+    calls = Calls(t)
+    reflexer_status(t, 503, body={"message": "made-up"})
+    straight(t, calls.call(calls.client(keyed=False), headers={"X-Made-Up-Team": "made-up"}))  # the stand-in takes only a signature that holds
+    arrival = t.provider.seen[-1]
+    t.check(t.to_reflexer() and arrival.headers.get("x-made-up-team") == "made-up", f"reflexer {len(t.to_reflexer())}: {arrival.headers}")
+
+
+@bedrock_case("bedrock routing", libs=("anthropic-mantle",))
+def bedrock_a_signed_mantle_call_never_reaches_reflexer_and_is_as_stock(t):
     calls = Calls(t)
     signed_as_stock(t, calls)
 
@@ -111,13 +150,13 @@ def sampling_on_bedrock_none_sends_all_straight(t):
 # ---- no harm: whatever fails on the way to reflexer, the client's own call still goes
 
 def no_harm(name, arrange, libs=ALL):
-    @bedrock_case("bedrock no harm", libs=libs, name=f"no_harm_on_bedrock_{name}")  # no shipped case's name inside: `--only` takes parts
-    def check(t):
-        calls = Calls(t)
-        client = calls.client()
-        arrange(t)
-        straight(t, calls.call(client))
-    return check
+    for keyed, kind, among in ((True, "", libs), (False, "signed_", tuple(lib for lib in libs if lib in RUNTIME_SIGNING))):
+        @bedrock_case("bedrock no harm", libs=among, name=f"no_harm_on_bedrock_{kind}{name}")  # no shipped case's name inside: `--only` takes parts
+        def check(t, keyed=keyed):
+            calls = Calls(t)
+            client = calls.client(keyed=keyed)
+            arrange(t)
+            straight(t, calls.call(client))
 
 
 no_harm("reflexer_dead", lambda t: t.reflexer.set("dead"))
@@ -154,6 +193,45 @@ def no_harm_on_bedrock_a_handshake_refused_once_is_tried_again(t):
     t.check(t.reflexer.refused_tls == 1, f"{t.reflexer.refused_tls} handshakes refused, not one")
 
 
+# ---- fresh: a signed call's fallback is taken by Bedrock, however long reflexer's leg took
+
+@bedrock_case("bedrock fresh", libs=SIGNS_ANEW, na={"litellm": "its fallback reuses its signature: reflexer's leg is bounded by its window"})
+def bedrock_a_signed_calls_fallback_after_a_leg_past_the_window_is_taken(t):
+    """Reflexer stalls past the signature's window (shortened at Bedrock's stand-in), to the client's own timeout: the
+    fallback, signed anew by the library's own signer, is taken; one signed before reflexer's leg would be refused."""
+    t.provider.window = SHORT_WINDOW
+    calls = Calls(t)
+    client = calls.client(keyed=False, timeout=SHORT_WINDOW + 1.0)
+    t.reflexer.set("stall")
+    straight(t, calls.call(client))
+    t.check(t.to_reflexer(), "reflexer saw nothing")
+
+
+@bedrock_case("bedrock fresh", libs=("litellm",))
+def bedrock_litellm_a_signed_calls_leg_is_cut_while_its_signature_holds(t):
+    """LiteLLM signs before any hook runs: reflexer's leg, stalled, is cut at what is left of the window (shortened here,
+    at Bedrock's stand-in and in the line), well before the client's own timeout, and the same signed call is taken."""
+    import reflexer.litellm
+    t.provider.window = 2 * SHORT_WINDOW
+    reflexer.litellm.WINDOW.update(seconds=2 * SHORT_WINDOW, margin=SHORT_WINDOW / 2)
+    calls = Calls(t)
+    client = calls.client(keyed=False, timeout=10 * SHORT_WINDOW)
+    t.reflexer.set("stall")
+    outcome = calls.call(client)
+    straight(t, outcome)
+    t.check(t.to_reflexer() and outcome.wall < 2 * SHORT_WINDOW, f"reflexer {len(t.to_reflexer())}, the call took {outcome.wall:.2f}s")
+
+
+@bedrock_case("bedrock fresh", libs=("litellm",))
+def bedrock_litellm_a_signed_call_with_no_time_left_goes_straight(t):
+    """No time left of the window: reflexer is not tried, and the call goes straight while its signature holds."""
+    import reflexer.litellm
+    reflexer.litellm.WINDOW.update(margin=reflexer.litellm.WINDOW["seconds"] + 1.0)
+    calls = Calls(t)
+    straight(t, calls.call(calls.client(keyed=False)))
+    t.check(not t.reflexer.seen, f"reflexer tried: {t.reflexer.seen}")
+
+
 # ---- skip: one call straight, by an argument or a header; the flag never leaves the machine
 
 @bedrock_case("bedrock skip")
@@ -178,8 +256,8 @@ def skip_on_bedrock_holds_for_one_call_only(t):
     served(t, calls.call(client))
 
 
-SIGNS_EVERY_HEADER = {lib: "it signs every header: on a call it signs, the flag reaches Bedrock as the client set it, and the call "
-                             "never goes to reflexer" for lib in ("anthropic-bedrock", "anthropic-mantle")}
+SIGNS_EVERY_HEADER = {"anthropic-mantle": "it signs every header, and no middleware of ours runs before it signs: on a call it signs, "
+                                          "the flag reaches Mantle as the client set it, and the call never goes to reflexer"}
 
 
 @bedrock_case("bedrock skip", libs=tuple(lib for lib in SIGNING if lib not in SIGNS_EVERY_HEADER), na=SIGNS_EVERY_HEADER)
@@ -198,6 +276,13 @@ def no_harm_on_bedrock_a_key_bedrock_refuses_is_the_clients_error_sent_once(t):
     outcome = calls.call(client)
     t.check(outcome.error is not None, f"a refused key answered: {outcome}")
     t.check(len(t.provider.seen) == 1, f"Bedrock asked {len(t.provider.seen)} times")
+
+
+@bedrock_case("bedrock skip", libs=("boto3", "aiobotocore"))
+def bedrock_skip_as_an_argument_on_a_signed_call_goes_straight(t):
+    calls = Calls(t)
+    straight(t, calls.call(calls.client(keyed=False), args={bedrock.ARGUMENT: True}))
+    t.check(not t.to_reflexer(), f"reflexer got a skipped call: {t.to_reflexer()}")
 
 
 # ---- the key, the replay, a redirect
@@ -223,11 +308,11 @@ REPLAY_OP = {"boto3": "invoke", "aiobotocore": "invoke", "anthropic-bedrock": "i
 @bedrock_case("bedrock replay", libs=tuple(REPLAY_OP), na={lib: NO_TOP_FIELD for lib in ALL if lib not in REPLAY_OP})
 def bedrock_a_replay_reflexer_does_not_take_never_reaches_bedrock(t):
     calls = Calls(t)
-    client = calls.client()
-    reflexer_status(t, 503, body={"message": "made-up"})
-    outcome = calls.call(client, REPLAY_OP[t.sdk], extra={"replay_response": {"id": "made-up"}})
-    t.check(outcome.error is not None, f"a replay answered: {outcome}")
-    t.check(not t.provider.seen, f"a replay reached Bedrock: {t.provider.seen}")
+    for keyed in (True, False) if t.sdk in SIGNING else (True,):
+        reflexer_status(t, 503, body={"message": "made-up"})
+        outcome = calls.call(calls.client(keyed=keyed), REPLAY_OP[t.sdk], extra={"replay_response": {"id": "made-up"}})
+        t.check(outcome.error is not None, f"a replay answered, keyed {keyed}: {outcome}")
+        t.check(not t.provider.seen, f"a replay reached Bedrock, keyed {keyed}: {t.provider.seen}")
 
 
 @bedrock_case("bedrock redirect")

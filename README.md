@@ -97,7 +97,7 @@ Its providers take the provider SDK's client; give them reflexer's:
 
 ## Amazon Bedrock
 
-A call carrying a Bedrock API key goes through reflexer, the key passed on with it as any provider's key; a call your library signs (SigV4) goes to Bedrock as before, and is not sent to reflexer.
+A call carrying a Bedrock API key goes through reflexer, the key passed on with it as any provider's key. A call your library signs (SigV4) goes to reflexer too, as signed: reflexer never passes your signature on, and answers it from what it already holds or sends it back. When reflexer does not answer, the call goes to Bedrock signed anew by your library's own signer after reflexer's leg (boto3 and what is built on it, aiobotocore, AWS JS, LangChain.js, AnthropicBedrock), so it is as fresh as stock's; on LiteLLM and the AI SDK, whose signer no line reaches, the same signed call, reflexer's leg bounded by what is left of its signature's few minutes. Your AWS secret stays with your library's signer: the SDK never reads it. A signed call sent to reflexer carries what your library signed it with but the secret: the access key's id, and with temporary credentials the session token. Mantle's signed calls go to Mantle as before.
 
     # client = boto3.client("bedrock-runtime", region_name=region)
     client = reflexer.boto3.client("bedrock-runtime", region_name=region, reflexer_key=reflexer_key)
@@ -127,12 +127,16 @@ TypeScript:
     chat = new ChatBedrockConverse({ model, client: bedrock.wrap(client, reflexerKey) });
 
     // client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey })
-    client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey), middleware: [bedrock.anthropicMiddleware] });
+    client = new AnthropicBedrock({ awsRegion, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey), middleware: [bedrock.anthropicMiddleware] }); // ours last of your middleware
+
+    import * as bedrockAi from "@reflexer-ai/sdk/bedrock-ai";
 
     // model = createAmazonBedrock({ region, apiKey: bedrockKey })(modelId)
-    model = wrapLanguageModel({ model: createAmazonBedrock({ region, apiKey: bedrockKey, fetch: bedrock.fetch(reflexerKey) })(modelId), middleware: bedrock.aiMiddleware });
+    model = wrapLanguageModel({ model: createAmazonBedrock({ region, apiKey: bedrockKey, fetch: bedrockAi.fetch(reflexerKey) })(modelId), middleware: bedrockAi.middleware });
 
-AWS JS's line takes its Node HTTP handlers, its default on Node; its fetch handler, a browser's or an edge runtime's, follows redirects and is refused. `bedrock.requestHandler(reflexerKey, { handler })` is the handler `wrap` gives AWS JS, for a client that sets its own `requestHandler`. One call straight: AWS JS `client.send(command, { reflexerPassThrough: true })`; the AI SDK `providerOptions: { reflexer: { passThrough: true } }`; or the `Reflexer-Pass-Through` header (AWS JS by a middleware of yours, AnthropicBedrock and the AI SDK in the call's headers). What each line cannot do: SECURITY.md, **Known limits**.
+The same lines for a client that signs: its credentials in place of the key.
+
+AWS JS's line takes its Node HTTP handlers, its default on Node; its fetch handler, a browser's or an edge runtime's, follows redirects and is refused. `bedrock.requestHandler(reflexerKey, { handler })` is the handler `wrap` gives AWS JS, for a client that sets its own `requestHandler`; it sends a signed call to reflexer only given the client's `signer` too, which `wrap` reads from the client's config. One call straight: AWS JS `client.send(command, { reflexerPassThrough: true })`; the AI SDK `providerOptions: { reflexer: { passThrough: true } }`; or the `Reflexer-Pass-Through` header (AWS JS by a middleware of yours, AnthropicBedrock and the AI SDK in the call's headers). What each line cannot do: SECURITY.md, **Known limits**.
 
 ## What reflexer's answer looks like
 

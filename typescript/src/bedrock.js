@@ -1,9 +1,11 @@
 /**
  * Amazon Bedrock, through reflexer, apart from the files every provider shares: a direct call to OpenAI or Anthropic
  * runs as shipped. A call carrying a Bedrock API key (`Authorization: Bearer`) goes to reflexer, the key among its
- * headers; a call signed by SigV4 goes to Bedrock as its library made it. Three lines: `fetch`, for the SDKs that take
- * one (AnthropicBedrock, the AI SDK), with each one's middleware (`anthropicMiddleware`, `aiMiddleware`); `wrap`, AWS
- * JS's `requestHandler` around the client's own.
+ * headers; so does a call signed by SigV4, as signed, where its fallback can be signed anew after reflexer's leg: by AWS
+ * JS's own signer (`wrap`), or by AnthropicBedrock making its attempt again (`anthropicMiddleware`). Elsewhere a signed
+ * call goes to Bedrock as its library made it. Three lines: `fetch`, for the SDKs that take one (AnthropicBedrock; the
+ * AI SDK's is `./bedrock-ai.js`'s, built on it), with AnthropicBedrock's middleware; `wrap`, AWS JS's `requestHandler`
+ * around the client's own.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { HEADERS_TIMEOUT, provider, textOf } from "./index.js";
@@ -38,6 +40,15 @@ function tested(headers) {
 /** Whether a call carries a Bedrock API key, not a signature. @param {Headers} headers */
 const keyed = (headers) => /^Bearer /i.test(headers.get("authorization") ?? "");
 
+/** Whether its library signed the call by SigV4, AWS's signature, which holds a few minutes from its signing time. @param {Headers} headers */
+export const signed = (headers) => /^AWS4-HMAC-SHA256 /.test(headers.get("authorization") ?? "");
+
+/** `run()` as a call our middleware skipped: it goes straight. @template T @param {() => T} run */
+export const skipped = (run) => call.run({ skipped: true }, run);
+
+/** Thrown in place of a signed call's straight leg under AnthropicBedrock's middleware, which makes the attempt again. */
+class Again extends Error {}
+
 /**
  * The client's own call, straight. A signed one goes as its library made it: a header taken off would break its
  * signature. A replay never goes.
@@ -69,30 +80,43 @@ async function bounded(start, given, ms) {
 }
 
 /**
- * The shipped `fetch` line on Bedrock's wire, for a call carrying a key; a signed call, or one a middleware skipped,
+ * The shipped `fetch` line on Bedrock's wire, for a call carrying a key, and for a signed one under AnthropicBedrock's
+ * middleware, whose straight leg the middleware makes again (`Again`), or given `options.signed`, whose fallback reuses
+ * its signature (the AI SDK's line bounds reflexer's leg by its window). Any other call, or one a middleware skipped,
  * goes straight by the client's own `fetch`. When the client's own signal cuts reflexer's leg with a `TimeoutError` (the
  * AI SDK's every timeout, and `AbortSignal.timeout`'s), a call not streamed goes straight, given as long again: a
  * stream's caller has ended it already, above any line. AnthropicBedrock's timer cuts with no reason: its middleware
  * tells it from a cancel (`anthropicMiddleware`).
- * @param {string} key @param {any} [options] `{ base, sample, fetch, headersTimeout }`
+ * @param {string} key @param {any} [options] `{ base, sample, fetch, headersTimeout, signed }`
  */
 export function fetch(key, options = {}) {
   const own = (/** @type {any} */ input, /** @type {any} */ init) => (options.fetch ?? globalThis.fetch)(input, init);
   const base = new URL(options.base ?? BASE).origin;
-  const inner = (/** @type {any} */ input, /** @type {any} */ init = {}) => own(input, init).catch((/** @type {any} */ failure) => {
-    const seen = call.getStore()?.seen;
-    if (seen && String(input).startsWith(base) && init.signal?.aborted) seen.cut = init.signal.reason ?? true; // reflexer's leg, cut by the client
-    throw failure;
-  });
+  const inner = (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+    const store = call.getStore(), ours = String(input).startsWith(base);
+    if (store?.again && !ours && !store.again.sent) return straight(own, input, store.again.init); // reflexer's leg never sent: as signed
+    if (store?.again && !ours) { // a signed call's straight leg after reflexer's: the middleware makes the attempt again
+      store.again.straight = true;
+      throw new Again("the call goes straight, signed anew");
+    }
+    if (store?.again) store.again.sent = true;
+    return own(input, init).catch((/** @type {any} */ failure) => {
+      if (store?.seen && String(input).startsWith(base) && init.signal?.aborted) store.seen.cut = init.signal.reason ?? true; // reflexer's leg, cut by the client
+      throw failure;
+    });
+  };
   const routed = provider(WIRE).fetch(key, { ...options, fetch: inner });
   return async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
     const store = call.getStore();
-    if (store?.skipped || !keyed(tested(new Headers(init.headers)))) return straight(own, input, init);
+    const headers = tested(new Headers(init.headers));
+    if (store?.skipped || !(keyed(headers) || (signed(headers) && (store?.again || options.signed)))) return straight(own, input, init);
     if (init.signal?.aborted) return routed(input, init); // the client's own signal ended before reflexer's leg: as shipped
     const seen = store?.seen ?? {};
     const began = performance.now();
     try {
-      return await call.run({ seen }, () => routed(input, init));
+      const again = signed(headers) ? store?.again : undefined; // a keyed call falls back here
+      if (again) again.init = init;
+      return await call.run({ ...store, seen, again }, () => routed(input, init));
     } catch (failure) {
       if (/** @type {any} */ (seen).cut?.name !== "TimeoutError" || STREAMED.test(new URL(String(input)).pathname)) throw failure;
       return straight(own, input, { ...init, signal: AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) });
@@ -101,63 +125,50 @@ export function fetch(key, options = {}) {
 }
 
 /**
- * AnthropicBedrock's own middleware. The skip header, taken off before the SDK signs; the call then goes straight. The
- * SDK arms its timeout around each inner fetch and cuts with no reason, as a cancel does; the middleware, above that
- * timer, sees the client's own signal (`ctx.options.signal`): reflexer's leg cut while it is not aborted was cut by the
- * timer, so `next` again, straight, with the client's timeout afresh and its cancel kept.
+ * AnthropicBedrock's own middleware. The skip header, taken off before the SDK signs; the call then goes straight. A
+ * signed call's straight leg is not sent after reflexer's: `next` again, straight, which the SDK signs anew. The SDK
+ * arms its timeout around each inner fetch and cuts with no reason, as a cancel does; the middleware, above that timer,
+ * sees the client's own signal (`ctx.options.signal`): reflexer's leg cut while it is not aborted was cut by the timer,
+ * so `next` again, straight, with the client's timeout afresh and its cancel kept.
  */
 export async function anthropicMiddleware(/** @type {any} */ request, /** @type {any} */ next, /** @type {any} */ ctx) {
   const headers = new Headers(request.headers);
   if (headers.has(PASS_THROUGH)) {
     headers.delete(PASS_THROUGH);
-    return call.run({ skipped: true }, () => next({ ...request, headers }));
+    return skipped(() => next({ ...request, headers }));
   }
-  const seen = { cut: undefined };
+  const seen = { cut: undefined }, again = { straight: false, sent: false, init: {} };
   try {
-    return await call.run({ seen }, () => next(request));
+    return await call.run({ seen, again }, () => next(request));
   } catch (failure) {
     const options = ctx?.options ?? {};
-    if (!seen.cut || options.signal?.aborted || !options.timeout) throw failure;
-    return bounded((signal) => call.run({ skipped: true }, () => next({ ...request, signal })), options.signal, options.timeout);
+    if (seen.cut && !options.signal?.aborted && options.timeout) {
+      return bounded((signal) => skipped(() => next({ ...request, signal })), options.signal, options.timeout);
+    }
+    if (!again.straight || seen.cut) throw failure;
+    return skipped(() => next(request));
   }
 }
 
 /**
- * The AI SDK's language model middleware (`wrapLanguageModel`): the skip, as the call's header or as its argument
- * (`providerOptions: { reflexer: { passThrough: true } }`), taken off before the provider signs; the call then goes straight.
- */
-export const aiMiddleware = {
-  /** @param {any} options */
-  transformParams: async ({ params }) => {
-    const headers = Object.entries(params.headers ?? {});
-    const header = headers.some(([name]) => name.toLowerCase() === PASS_THROUGH);
-    const { reflexer, ...theirs } = params.providerOptions ?? {};
-    if (!header && !reflexer?.passThrough) return params;
-    return { ...params, headers: Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== PASS_THROUGH)), providerOptions: theirs,
-      reflexerSkipped: true };
-  },
-  /** @param {any} options */
-  wrapGenerate: async ({ doGenerate, params }) => (params.reflexerSkipped ? call.run({ skipped: true }, doGenerate) : doGenerate()),
-  /** @param {any} options */
-  wrapStream: async ({ doStream, params }) => (params.reflexerSkipped ? call.run({ skipped: true }, doStream) : doStream()),
-};
-
-/**
  * AWS JS's `requestHandler` option: ours around the client's own handler, which carries both legs. Reflexer's leg is a
- * copy of the request, keyed, bounded to its answer's head as the `fetch` line is; the client's own request never holds
- * the key. The skip as `send`'s option: `client.send(command, { reflexerPassThrough: true })`.
- * @param {string} key @param {any} options `{ handler, base, sample, headersTimeout }`
+ * copy of the request, keyed or signed, bounded to its answer's head as the `fetch` line is; the client's own request
+ * never holds the key. A signed call goes to reflexer only given `signer`, the client's own, which signs its straight leg
+ * anew after reflexer's (`wrap` gives it). The skip as `send`'s option: `client.send(command, { reflexerPassThrough: true })`.
+ * @param {string} key @param {any} options `{ handler, signer, base, sample, headersTimeout }`
  */
-export function requestHandler(key, { handler, ...options }) {
+export function requestHandler(key, { handler, signer, ...options }) {
   if (HANDLERS.has(handler)) throw new Error("this handler already sends through reflexer"); // twice, a call would try reflexer twice
   if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw new Error("reflexer's line takes AWS JS's Node HTTP handlers, which follow no redirect: this one could carry the key to a redirect's target");
   const ask = asking(new Reflexer(key, WIRE, options), handler, options.headersTimeout ?? HEADERS_TIMEOUT);
   const made = {
     /** @param {any} request @param {any} [given] */
     async handle(request, { reflexerPassThrough, ...given } = {}) {
-      if (!keyed(tested(new Headers(plain(request.headers))))) return handler.handle(smithyStaysStraight(request), given);
-      const response = reflexerPassThrough ? null : await ask(request, given);
-      return response ? { response } : handler.handle(smithyStaysStraight(request), given);
+      const headers = tested(new Headers(plain(request.headers)));
+      if (!keyed(headers) && !(signer && signed(headers))) return handler.handle(smithyStaysStraight(request), given);
+      const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);
+      if (response) return { response };
+      return handler.handle(sent && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request)) : smithyStaysStraight(request), given);
     },
     /** @param {any} name @param {any} value */
     updateHttpClientConfig: (name, value) => handler.updateHttpClientConfig(name, value),
@@ -168,48 +179,70 @@ export function requestHandler(key, { handler, ...options }) {
   return made;
 }
 /**
- * Reflexer's leg on AWS JS: its answer, or null to go straight. The line's state is this closure's, not the client's
+ * Reflexer's leg on AWS JS: its answer, or null to go straight, and whether it was sent. The line's state is this closure's, not the client's
  * call's: an error thrown to the client shows no frame of ours holding the key.
  * @param {Reflexer} reflexer @param {any} handler @param {number} bound
  */
 function asking(reflexer, handler, bound) {
   return async (/** @type {any} */ request, /** @type {any} */ given) => {
+    let sent = false;
     try {
       const ours = smithyToReflexer(reflexer, request);
-      if (!ours) return null;
+      if (!ours) return { response: null, sent };
+      sent = true;
       // the client's own timeouts hold, as its handler applies them; ours bounds the answer's head, as the fetch line's
       const { response } = await bounded((abortSignal) => handler.handle(ours, { ...given, abortSignal }), given.abortSignal, bound);
-      if (!reflexer.goesStraight(response.statusCode, new Headers(plain(response.headers)))) return response;
+      if (!reflexer.goesStraight(response.statusCode, new Headers(plain(response.headers)))) return { response, sent };
       response.body?.destroy?.();
     } catch (failure) {
       reflexer.failed(failure);
     }
-    return null;
+    return { response: null, sent };
   };
 }
 const HANDLERS = new WeakMap(); // each handler made here
 const FOLLOWS_NO_REDIRECT = ["http/1.1", "h2"]; // Smithy's Node handlers' protocols, by their metadata; its fetch handler names none
+const SIGNATURE = ["authorization", "x-amz-date", "x-amz-security-token"]; // what AWS JS's signer sets anew
 
 /**
- * The one line on a client made elsewhere: its own handler, from its resolved config, wrapped by ours. The skip as a
+ * A signed straight request, signed anew by `signer` after reflexer's leg; as first signed if the signer fails.
+ * @param {(request: any) => Promise<any>} signer @param {any} request
+ */
+async function signedAnew(signer, request) {
+  const first = { ...request.headers };
+  try {
+    return await signer(request);
+  } catch {
+    request.headers = first;
+    return request;
+  }
+}
+
+/**
+ * The one line on a client made elsewhere: its own handler, from its resolved config, wrapped by ours, and its own
+ * signer, at its own clock (AWS JS corrects it by each answer's `Date`), for a signed call's straight leg. The skip as a
  * header the client's middleware sets: taken off just before signing, put back after, unsigned, for the handler.
  * @template C @param {C} client @param {string} key @param {any} [options] @returns {C}
  */
 export function wrap(client, key, options = {}) {
   const config = /** @type {any} */ (client).config;
-  config.requestHandler = requestHandler(key, { ...options, handler: config.requestHandler });
-  const skipped = new WeakMap(); // each skipped call's context, Smithy's own per call
+  const signer = async (/** @type {any} */ request) => {
+    request.headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => !SIGNATURE.includes(name)));
+    return (await config.signer()).sign(request, { signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000 }); // seconds, as Smithy reads a number
+  };
+  config.requestHandler = requestHandler(key, { ...options, handler: config.requestHandler, signer });
+  const skips = new WeakMap(); // each skipped call's context, Smithy's own per call
   const stack = /** @type {any} */ (client).middlewareStack;
   stack.addRelativeTo((/** @type {any} */ next, /** @type {any} */ context) => (/** @type {any} */ args) => {
     const headers = Object.entries(args.request?.headers ?? {});
     if (headers.some(([name]) => name.toLowerCase() === PASS_THROUGH)) {
       args.request.headers = Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== PASS_THROUGH));
-      skipped.set(context, true);
+      skips.set(context, true);
     }
     return next(args);
   }, { relation: "before", toMiddleware: "httpSigningMiddleware", name: "reflexerSkipBeforeSigning" });
   stack.add((/** @type {any} */ next, /** @type {any} */ context) => (/** @type {any} */ args) => {
-    if (skipped.has(context)) args.request.headers = { ...args.request.headers, [PASS_THROUGH]: "1" };
+    if (skips.has(context)) args.request.headers = { ...args.request.headers, [PASS_THROUGH]: "1" };
     return next(args);
   }, { step: "deserialize", priority: "low", name: "reflexerSkipAfterSigning" });
   return client;

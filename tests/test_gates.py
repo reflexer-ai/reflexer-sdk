@@ -21,8 +21,8 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     # aiohttp, yarl: the session aiobotocore sends by, and its URL; gc.get_referents, gc's one function used here: the one
     # way to the request headers aiohttp keeps with an answer (P27)
     "aiobotocore.py": {"aiobotocore", "botocore", "aiohttp", "yarl", "asyncio", "gc.get_referents"},
-    "anthropic_bedrock.py": {"anthropic"},
-    "litellm.py": {"litellm", "httpx"},  # httpx: LiteLLM's own HTTP library
+    "anthropic_bedrock.py": {"anthropic", "contextvars", "inspect"},  # contextvars: a call's own state, set by our middleware for our transport
+    "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "datetime", "inspect", "threading", "time"},  # httpx: LiteLLM's own HTTP library; the rest, its window's bound
 }
 
 

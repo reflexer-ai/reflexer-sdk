@@ -1,6 +1,6 @@
 """aiobotocore's bedrock-runtime clients, through reflexer: `reflexer.aiobotocore.through(client, key)` on a client made
 by `session.create_client("bedrock-runtime", ...)`, once entered. As `reflexer.boto3`, async: aiobotocore emits
-`before-send` and awaits its handlers, ours after them all.
+`before-send` and awaits its handlers, ours after them all; a signed call's fallback is signed anew by its own signer.
 
 Reflexer's leg goes by the client's own aiohttp session, the one its endpoint sends by, with the client's connector,
 proxy, TLS and timeouts, asked to follow no redirect: aiobotocore's own `send` follows them, our key on. No public name
@@ -12,8 +12,8 @@ import asyncio
 from gc import get_referents
 import aiohttp, yarl
 import aiobotocore.awsrequest, aiobotocore.httpsession, botocore.awsrequest, botocore.exceptions
-from . import BASE, OURS, Reflexer, supported
-from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, skip_taken, straight
+from . import BASE, OURS, Reflexer, log, supported
+from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, signed_anew, signing_anew, skip_taken, straight
 
 supported("aiobotocore", [3])
 EVENT = "before-send."
@@ -47,32 +47,40 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
         return aiobotocore.awsrequest.AioAWSResponse(str(response.url), response.status, headers, forgotten(response))
 
     async def asked(request):
-        """Reflexer's answer, or None. Its frame ends before anything reaches the client, and holds no key past it."""
+        """Reflexer's answer, or None, and whether its leg was sent. Its frame ends before anything reaches the client, and
+        holds no key past it."""
         route = leg = None
         try:
             route = botocore_route(reflexer, request)
             if route is None:
-                return None
+                return None, False
             leg = botocore.awsrequest.AWSRequest(request.method, route[0], data=request.body, headers=route[1], stream_output=True).prepare()
             leg.context = request.context  # the call's own settings for its session, such as a read timeout of its own
             answer = await aagain_if_refused(lambda: send(leg))
         except Exception as failure:
             reflexer.failed(failure)
-            return None
+            return None, route is not None
         except BaseException as stopped:  # a cancel, a ^C: raised on without the frames below, which hold the leg
             raise stopped.with_traceback(None)
         finally:
             route = leg = None  # what an error's traceback, raised on, would show of this frame
         if reflexer.goes_straight(answer.status_code, answer.headers):
             answer.raw.close()  # its body unread, its connection not reused
-            return None
-        return answer
+            return None, True
+        return answer, True
 
     async def before_send(request):
-        answer = await asked(request)
+        answer, sent = await asked(request)
         if answer is not None:
             return await read_served(answer, request)
         straight(request, request.headers, request.body if isinstance(request.body, bytes) else None)
+        anew = sent and signing_anew(request, botocore.awsrequest.AWSRequest)
+        if anew:
+            try:
+                await anew[0].sign(anew[1], anew[2])
+                signed_anew(request, anew[2])
+            except Exception as failure:  # the client's own signer failed anew: the call goes as it was first signed
+                log.warning("signing the call anew failed (%s); it goes as first signed", type(failure).__name__)
         return None
 
     async def emitted(event_name, **kwargs):

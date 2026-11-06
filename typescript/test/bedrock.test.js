@@ -1,6 +1,11 @@
 // Amazon Bedrock's lines, on their real libraries over a mock `fetch` or a mock request handler, offline; every value
-// made up. A call with a Bedrock API key goes to reflexer; a call signed by SigV4 goes to Bedrock as its library made it.
+// made up. A call with a Bedrock API key goes to reflexer; so does a call signed by SigV4, its fallback signed anew by
+// its library (AWS JS, LangChain.js, AnthropicBedrock) or, on the AI SDK, reflexer's leg bounded by its window. Bedrock's
+// mock judges each signature as Bedrock does: recomputed by Smithy's own signer, its time within the window.
 import assert from "node:assert/strict";
+import { Sha256 } from "@aws-crypto/sha256-js";
+import { HttpRequest } from "@smithy/protocol-http";
+import { SignatureV4 } from "@smithy/signature-v4";
 import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { describe, test } from "node:test";
@@ -12,6 +17,7 @@ import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import http from "node:http";
 import * as check from "./checks.js";
 
+process.env.TZ = "America/Sao_Paulo"; // CI runs in UTC, where a signing time read as local time would pass unseen
 const sdk = await check.load();
 const BEDROCK = "bedrock-runtime.us-east-1.amazonaws.com";
 const ELSEWHERE = "elsewhere.example";
@@ -21,6 +27,32 @@ const MODEL = "anthropic.frontier-b-v1:0";
 const HI = [{ role: "user", content: [{ text: "Hi" }] }];
 const INVOKE = JSON.stringify({ anthropic_version: "bedrock-2023-05-31", max_tokens: 8, messages: [{ role: "user", content: "Hi" }] });
 const FROM = { reflexer: "from reflexer", bedrock: "from bedrock" };
+const WINDOW = 300_000; // ms a signature holds at Bedrock from its signing time: AWS's five minutes
+const clock = { offset: 0 }; // ms Bedrock's clock is ahead of this machine's, in a case that moves it
+
+/**
+ * Why Bedrock refuses a SigV4 request, or null: its scope this endpoint's own region and service, its signature
+ * recomputed by Smithy's own signer over the headers it says
+ * it signed, at the time it says it signed, with the made-up secret, and that time within the window of Bedrock's clock.
+ * @param {URL} url @param {Headers} headers @param {string} body
+ */
+async function refusal(url, headers, body, raw = (/** @type {string} */ name) => headers.get(name)) {
+  const auth = headers.get("authorization") ?? "";
+  if (!auth.startsWith("AWS4-HMAC-SHA256 ")) return null;
+  const parts = Object.fromEntries(auth.slice(17).split(",").map((part) => part.trim().split("=")));
+  const [, , region, service] = parts.Credential.split("/");
+  if (url.hostname !== BEDROCK || region !== "us-east-1" || service !== "bedrock") return "the scope is not this endpoint's"; // Bedrock's own, not the one the call names
+  const date = headers.get("x-amz-date") ?? "";
+  const at = Date.parse(date.replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/, "$1-$2-$3T$4:$5:$6Z"));
+  const signedHeaders = Object.fromEntries(parts.SignedHeaders.split(";").map((name) => [name, raw(name) ?? (name === "host" ? url.host : "")]));
+  const request = new HttpRequest({ method: "POST", protocol: url.protocol, hostname: url.hostname, path: url.pathname,
+    query: Object.fromEntries(url.searchParams), headers: Object.fromEntries(Object.entries(signedHeaders).filter(([name]) => name !== "x-amz-date")), body });
+  const signer = new SignatureV4({ credentials: CREDENTIALS, region, service, sha256: Sha256, uriEscapePath: true, applyChecksum: false });
+  const again = await signer.sign(request, { signingDate: at / 1000 });
+  if (again.headers.authorization?.split("Signature=")[1] !== parts.Signature) return "the signature does not match";
+  if (Math.abs(Date.now() + clock.offset - at) > WINDOW) return "Signature expired";
+  return null;
+}
 
 // The AI SDK's Bedrock provider's own floor of Node, above this package's
 const engines = JSON.parse(readFileSync(new URL("../node_modules/@ai-sdk/amazon-bedrock/package.json", import.meta.url), "utf8")).engines.node;
@@ -83,20 +115,24 @@ function answer(path, text) {
 const bodyText = (body) => (body == null ? "" : typeof body === "string" ? body : new TextDecoder().decode(body));
 
 const OURS = { "reflexer-status-origin": "reflexer", "reflexer-answered-by": "reflexer" };
+const LATE = 1100; // ms a "late" reflexer takes to answer busy: past x-amz-date's one-second step
 
 /**
  * How the far ends answer, by host: (status, headers, body) or a failure. `reflexer`: "served", "busy", "down",
  * "redirect" or "stall" (its answer never starts, until the call is cut).
  * @param {string} reflexer @param {URL} url @param {AbortSignal | null | undefined} signal
  */
-async function far(reflexer, url, signal, bedrock = "ok") {
+async function far(reflexer, url, signal, bedrock = "ok", headers = new Headers(), sent = "", raw = undefined) {
   const ours = url.host === check.REFLEXER;
   const mode = ours ? reflexer : bedrock;
   if (mode === "down") throw new TypeError("fetch failed");
+  if (mode === "late") await new Promise((done) => setTimeout(done, LATE)); // then busy: a leg that took its time
+  const refused = ours ? null : await refusal(url, headers, sent, raw);
+  if (refused) return { status: 403, headers: { "content-type": "application/json", "x-amzn-errortype": "InvalidSignatureException" }, body: JSON.stringify({ message: refused }) };
   if (mode === "stall") {
     await new Promise((_, fail) => signal?.addEventListener("abort", () => fail(signal.reason ?? new DOMException("aborted", "AbortError"))));
   }
-  if (mode === "busy") return { status: 503, headers: { "reflexer-status-origin": "reflexer", "content-type": "application/json" }, body: "{}" };
+  if (mode === "busy" || mode === "late") return { status: 503, headers: { "reflexer-status-origin": "reflexer", "content-type": "application/json" }, body: "{}" };
   if (mode === "redirect") return { status: 307, headers: { location: `https://${ELSEWHERE}/moved`, "reflexer-status-origin": "reflexer" }, body: "" };
   const [type, body] = answer(url.pathname, ours ? FROM.reflexer : FROM.bedrock);
   return { status: 200, headers: { "content-type": type, ...(ours ? OURS : {}) }, body };
@@ -114,7 +150,7 @@ function fetchOn(reflexer, bedrock = "ok") {
     const url = new URL(input instanceof Request ? input.url : input);
     init.signal?.throwIfAborted();
     seen.push({ url, headers: new Headers(init.headers), body: bodyText(init.body), init });
-    const { status, headers, body } = await far(reflexer, url, init.signal, bedrock);
+    const { status, headers, body } = await far(reflexer, url, init.signal, bedrock, new Headers(init.headers), bodyText(init.body));
     if (headers.location && init.redirect !== "manual") return fetch(headers.location, init);
     return new Response(status === 307 || status === 503 ? null : body, { status, headers });
   };
@@ -131,9 +167,10 @@ function handlerOn(reflexer, bedrock = "ok") {
     async handle(request, options = {}) {
       const url = new URL(`${request.protocol}//${request.hostname}${request.port ? `:${request.port}` : ""}${request.path}`);
       options.abortSignal?.throwIfAborted?.();
-      seen.push({ url, headers: new Headers(Object.entries(request.headers).filter(([name]) => !name.startsWith(":"))),
-        body: bodyText(request.body), request: structuredClone({ ...request, body: bodyText(request.body) }) });
-      const { status, headers, body } = await far(reflexer, url, options.abortSignal, bedrock);
+      const given = new Headers(Object.entries(request.headers).filter(([name]) => !name.startsWith(":")));
+      seen.push({ url, headers: given, body: bodyText(request.body), request: structuredClone({ ...request, body: bodyText(request.body) }) });
+      const raw = (/** @type {string} */ name) => Object.entries(request.headers).find(([each]) => each.toLowerCase() === name)?.[1];
+      const { status, headers, body } = await far(reflexer, url, options.abortSignal, bedrock, given, bodyText(request.body), raw);
       return { response: { statusCode: status, headers, body: Readable.from([Buffer.from(body)]) } };
     },
     updateHttpClientConfig() {},
@@ -183,9 +220,9 @@ const LINES = [
     };
   }],
   ...(ai ? [/** @type {const} */ (["ai-sdk", ["converse", "converse-stream"], (/** @type {any} */ way, /** @type {boolean} */ keyed, options = {}) => {
-    const provider = ai.createAmazonBedrock({ region: "us-east-1", fetch: sdk.bedrock.fetch(sdk.key, { ...options, fetch: way.fetch }),
+    const provider = ai.createAmazonBedrock({ region: "us-east-1", fetch: sdk.bedrockAi.fetch(sdk.key, { ...options, fetch: way.fetch }),
       ...(keyed ? { apiKey: BEARER } : CREDENTIALS) });
-    const model = ai.wrapLanguageModel({ model: provider(MODEL), middleware: sdk.bedrock.aiMiddleware });
+    const model = ai.wrapLanguageModel({ model: provider(MODEL), middleware: sdk.bedrockAi.middleware });
     return async (/** @type {string} */ op, /** @type {any} */ extra = {}) => {
       const params = { model, prompt: "Hi", maxRetries: 0, headers: extra.headers, abortSignal: extra.signal,
         ...(extra.argument ? { providerOptions: { reflexer: { passThrough: true } } } : {}) };
@@ -283,30 +320,34 @@ async function hostsGiven(/** @type {(sdk: any) => string} */ value, /** @type {
 function linesOf(faulty) {
   if (faulty === sdk) return LINES;
   return LINES.map(([name, ops, make]) => [name, ops, (/** @type {any} */ way, /** @type {boolean} */ keyed, options = {}) => {
-    const real = sdk.bedrock;
-    sdk.bedrock = faulty.bedrock; // the line, made with the faulty module; its calls keep it
+    const real = [sdk.bedrock, sdk.bedrockAi];
+    [sdk.bedrock, sdk.bedrockAi] = [faulty.bedrock, faulty.bedrockAi]; // the line, made with the faulty modules; its calls keep them
     try {
       return make(way, keyed, options);
     } finally {
-      sdk.bedrock = real;
+      [sdk.bedrock, sdk.bedrockAi] = real;
     }
   }]);
 }
 
 /** Headers that differ between two calls of one signed client: its signing time, signature, call id. */
-const VOLATILE = new Set(["authorization", "x-amz-date", "amz-sdk-invocation-id", "x-amz-content-sha256"]);
+const NAMESPACE = { "reflexer-namespace": "made-up" }; // a header of the client's, signed: it stays, as signed
+const VOLATILE = new Set(["authorization", "x-amz-date", "amz-sdk-invocation-id", "x-amz-content-sha256", "amz-sdk-request"]);
 
-/** What a signed call sent, but its volatile headers, by each line and by its stock form; reflexer must see none. */
-async function signedAsMade(faulty = sdk) {
-  /** @type {Record<string, { line: any, stock: any, reflexer: number }>} */
+/**
+ * What a signed call's fallback sent, reflexer busy, but its volatile headers, by each line and by its stock form, and
+ * whether Bedrock took it; and how many requests reflexer saw.
+ */
+async function signedAsMade(faulty = sdk, headers = undefined) {
+  /** @type {Record<string, { line: any, stock: any, reflexer: number, result: any }>} */
   const found = {};
-  const namespace = { "reflexer-namespace": "made-up" }; // a header of the client's, signed: it stays, as signed
   for (const [name, ops, make] of linesOf(faulty)) {
-    const ours = await called(make, false, ops[0], "served", { headers: namespace });
-    const stock = await called(stockOf(name), false, ops[0], "served", { headers: namespace });
+    const ours = await called(make, false, ops[0], "busy", { headers });
+    const stock = await called(stockOf(name), false, ops[0], "served", { headers });
     const sent = (/** @type {any[]} */ seen) => seen.filter(({ url }) => url.host === BEDROCK).map(({ url, headers, body }) =>
       ({ url: url.href, body, headers: [...headers].filter(([header]) => !VOLATILE.has(header)), signed: /^AWS4-HMAC-SHA256 /.test(headers.get("authorization") ?? "") }));
-    found[name] = { line: sent(ours.seen), stock: sent(stock.seen), reflexer: ours.seen.filter(({ url }) => url.host === check.REFLEXER).length };
+    found[name] = { line: sent(ours.seen), stock: sent(stock.seen), reflexer: ours.seen.filter(({ url }) => url.host === check.REFLEXER).length,
+      result: ours.result };
   }
   return found;
 }
@@ -314,14 +355,15 @@ async function signedAsMade(faulty = sdk) {
 /** A line's stock form: the same client, with no line of reflexer's. @param {string} name */
 function stockOf(name) {
   return (/** @type {any} */ way, /** @type {boolean} */ keyed) => {
-    const real = sdk.bedrock;
-    const none = { ...real, wrap: (/** @type {any} */ client) => client, fetch: (/** @type {any} */ _, /** @type {any} */ options) => options.fetch,
-      anthropicMiddleware: (/** @type {any} */ request, /** @type {any} */ next) => next(request), aiMiddleware: {} };
-    sdk.bedrock = none;
+    const real = [sdk.bedrock, sdk.bedrockAi];
+    const fetch = (/** @type {any} */ _, /** @type {any} */ options) => options.fetch;
+    sdk.bedrock = { ...real[0], wrap: (/** @type {any} */ client) => client, fetch,
+      anthropicMiddleware: (/** @type {any} */ request, /** @type {any} */ next) => next(request) };
+    sdk.bedrockAi = { ...real[1], fetch, middleware: {} };
     try {
       return /** @type {any} */ (LINES.find(([line]) => line === name))[2](way, keyed);
     } finally {
-      sdk.bedrock = real;
+      [sdk.bedrock, sdk.bedrockAi] = real;
     }
   };
 }
@@ -352,10 +394,28 @@ describe("Bedrock", () => {
       });
     }
 
-    test(`${name}: a signed call goes straight, never to reflexer`, async () => {
+    test(`${name}: a signed call goes to reflexer as signed, and its answer back`, async () => {
       const { result, seen } = await called(make, false, ops[0]);
-      assert.equal(result, FROM.bedrock);
-      assert.deepEqual(hosts(seen), [BEDROCK]);
+      assert.equal(result, FROM.reflexer);
+      assert.deepEqual(hosts(seen), [check.REFLEXER]);
+      assert.match(seen[0].headers.get("authorization") ?? "", /^AWS4-HMAC-SHA256 /);
+      assert.equal(seen[0].headers.get("reflexer-upstream"), `https://${BEDROCK}`);
+    });
+
+    for (const reflexer of ["busy", "down"]) {
+      test(`${name}: reflexer ${reflexer}, a signed call goes straight, and Bedrock takes it`, async () => {
+        const { result, seen } = await called(make, false, ops[0], reflexer);
+        assert.equal(result, FROM.bedrock, String(result));
+        assert.equal(seen.filter(({ url }) => url.host === BEDROCK).length, 1);
+      });
+    }
+
+    test(`${name}: a signed call's fallback is signed after reflexer's leg, or within its window`, async () => {
+      const { result, seen } = await called(make, false, ops[0], "late");
+      assert.equal(result, FROM.bedrock, String(result));
+      const [leg, straight] = [check.REFLEXER, BEDROCK].map((host) => /** @type {any} */ (seen.find(({ url }) => url.host === host)).headers.get("x-amz-date"));
+      if (name === "ai-sdk") assert.equal(straight, leg); // its fallback reuses its signature: its window bounds the leg
+      else assert.ok(straight > leg, `${leg} then ${straight}`);
     });
 
     test(`${name}: the skip's header sends a keyed call straight, and leaves for no one`, async () => {
@@ -368,7 +428,7 @@ describe("Bedrock", () => {
     });
 
     test(`${name}: a replay never reaches Bedrock`, async () => {
-      for (const [keyed, reflexer] of [[true, "busy"], [true, "down"], [false, "served"]]) {
+      for (const [keyed, reflexer] of [[true, "busy"], [true, "down"], [false, "busy"], [false, "down"]]) {
         const way = farEnds(String(reflexer));
         const replayed = await replay(name, way, Boolean(keyed));
         assert.ok(replayed instanceof Error, `keyed ${keyed}, reflexer ${reflexer}: ${replayed}`);
@@ -432,7 +492,7 @@ async function replay(name, way, keyed) {
         middleware: [sdk.bedrock.anthropicMiddleware], ...(keyed ? { apiKey: BEARER } : { awsAccessKey: CREDENTIALS.accessKeyId, awsSecretKey: CREDENTIALS.secretAccessKey }) });
       return await client.messages.create(/** @type {any} */ ({ model: MODEL, max_tokens: 8, messages: [{ role: "user", content: "Hi" }], ...field }));
     }
-    const fetch = sdk.bedrock.fetch(sdk.key, { fetch: way.fetch });
+    const fetch = sdk.bedrockAi.fetch(sdk.key, { fetch: way.fetch });
     const headers = { "content-type": "application/json", authorization: keyed ? `Bearer ${BEARER}` : "AWS4-HMAC-SHA256 Credential=made-up" };
     return await fetch(`https://${BEDROCK}/model/${MODEL}/converse`, { method: "POST", headers, body: JSON.stringify({ messages: HI, ...field }) });
   } catch (failure) {
@@ -629,33 +689,108 @@ describe("Promises", () => {
   test("through each Bedrock line the key reaches only reflexer", async () => {
     for (const keyed of [true, false]) {
       for (const [name, given] of Object.entries(await hostsGiven((one) => one.key, keyed))) {
-        assert.deepEqual(given, keyed ? [check.REFLEXER] : [], `${name}, keyed ${keyed}`);
+        assert.deepEqual(given, [check.REFLEXER], `${name}, keyed ${keyed}`);
       }
     }
   });
 
-  test("a Bedrock API key reaches only Bedrock or reflexer, and a signature only Bedrock", async () => {
-    for (const [name, given] of Object.entries(await hostsGiven(() => BEARER, true))) {
-      assert.deepEqual(given, [check.REFLEXER, BEDROCK].sort(), name);
-    }
-    for (const [name, given] of Object.entries(await hostsGiven(() => "AWS4-HMAC-SHA256 ", false))) {
-      assert.deepEqual(given, [BEDROCK], name);
+  test("a Bedrock API key or a signature reaches only Bedrock or reflexer, and the AWS secret no one", async () => {
+    for (const keyed of [true, false]) {
+      for (const [name, given] of Object.entries(await hostsGiven(() => (keyed ? BEARER : "AWS4-HMAC-SHA256 "), keyed))) {
+        assert.deepEqual(given, [check.REFLEXER, BEDROCK].sort(), `${name}, keyed ${keyed}`);
+      }
+      for (const [name, given] of Object.entries(await hostsGiven(() => CREDENTIALS.secretAccessKey, keyed))) assert.deepEqual(given, [], name);
     }
   });
 
-  test("a signed call never goes to reflexer, and reaches the client's own fetch or handler as its library made it", async () => {
-    for (const [name, { line, stock, reflexer }] of Object.entries(await signedAsMade())) {
-      assert.equal(reflexer, 0, name);
-      assert.ok(line.length === 1 && line[0].signed, name);
-      assert.deepEqual(line, stock, name);
+  test("a signed call goes to reflexer, and its fallback reaches the client's own fetch or handler as a stock call, taken", async () => {
+    for (const headers of [undefined, NAMESPACE]) {
+      for (const [name, { line, stock, reflexer, result }] of Object.entries(await signedAsMade(sdk, headers))) {
+        assert.equal(reflexer, headers && name === "ai-sdk" ? 0 : 1, name); // the AI SDK signs a header of ours, and its fallback drops it: straight
+        assert.equal(result, FROM.bedrock, `${name}: ${result}`);
+        assert.ok(line.length === 1 && line[0].signed, name);
+        assert.deepEqual(line, stock, name);
+      }
+    }
+  });
+
+  test("aws-js: the fallback is signed at the client's own clock, as AWS JS corrects it", async () => {
+    assert.deepEqual(await clockHeld(sdk), { fallback: FROM.bedrock, reflexer: 1 });
+  });
+});
+
+/**
+ * An AWS JS client whose clock AWS JS corrected (Bedrock's clock ahead of this machine's by more than the window), its
+ * signed call's fallback after a busy reflexer: what it answered, and how many requests reflexer saw.
+ * @param {any} faulty
+ */
+async function clockHeld(faulty) {
+  clock.offset = 2 * WINDOW;
+  try {
+    const way = farEnds("busy");
+    const client = faulty.bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1", maxAttempts: 1, requestHandler: way.handler, credentials: CREDENTIALS }), sdk.key);
+    client.config.systemClockOffset = clock.offset; // as AWS JS sets it from an answer's `Date`
+    const fallback = await awsCall(client, "converse", {}).catch((/** @type {any} */ failure) => String(failure));
+    return { fallback, reflexer: way.seen().filter(({ url }) => url.host === check.REFLEXER).length };
+  } finally {
+    clock.offset = 0;
+  }
+}
+
+describe("Attempts", () => {
+  test("anthropic-bedrock: a signed call never sent to reflexer is attempted once, its headers as signed", async () => {
+    for (const headers of [undefined, NAMESPACE]) {
+      const way = farEnds("served");
+      let attempts = 0;
+      const client = new AnthropicBedrock({ awsRegion: "us-east-1", maxRetries: 0, awsAccessKey: CREDENTIALS.accessKeyId, awsSecretKey: CREDENTIALS.secretAccessKey,
+        fetch: sdk.bedrock.fetch(sdk.key, { fetch: way.fetch, sample: 0 }),
+        middleware: [sdk.bedrock.anthropicMiddleware, (/** @type {any} */ request, /** @type {any} */ next) => { attempts += 1; return next(request); }] });
+      const answer = await client.messages.create({ model: MODEL, max_tokens: 8, messages: [{ role: "user", content: "Hi" }] }, { headers });
+      assert.equal(answer.content.map((/** @type {any} */ part) => part.text).join(""), FROM.bedrock);
+      assert.equal(attempts, 1, JSON.stringify(headers));
+      assert.deepEqual(hosts(way.seen()), [BEDROCK]);
     }
   });
 });
 
+describe("Window", { skip: tooOld }, () => {
+  const make = /** @type {any} */ (LINES.find(([name]) => name === "ai-sdk"))[2];
+
+  test("ai-sdk: reflexer stalled, its leg is cut while the signature holds, and the same signed call goes straight", async () => {
+    assert.ok(await windowCuts(sdk));
+  });
+
+  test("ai-sdk: a signed call with no time left of its window goes straight, never to reflexer", async () => {
+    const { margin } = sdk.bedrockAi.WINDOW;
+    sdk.bedrockAi.WINDOW.margin = sdk.bedrockAi.WINDOW.ms + 1;
+    try {
+      const { result, seen } = await called(make, false, "converse");
+      assert.equal(result, FROM.bedrock);
+      assert.deepEqual(hosts(seen), [BEDROCK]);
+    } finally {
+      sdk.bedrockAi.WINDOW.margin = margin;
+    }
+  });
+});
+
+/** Whether the AI SDK's signed call, reflexer stalled, its window shortened, went straight within it. @param {any} faulty */
+async function windowCuts(faulty) {
+  const make = /** @type {any} */ (linesOf(faulty).find(([name]) => name === "ai-sdk"))[2];
+  const { ms, margin } = faulty.bedrockAi.WINDOW;
+  Object.assign(faulty.bedrockAi.WINDOW, { ms: 1500, margin: 500 }); // the leg may take a second
+  const began = performance.now();
+  try {
+    const { result, seen } = await called(make, false, "converse", "stall", { signal: AbortSignal.timeout(3000) });
+    return result === FROM.bedrock && performance.now() - began < 1500 && hosts(seen).length === 2;
+  } finally {
+    Object.assign(faulty.bedrockAi.WINDOW, { ms, margin });
+  }
+}
+
 describe("Broken", () => {
   test("the key on the client's own request turns it red", async () => {
-    await check.planted("bedrock.js", "return response ? { response } : handler.handle(smithyStaysStraight(request), given);",
-      "return response ? { response } : handler.handle({ ...smithyStaysStraight(request), headers: { ...request.headers, \"reflexer-key\": key } }, given);",
+    await check.planted("bedrock.js", ": smithyStaysStraight(request), given);\n    },",
+      ": { ...smithyStaysStraight(request), headers: { ...request.headers, \"reflexer-key\": key } }, given);\n    },",
       async (faulty) => {
         const given = await hostsGiven((one) => one.key, true, faulty);
         assert.ok(given["aws-js"].includes(BEDROCK), JSON.stringify(given));
@@ -672,17 +807,66 @@ describe("Broken", () => {
     await check.planted("index.js", ', redirect: "manual" }', " }", async (faulty) => {
       assert.ok((await hostsGiven((one) => one.key, true, faulty))["anthropic-bedrock"].includes(ELSEWHERE));
       assert.ok((await hostsGiven(() => BEARER, true, faulty))["anthropic-bedrock"].includes(ELSEWHERE));
+      assert.ok((await hostsGiven(() => "AWS4-HMAC-SHA256 ", false, faulty))["anthropic-bedrock"].includes(ELSEWHERE));
     });
   });
 
-  test("a signed call sent to reflexer turns it red", async () => {
-    await check.planted("bedrock.js", "if (!keyed(tested(new Headers(plain(request.headers))))) return", "if (false) return", async (faulty) => {
-      assert.ok((await hostsGiven(() => "AWS4-HMAC-SHA256 ", false, faulty))["aws-js"].includes(check.REFLEXER));
-      assert.ok((await signedAsMade(faulty))["aws-js"].reflexer > 0);
+  test("a signed call not sent to reflexer turns it red", async () => {
+    await check.planted("bedrock.js", "export const signed = (headers) => /^AWS4-HMAC-SHA256 /.test(headers.get(\"authorization\") ?? \"\");",
+      "export const signed = (/** @type {Headers} */ headers) => false;", async (faulty) => {
+        const found = await signedAsMade(faulty);
+        assert.deepEqual(Object.values(found).map(({ reflexer }) => reflexer), Object.values(found).map(() => 0));
+      });
+  });
+
+  test("the AWS secret sent turns it red", async () => {
+    await check.planted("bedrock.js", "const route = reflexer.route(address.href, Object.fromEntries(new Headers(plain(request.headers))), isReplay(body));",
+      "const route = reflexer.route(address.href, { ...Object.fromEntries(new Headers(plain(request.headers))), \"x-made-up\": \"made-up-secret\" }, isReplay(body));",
+      async (faulty) => {
+        assert.ok((await hostsGiven(() => CREDENTIALS.secretAccessKey, false, faulty))["aws-js"].includes(check.REFLEXER));
+      });
+  });
+
+  test("a fallback not signed anew turns it red", async () => {
+    await check.planted("bedrock.js", "sent && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request))", "false ? null", async (faulty) => {
+      const { result, seen } = await called(linesOf(faulty)[0][2], false, "converse", "late");
+      const [leg, straight] = [check.REFLEXER, BEDROCK].map((host) => /** @type {any} */ (seen.find(({ url }) => url.host === host)).headers.get("x-amz-date"));
+      assert.equal(straight, leg, String(result));
     });
-    await check.planted("bedrock.js", "if (store?.skipped || !keyed(tested(new Headers(init.headers))))", "if (store?.skipped)", async (faulty) => {
-      assert.ok((await hostsGiven(() => "AWS4-HMAC-SHA256 ", false, faulty))["anthropic-bedrock"].includes(check.REFLEXER));
-      assert.ok((await signedAsMade(faulty))["anthropic-bedrock"].reflexer > 0);
+    await check.planted("bedrock.js", "if (!again.straight || seen.cut) throw failure;", "throw failure;", async (faulty) => {
+      const make = /** @type {any} */ (linesOf(faulty).find(([name]) => name === "anthropic-bedrock"))[2];
+      const { result } = await called(make, false, "invoke", "busy");
+      assert.ok(result instanceof Error, String(result));
+    });
+  });
+
+  test("a fallback signed at the machine's clock, not AWS JS's own, turns it red", async () => {
+    await check.planted("bedrock.js", "(Date.now() + (config.systemClockOffset ?? 0)) / 1000", "Date.now() / 1000", async (faulty) => {
+      const { fallback } = await clockHeld(faulty);
+      assert.notEqual(fallback, FROM.bedrock);
+    });
+  });
+
+  test("a fallback signed for another scope turns it red", async () => {
+    for (const scope of ['signingRegion: "eu-west-1"', 'signingService: "made-up-service"']) {
+      await check.planted("bedrock.js", "{ signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000 }",
+        `{ signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000, ${scope} }`, async (faulty) => {
+          const { result } = await called(linesOf(faulty)[0][2], false, "converse", "busy");
+          assert.notEqual(result, FROM.bedrock, scope);
+        });
+    }
+  });
+
+  test("ai-sdk: a leg not bounded by its window turns it red", { skip: tooOld }, async () => {
+    await check.planted("bedrock-ai.js", "const time = String(input).startsWith(base) ? left(new Headers(init.headers)) : null;", "const time = null;", async (faulty) => {
+      assert.equal(await windowCuts(faulty), false);
+    });
+  });
+
+  test("ai-sdk: a signed header of ours sent to reflexer turns it red", { skip: tooOld }, async () => {
+    await check.planted("bedrock-ai.js", "(time <= 0 || [...headers.keys()].some((name) => name.startsWith(OURS)))", "time <= 0", async (faulty) => {
+      const { result } = (await signedAsMade(faulty, NAMESPACE))["ai-sdk"];
+      assert.notEqual(result, FROM.bedrock);
     });
   });
 
@@ -695,9 +879,15 @@ describe("Broken", () => {
       });
   });
 
+  test("ai-sdk: a signing time read as local time turns it red", { skip: tooOld }, async () => {
+    await check.planted("bedrock-ai.js", '"$1-$2-$3T$4:$5:$6Z"', '"$1-$2-$3T$4:$5:$6"', async (faulty) => {
+      assert.equal(await windowCuts(faulty), false);
+    });
+  });
+
   test("a key in a frame of the SDK's at a throw turns it red", { skip: noSocket }, async () => {
-    await check.planted("bedrock.js", "const response = reflexerPassThrough ? null : await ask(request, given);",
-      "const held = { key }; const response = reflexerPassThrough ? null : await ask(request, given);", async (faulty) => {
+    await check.planted("bedrock.js", "const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);",
+      "const held = { key }; const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);", async (faulty) => {
         assert.deepEqual((await framesAtThrows(faulty)).shown, ["handle.held"]);
       });
   });
@@ -722,12 +912,8 @@ describe("Broken", () => {
 
   test("a signed call's own headers taken off turns it red", async () => {
     await check.planted("bedrock.js", "const ours = keyed(new Headers(plain(request.headers))) ? OURS : PASS_THROUGH;", "const ours = OURS;", async (faulty) => {
-      const found = await signedAsMade(faulty);
+      const found = await signedAsMade(faulty, NAMESPACE);
       assert.notDeepEqual(found["aws-js"].line, found["aws-js"].stock);
-    });
-    await check.planted("bedrock.js", "if (!keyed(headers)) return send(input, init);", "", async (faulty) => {
-      const found = await signedAsMade(faulty);
-      assert.notDeepEqual(found["anthropic-bedrock"].line, found["anthropic-bedrock"].stock);
     });
   });
 });

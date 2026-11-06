@@ -7,7 +7,7 @@ ChatBedrockConverse, `strands`'s BedrockModel, `pydantic-ai`'s BedrockConverseMo
 `anthropic-mantle` (anthropic's Bedrock clients); `litellm`; and the shipped lines at Bedrock's compatible routes,
 `openai-compat` (`/openai/v1`) and `anthropic-compat` (`/anthropic`), which take a key only.
 """
-import asyncio, base64, importlib.util, json, os, struct, time, zlib
+import asyncio, base64, datetime, importlib.util, json, os, struct, time, zlib
 
 REGION = "us-east-1"
 RUNTIME = f"bedrock-runtime.{REGION}.amazonaws.com"
@@ -86,32 +86,46 @@ def events_for(wire, text):
     return [event("chunk", {"bytes": base64.b64encode(json.dumps(step).encode()).decode()}) for step in steps]
 
 
-def refusal(arrival):
+WINDOW = 300.0  # seconds a SigV4 signature holds at Bedrock from the time it says it signed: AWS's five minutes
+
+
+def refusal(arrival, window=WINDOW):
     """Bedrock's own refusal of a call whose key or signature it does not take, (status, headers, body), in the route's
-    format, as Bedrock answers each; None for a call it takes. Its own operations: AWS's error; its compatible routes:
-    their format's, with no AWS error type."""
+    format, as Bedrock answers each; None for a call it takes. A signature it takes holds, and its signing time is within
+    `window` of its arrival. Its own operations: AWS's error; its compatible routes: their format's, with no AWS error type."""
     auth = arrival.headers.get("authorization") or ""
-    if auth == f"Bearer {BEARER}" or arrival.headers.get("x-api-key") == BEARER or (auth.startswith("AWS4-HMAC-SHA256 ") and signature_holds(arrival)):
+    holds = auth.startswith("AWS4-HMAC-SHA256 ") and signature_holds(arrival)
+    if auth == f"Bearer {BEARER}" or arrival.headers.get("x-api-key") == BEARER or (holds and in_window(arrival, window)):
         return None
     path, mantle = arrival.path.split("?")[0], arrival.host.split(":")[0] == MANTLE
-    message = "made-up: the key or signature is not valid"
+    message = "made-up: Signature expired" if holds else "made-up: the key or signature is not valid"
     if wire_of(path):
-        return 403, {"x-amzn-errortype": "AccessDeniedException"}, {"message": message}
+        return 403, {"x-amzn-errortype": "InvalidSignatureException" if holds else "AccessDeniedException"}, {"message": message}
     if path.endswith("/chat/completions"):
         return 401, {}, {"error": {"type": "permission_denied_error", "code": "invalid_api_key" if mantle else "access_denied", "message": message}}
     return (401 if mantle else 403), {}, {"type": "error", "error": {"type": "authentication_error" if mantle else "permission_error", "message": message}}
 
 
+def in_window(arrival, window):
+    """Whether a signed call's signing time is within `window` seconds of its arrival, by the clock Bedrock judges it by."""
+    signed = datetime.datetime.strptime(arrival.headers.get("x-amz-date", ""), "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
+    return abs(arrival.wall - signed.timestamp()) <= window
+
+
+SCOPES = {RUNTIME: (REGION, "bedrock"), MANTLE: (REGION, "bedrock-mantle")}  # each endpoint's signing region and service, as stock signs
+
+
 def signature_holds(arrival):
-    """Whether a SigV4 call checks as Bedrock checks it: its signature recomputed by botocore's own signer, over the
-    headers it says it signed, at the time it says it signed, with the suite's made-up secret."""
+    """Whether a SigV4 call checks as Bedrock checks it: its scope the endpoint's own region and service, its signature
+    recomputed by botocore's own signer, over the headers it says it signed, at the time it says it signed, with the
+    suite's made-up secret."""
     import botocore.auth, botocore.awsrequest, botocore.credentials
     auth = arrival.headers.get("authorization", "")
     if not auth.startswith("AWS4-HMAC-SHA256 "):
         return False
     parts = dict(part.strip().split("=", 1) for part in auth[len("AWS4-HMAC-SHA256 "):].split(","))
     key, _, region, service, _ = parts["Credential"].split("/")
-    if key != ACCESS_KEY:
+    if key != ACCESS_KEY or (region, service) != SCOPES.get(arrival.host.split(":")[0]):  # Bedrock's own scope, not the one the call names
         return False
     signed = parts["SignedHeaders"].split(";")
     request = botocore.awsrequest.AWSRequest(arrival.method, f"https://{arrival.host}{arrival.path}", data=arrival.body,
@@ -142,7 +156,10 @@ def botocore_config(settings):
 
 
 def boto3_kwargs(settings):
-    return {"region_name": REGION, "config": botocore_config(settings)}
+    """`session_token`: the suite's credentials given with it, explicitly: a session's credentials, once resolved from
+    the variables, are kept for every client it makes after."""
+    token = {"aws_access_key_id": ACCESS_KEY, "aws_secret_access_key": SECRET, "aws_session_token": settings["session_token"]} if settings.get("session_token") else {}
+    return {"region_name": REGION, "config": botocore_config(settings), **token}
 
 
 def one_call_headers(client, headers):
@@ -337,6 +354,7 @@ class AnthropicBedrock(Lib):
         stock, line = self.classes()
         config = {"aws_region": REGION, "max_retries": settings.get("retries", 0), "timeout": settings.get("timeout") or 60}
         config |= {"api_key": settings.get("bedrock_key", BEARER)} if keyed else {"aws_access_key": ACCESS_KEY, "aws_secret_key": SECRET}
+        config |= {"aws_session_token": settings["session_token"]} if settings.get("session_token") and not keyed else {}
         return line(**config, reflexer_key=key, sample=settings.get("share", 1.0)) if key else stock(**config)
 
     def call(self, client, op, headers=None, args=None, extra=None):

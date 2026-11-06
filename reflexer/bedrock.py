@@ -3,11 +3,15 @@ Anthropic runs as shipped. The wire: which calls go to reflexer. It names no pro
 names its upstream, its region in its host.
 
 A call that carries a Bedrock API key (`Authorization: Bearer`) goes to reflexer, the key among its headers, as any
-provider's key does; it falls back to the same call, straight. A call the library signed (SigV4) never goes to reflexer:
-it reaches Bedrock as the library made it, less any header of ours its signature does not cover, which never leaves.
+provider's key does; it falls back to the same call, straight. A call to Bedrock's runtime the library signed (SigV4)
+goes to reflexer as signed; reflexer never passes the client's signature on, and answers from what it holds or sends
+the call back. Its fallback is signed anew by the library's own signer after reflexer's leg, where a line reaches one (the botocore family,
+anthropic's Bedrock clients), so it is as fresh as stock's. What leaves for Bedrock is as the library made it, less any
+header of ours its signature does not cover, which never leaves.
 
-What the lines share: `keyed`, `straight`, the botocore family's per-call skip (`skip_taken`), reflexer's leg tried once
-more when TLS refused its connection (`again_if_refused`), and the httpx lines' transport (`Keyed`, `setup_http_client`).
+What the lines share: `keyed`, `signed`, `straight`, the botocore family's per-call skip and signer (`skip_taken`,
+`signed_anew`), reflexer's leg tried once more when TLS refused its connection (`again_if_refused`), and the httpx lines'
+transport (`Keyed`, `setup_http_client`).
 """
 import copy, inspect, re
 from . import BASE, OURS, PASS_THROUGH, Reflexer, ReplayNotTaken, is_replay
@@ -18,6 +22,8 @@ BEDROCK = {
     "calls":         r"/model/[^/]+/(invoke|invoke-with-response-stream|converse|converse-stream)$",
 }
 SKIPPED_HERE = "reflexer_pass_through"  # in a botocore call's context: this call goes straight
+SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
+UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its URL, body and headers as they came to `before-sign`, before the client's handlers
 ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerPassThrough=True)`
 
 
@@ -25,6 +31,12 @@ def keyed(headers):
     """Whether the call carries a Bedrock API key, which reflexer passes on as any provider's key; not a signature."""
     auth = headers.get("authorization") or ""
     return (auth.decode() if isinstance(auth, bytes) else auth).lower().startswith("bearer ")  # a scheme's name, in any case
+
+
+def signed(headers):
+    """Whether the library signed the call by SigV4, AWS's signature over it, which holds a few minutes from its signing time."""
+    auth = headers.get("authorization") or ""
+    return (auth.decode() if isinstance(auth, bytes) else auth).startswith("AWS4-HMAC-SHA256 ")
 
 
 def straight(request, headers, body):
@@ -50,21 +62,48 @@ def skip_taken(event_name, kwargs, before):
     client's own handlers); the header, from the request after the client's own `before-sign` handlers, before it is signed."""
     if before and event_name.startswith("provide-client-params.") and kwargs["params"].pop(ARGUMENT, None):
         kwargs["context"][SKIPPED_HERE] = True
+    if before and event_name.startswith("before-sign."):
+        request = kwargs["request"]
+        request.context[UNSIGNED] = (request.url, request.data, lower(request.headers))
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
+        request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
         for name in [name for name in request.headers if name.lower() == PASS_THROUGH]:
             del request.headers[name]
             request.context[SKIPPED_HERE] = True
 
 
 def botocore_route(reflexer, request):
-    """A botocore call's way to reflexer, (url, headers), or None: only a call carrying a key, not skipped, its body in
-    memory (one that is not could not be sent twice)."""
+    """A botocore call's way to reflexer, (url, headers), or None: only a call carrying a key or signed, not skipped, its
+    body in memory (one that is not could not be sent twice)."""
     body = request.body if isinstance(request.body, bytes) else None
     headers = lower(request.headers)
-    if body is None or not keyed(headers) or (request.context or {}).get(SKIPPED_HERE):
+    if body is None or not (keyed(headers) or signed(headers)) or (request.context or {}).get(SKIPPED_HERE):
         return None
     return reflexer.route(request.url, headers, is_replay(body))
+
+
+def signing_anew(request, unprepared):
+    """The client's own botocore signer for a signed call after reflexer's leg, and what it signs: (signer, operation,
+    the request as it came to `before-sign`), or None. botocore's signer takes a request before botocore prepares it
+    (`unprepared`, botocore's `AWSRequest`), its context shared; the client's `before-sign` handlers run on it again, as on
+    any attempt botocore signs, and a header set after signing stays unsigned, as stock."""
+    signer, operation = (request.context or {}).get(SIGNER, (None, None))
+    if signer is None or not signed(lower(request.headers)):
+        return None
+    url, data, headers = request.context[UNSIGNED]
+    made = unprepared(request.method, url, data=data, headers=headers)
+    made.context = request.context
+    return signer, operation, made
+
+
+def signed_anew(request, made):
+    """The straight request as the client's own signer just made it anew, however long reflexer's leg took: its URL, body
+    and headers, those set after signing kept."""
+    prepared = made.prepare()
+    request.url, request.body = prepared.url, prepared.body
+    for name, value in prepared.headers.items():
+        request.headers[name] = value
 
 
 def answered(responses):
@@ -127,8 +166,10 @@ async def aagain_if_refused(send):
 
 
 class Keyed(Through):
-    """The shipped `Through`, for a Bedrock call: reflexer's leg only for a call carrying a key, tried once more when TLS
-    refused it while connecting. Any other call goes straight, as the library made it (`straight`)."""
+    """The shipped `Through`, for a Bedrock call: a call carrying a key goes to reflexer and falls back to the same call,
+    straight; reflexer's leg is tried once more when TLS refused it while connecting. A signed call takes `signed_call`:
+    here straight, as the library made it, as Mantle's: reflexer takes signed calls on Bedrock's runtime only; a line whose library signs
+    Bedrock's runtime calls gives its own. Any other call goes straight (`straight`)."""
 
     def __init__(self, reflexer, inner):
         super().__init__(reflexer, inner)
@@ -145,22 +186,28 @@ class Keyed(Through):
     def handle_request(self, request):
         if keyed(request.headers):
             return super().handle_request(request)
-        return self.as_made(straight(request, request.headers, body_of(request)))
+        return (self.signed_call if signed(request.headers) else self.straight)(request)
 
     async def handle_async_request(self, request):
         if keyed(request.headers):
             return await super().handle_async_request(request)
-        return await self.as_made(straight(request, request.headers, body_of(request)))
+        return await (self.asigned_call if signed(request.headers) else self.straight)(request)
+
+    def straight(self, request):
+        """The client's own call, as the library made it; a coroutine on an async client."""
+        return self.as_made(straight(request, request.headers, body_of(request)))
+
+    signed_call = asigned_call = straight
 
 
-def setup_http_client(stock, wire):
-    """The shipped `setup_http_client`, with `Keyed` for its transport."""
+def setup_http_client(stock, wire, transport=Keyed):
+    """The shipped `setup_http_client`, with Bedrock's transport, `Keyed` or a line's own."""
 
     def http_client(key, own=None, base=BASE, sample=1.0):
         own = own or stock()
         inner = copy.copy(own)  # the client's own object stays as it was, for its other users; they share connections
         inner.event_hooks = {}  # they run once, above, and never see our key
-        outer = type(own)(transport=Keyed(Reflexer(key, wire, base, sample), inner), event_hooks=own.event_hooks, auth=own.auth,
+        outer = type(own)(transport=transport(Reflexer(key, wire, base, sample), inner), event_hooks=own.event_hooks, auth=own.auth,
                           params=own.params, headers=own.headers, cookies=own.cookies.jar, timeout=own.timeout,
                           follow_redirects=own.follow_redirects, max_redirects=own.max_redirects, base_url=own.base_url)
         outer.reflexer_through = dict(key=key, base=base, sample=sample)  # what a copy given its own HTTP client is made with

@@ -217,6 +217,74 @@ class GeminisArguments(unittest.TestCase):
             self.assertIsInstance(inner, library.Client, library.__name__)
 
 
+class GeminiClosing(unittest.TestCase):
+    """Reflexer's Gemini client closes as stock's does. On a real local socket kept alive: a mock transport holds no
+    connection to close."""
+
+    def setUp(self):
+        import http.server, json, threading
+
+        class Kept(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"  # the connection stays open, in the pool of the event loop that made it
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                body = json.dumps({"candidates": [{"content": {"role": "model", "parts": [{"text": "made up"}]}}]}).encode()
+                self.send_response(200)
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_GET = do_POST
+
+            def log_message(self, *_):
+                pass
+
+        self.servers = [http.server.ThreadingHTTPServer(("127.0.0.1", 0), Kept) for _ in range(2)]  # two origins, as reflexer and Google
+        for server in self.servers:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.server = self.servers[0]
+
+    def tearDown(self):
+        for server in self.servers:
+            server.shutdown()
+            server.server_close()
+
+    def test_async_closed_in_a_later_event_loop_as_stock(self):
+        """Its async calls made in one event loop, its close in a later one: as google-genai closes a client collected
+        while a loop runs (`__del__`). Stock's aiohttp sessions of a loop that ended are left, not closed."""
+        local = f"http://127.0.0.1:{self.server.server_port}"
+        client = reflexer.gemini.Client(api_key="made-up", reflexer_key=KEY, reflexer_base=local, http_options={"base_url": local})
+        self.assertEqual(asyncio.run(client.aio.models.generate_content(model="m", contents="x")).text, "made up")
+        asyncio.run(client.aio.aclose())  # raises nothing
+
+    def test_async_shared_arguments_closed_in_a_later_event_loop_as_stock(self):
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        client = httpx.AsyncClient(transport=both)
+        self.assertEqual(asyncio.run(client.post(f"http://127.0.0.1:{self.server.server_port}/", content=b"{}")).status_code, 200)
+        asyncio.run(both.aclose())  # raises nothing
+
+    def test_async_shared_arguments_closed_in_a_later_event_loop_cut_no_other_call(self):
+        """One client's close, held for another's call in flight in a later event loop, runs as that call lands."""
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        one, other = httpx.AsyncClient(transport=both), httpx.AsyncClient(transport=both)
+        first, second = (f"http://127.0.0.1:{server.server_port}/" for server in self.servers)
+        self.assertEqual(asyncio.run(one.get(first)).status_code, 200)
+
+        async def in_flight():
+            async with other.stream("GET", second) as answer:
+                await one.aclose()
+                return answer.status_code, await answer.aread()
+        self.assertEqual(asyncio.run(in_flight())[0], 200)
+
+    def test_any_other_failure_to_close_is_raised(self):
+        class Failing:
+            async def aclose(self):
+                raise RuntimeError("made up")
+        with self.assertRaises(RuntimeError):
+            asyncio.run(reflexer.transport.closed_unless_its_loop_ended(Failing()))
+
+
 class SharedArguments(unittest.TestCase):
     """Two clients made from one `client_args`, as stock each closing its own: one closing cuts nothing of the other's
     in flight. On a real local socket: closing a mock transport cuts nothing."""

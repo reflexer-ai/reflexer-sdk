@@ -12,4 +12,6 @@ Every change keeps each promise in [SECURITY.md](SECURITY.md): a new promise nam
 
 Every code example in README.md and `docs/` but a shell command runs in those checks, after a comment saying what it must show (`tests/acceptance/test_docs.py`); an example no check runs is a bug.
 
+Before a merge, every check of CI runs here, each Python and Node version it covers: `sh tools/ci.sh` (`sh tools/ci.sh check`, `PYTHONS=3.14 NODES=24 ...` to narrow it). GitHub runs the same workflow weekly only.
+
 The code stays within the size budget in `pyproject.toml` (TypeScript: in `typescript/package.json`); a pull request that raises it says why there. No dependency is added to either package: the provider SDKs are the client's.

@@ -252,7 +252,7 @@ describe("Failures", () => {
       const url = new URL(input);
       seen.push(url.host);
       if (url.host !== check.REFLEXER) return Promise.resolve(check.providers(url));
-      return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
+      return check.stalled(init.signal);
     };
     const client = new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, fetch: hung, timeout: 50, maxRetries: 1 });
     const answer = await client.chat.completions.create({ model: "m", messages: [] });

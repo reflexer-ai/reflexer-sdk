@@ -12,6 +12,21 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (input, init) => new URL(input instanceof Request ? input.url : input).hostname === "127.0.0.1"
   ? realFetch(input, init) : Promise.reject(new TypeError("offline: the tests call no one but this machine"));
 export const REFLEXER = "api.reflexer.ai";
+const HELD_MS = 1000; // how often a stalled answer's handle wakes: any period holds the event loop
+
+/**
+ * A stalled answer, cut only by `signal`, holding the event loop as a real connection does while its answer waits. Node
+ * 20's and 22's test runners hold none of their own: a stall holding nothing ends the test while a bound on an unref'd
+ * timer (`AbortSignal.timeout`'s) still waits to fire.
+ * @param {AbortSignal | null | undefined} signal
+ */
+export function stalled(signal) {
+  const cut = () => signal?.reason ?? new DOMException("aborted", "AbortError");
+  if (signal?.aborted) return Promise.reject(cut()); // as a real fetch given a signal already aborted
+  const held = setInterval(() => {}, HELD_MS);
+  return /** @type {Promise<never>} */ (new Promise((_, fail) => signal?.addEventListener("abort", () => fail(cut()), { once: true })))
+    .finally(() => clearInterval(held));
+}
 export const CHAT = "https://api.openai.com/v1/chat/completions";
 export const REPLAY = '{"model": "made-up", "replay_response": {"id": "made-up"}}';
 const FAULTS = ".fault-"; // what starts each folder a fault is planted in, inside the package's own

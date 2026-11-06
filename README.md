@@ -1,6 +1,6 @@
 # reflexer
 
-Reflexer's SDK for Python and TypeScript. It sends your LLM calls through reflexer, on the provider SDK you already use: one line of your code changes. If reflexer does not answer a call, or cannot be reached, the call goes to your provider as before. Only a key reflexer refuses makes a call fail.
+Reflexer's SDK for Python and TypeScript. It sends your LLM calls through reflexer, on the provider SDK you already use: one line of your code changes. If reflexer does not answer a call, or cannot be reached, the call goes to your provider as before.
 
 It has no dependency of its own: it plugs into the HTTP client of the provider SDK you have. Its security promises, and the check that holds each one: [SECURITY.md](SECURITY.md).
 

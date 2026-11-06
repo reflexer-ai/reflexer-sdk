@@ -8,7 +8,7 @@ Calls that return a model's message: Chat Completions and Responses (OpenAI, Azu
 
 Your provider's format, unchanged, so your code reads it as before.
 
-- `model` ends in `-reflexer`, and `usage.cost` holds the price in USD. Gemini has no such field: its model is at `model_version`, its price in the `Reflexer-Cost` header. Converse has no `model`: read the headers.
+- `model` ends in `-reflexer`, and `usage.cost` holds the price in USD. Gemini: the model is at `model_version`, the price only in the `Reflexer-Cost` header. Converse has no `model`: read the headers.
 - Headers: `Reflexer-Answered-By` is `reflexer`, or `provider` when reflexer passed the call on; `Reflexer-Cost` is the price in nano USD; `Reflexer-Request-Id` names the call. A call that went to your provider directly has none of them.
 - Streams arrive event by event; their usage holds the price. Errors raise your SDK's own classes.
 
@@ -21,7 +21,7 @@ A key reflexer refuses raises your SDK's authentication error. A key revoked les
 ## When reflexer is slow
 
 - Python: your client's timeout covers the call to reflexer; when it fires, the call goes to your provider with the same timeout.
-- TypeScript: after `headersTimeout` ([typescript.md](typescript.md#how-long-reflexer-may-take)) the call goes to your provider. Your client's own timeout covers both: if it fires first, the call fails as a timeout, and your SDK's retry goes to your provider.
+- TypeScript: after `headersTimeout` ([typescript.md](typescript.md#how-long-reflexer-may-take)) the call goes to your provider. Your client's own timeout covers the call to reflexer and the one to your provider together: if it fires while reflexer is answering, that try fails as a timeout, and your SDK's retry goes to your provider.
 
 So a call can take up to twice your timeout, and your provider may run it twice. This, and every other limit: [Known limits](../SECURITY.md#known-limits).
 

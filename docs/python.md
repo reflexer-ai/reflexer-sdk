@@ -1,6 +1,6 @@
 # Python
 
-Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` to a class or `base=` to a function.
+Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` where you pass `reflexer_key=`, and `base=` where you pass the key by position.
 
 ## OpenAI
 
@@ -56,7 +56,7 @@ print(answer.choices[0].message.content)
 - Anthropic: `reflexer.anthropic.http_client`, `async_http_client`.
 - Gemini: `args = reflexer.gemini.client_args(key)`, given as both: `genai.Client(http_options={"client_args": args, "async_client_args": args})`.
 
-Each takes your own HTTP client as `own=`; `client_args` takes your own `client_args`.
+Each takes your own HTTP client as `own=`; `client_args` takes your own `client_args` dict as `own=`.
 
 ## LangChain
 
@@ -101,7 +101,7 @@ Anthropic the same way, `AnthropicProvider(anthropic_client=reflexer.anthropic.A
 
 ## Amazon Bedrock
 
-The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). What each library cannot do: [Known limits](../SECURITY.md#known-limits).
+The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). With your credentials, reflexer passes a call on to Bedrock only if you granted it a role in your AWS account at onboarding; otherwise a call it does not answer goes from your machine to Bedrock, as when reflexer is down. What each library cannot do: [Known limits](../SECURITY.md#known-limits).
 
 ### boto3
 

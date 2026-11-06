@@ -86,7 +86,7 @@ console.log((await chat.invoke("Hi")).content);
 
 ## Amazon Bedrock
 
-The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). What each library cannot do: [Known limits](../SECURITY.md#known-limits).
+The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). With your credentials, reflexer passes a call on to Bedrock only if you granted it a role in your AWS account at onboarding; otherwise a call it does not answer goes from your machine to Bedrock, as when reflexer is down. What each library cannot do: [Known limits](../SECURITY.md#known-limits).
 
 ### The AWS SDK
 

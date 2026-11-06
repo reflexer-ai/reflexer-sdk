@@ -130,7 +130,7 @@ async function far(reflexer, url, signal, bedrock = "ok", headers = new Headers(
   const refused = ours ? null : await refusal(url, headers, sent, raw);
   if (refused) return { status: 403, headers: { "content-type": "application/json", "x-amzn-errortype": "InvalidSignatureException" }, body: JSON.stringify({ message: refused }) };
   if (mode === "stall") {
-    await new Promise((_, fail) => signal?.addEventListener("abort", () => fail(signal.reason ?? new DOMException("aborted", "AbortError"))));
+    await check.stalled(signal);
   }
   if (mode === "busy" || mode === "late") return { status: 503, headers: { "reflexer-status-origin": "reflexer", "content-type": "application/json" }, body: "{}" };
   if (mode === "redirect") return { status: 307, headers: { location: `https://${ELSEWHERE}/moved`, "reflexer-status-origin": "reflexer" }, body: "" };

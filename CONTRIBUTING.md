@@ -10,6 +10,6 @@ Every change keeps each promise in [SECURITY.md](SECURITY.md): a new promise nam
 
     cd typescript && npm ci && npm run build && npm test      # TypeScript: types, gates, tests and the docs' examples, each with its planted fault
 
-Every code example in README.md and `docs/` runs in those checks, after a comment saying what it must show (`tests/acceptance/test_docs.py`); an example no check runs is a bug.
+Every code example in README.md and `docs/` but a shell command runs in those checks, after a comment saying what it must show (`tests/acceptance/test_docs.py`); an example no check runs is a bug.
 
 The code stays within the size budget in `pyproject.toml` (TypeScript: in `typescript/package.json`); a pull request that raises it says why there. No dependency is added to either package: the provider SDKs are the client's.

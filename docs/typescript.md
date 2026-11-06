@@ -114,7 +114,7 @@ const azure = new AzureChatOpenAI({ azureOpenAIApiDeploymentName: "your-deployme
 console.log((await azure.invoke("Hi")).content);
 ```
 
-`@langchain/anthropic`'s `ChatAnthropic` bundles a major of `@anthropic-ai/sdk` this SDK is not tested on, and its calls throw. `@langchain/google-genai` takes no `fetch`. So reflexer cannot reach either's calls.
+`@langchain/anthropic`'s `ChatAnthropic` takes a `fetch`, but bundles a major of `@anthropic-ai/sdk` this SDK is not tested on: given reflexer's, its calls throw. `@langchain/google-genai` takes no `fetch`. So reflexer cannot reach either's calls.
 
 ## Amazon Bedrock
 
@@ -185,7 +185,7 @@ The `Reflexer-Pass-Through` header sends one call straight to the provider.
 - Gemini: `config: { httpOptions: { headers: { "Reflexer-Pass-Through": "1" } } }` in the call.
 - LangChain.js's `ChatOpenAI`: `{ options: { headers: { "Reflexer-Pass-Through": "1" } } }` as `invoke`'s second argument.
 - The AI SDK: `headers: { "Reflexer-Pass-Through": "1" }` in the call; on Bedrock, `providerOptions: { reflexer: { passThrough: true } }`.
-- AWS JS: `client.send(command, { reflexerPassThrough: true })`. The option is not in AWS JS's types: TypeScript needs a cast. Where you do not make the `send` call yourself, as in LangChain.js, the header, set by a middleware of yours on the client.
+- AWS JS: `client.send(command, { reflexerPassThrough: true })`. The option is not in AWS JS's types: TypeScript needs a cast. Where you do not make the `send` call yourself, as in LangChain.js, set the header by a middleware of yours on the client.
 
 <!-- example: straight bedrock -->
 ```js
@@ -218,7 +218,7 @@ console.log((await client.send(converse, { reflexerPassThrough: true })).output.
 
 `sample` is the share of calls that go to reflexer; the rest go straight to the provider. Reflexer's classes take it beside `reflexerKey`; the `fetch` makers and `bedrock.wrap`, in their options.
 
-<!-- example: any -->
+<!-- example: straight -->
 ```js
 import { OpenAI } from "@reflexer-ai/sdk/openai";
 
@@ -264,4 +264,4 @@ What each field means, and what you see when reflexer is down or slow: [behaviou
 
 ## Versions
 
-Tested on openai 7, @anthropic-ai/sdk 1, @google/genai 2 from 2.29.0, @aws-sdk/client-bedrock-runtime 3 from 3.1160.0 and @ai-sdk/amazon-bedrock 5 from 5.0.132. A call made by any other release throws, where the stock SDK would answer, so a new release never sends your calls astray. One exception: @google/genai before 2.23.0 takes no `fetch`, so its calls go to Google as stock does, never through reflexer.
+Tested on openai 7, @anthropic-ai/sdk 1, @google/genai 2 from 2.29.0, @aws-sdk/client-bedrock-runtime 3 from 3.1160.0 and @ai-sdk/amazon-bedrock 5 from 5.0.132. On any other release reflexer throws where the stock SDK would answer: on import for `@reflexer-ai/sdk/openai` and `@reflexer-ai/sdk/anthropic`, on the call otherwise. So a new release never sends your calls astray. One exception: @google/genai before 2.23.0 takes no `fetch`, so its calls go to Google as stock does, never through reflexer.

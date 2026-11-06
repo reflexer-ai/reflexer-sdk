@@ -112,7 +112,7 @@ chat = reflexer.langchain_gemini.ChatGoogleGenerativeAI(model="your-model", refl
 print(chat.invoke("Hi").content)
 ```
 
-`AzureChatOpenAI` is LangChain's own class, given reflexer's HTTP clients; LangChain's own `ChatOpenAI` takes them the same way, from `reflexer.openai.http_client` and `async_http_client`. Given an HTTP client, LangChain stops asking a stream for its usage and price: pass `stream_usage=True` to keep them.
+`AzureChatOpenAI` is LangChain's own class, given reflexer's HTTP clients; LangChain's own `ChatOpenAI` takes them the same way, from `reflexer.openai.http_client` and `async_http_client`. Given an HTTP client, LangChain stops asking a stream for its usage and price: pass `stream_usage=True` to keep them. Reflexer's own `ChatOpenAI` keeps LangChain's choice for you.
 
 <!-- example: served -->
 ```python
@@ -298,7 +298,7 @@ print(answer["output"]["message"]["content"][0]["text"])
 
 `sample` is the share of calls that go to reflexer; the rest go straight to the provider. Every client and maker above takes it.
 
-<!-- example: any -->
+<!-- example: straight -->
 ```python
 import os
 import reflexer.openai

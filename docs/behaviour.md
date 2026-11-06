@@ -11,6 +11,7 @@ The calls that return a model's message: OpenAI's and Azure's Chat Completions a
 It is your provider's format, with nothing changed by the SDK, so the code that reads answers keeps working.
 
 - A served answer's `model` ends in `-reflexer`, and its price in USD is at `usage.cost`, where cost tools already look. Gemini's answers have no field for a price: theirs is in the `Reflexer-Cost` header, and the model is at `model_version` (TypeScript: `modelVersion`).
+- Bedrock's answers have no `model` to mark: read the headers below.
 - Every response from reflexer carries the headers `Reflexer-Request-Id`, `Reflexer-Answered-By` (`reflexer`, or `provider` when reflexer passed the call on) and `Reflexer-Cost` (in nano USD). A call that went straight to the provider has none of them.
 - A stream arrives as your provider SDK reads it, event by event; its usage, when your SDK asks for one, holds the price.
 - A provider's error raises your SDK's own error class, as before. An answer cut midway raises your SDK's own error too, as a cut from the provider would, with no price on it; reflexer's bill holds the price.
@@ -34,7 +35,7 @@ On Bedrock some libraries differ: [SECURITY.md, **Known limits**](../SECURITY.md
 
 - The reflexer key goes to reflexer only.
 - Your provider's key goes with each call to reflexer, which passes it on with the call when it passes the call on to your provider. On a signed Bedrock call, your AWS secret stays with your library's signer.
-- No header of reflexer's reaches your provider, but on Anthropic's signed Bedrock calls: [Known limits](../SECURITY.md#known-limits).
+- No header of reflexer's reaches your provider, except on some signed Bedrock calls (Anthropic's Bedrock and Mantle clients, the AI SDK's provider): [Known limits](../SECURITY.md#known-limits).
 
 What the SDK promises, and the check that holds each promise: [SECURITY.md](../SECURITY.md).
 

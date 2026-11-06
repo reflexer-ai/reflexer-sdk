@@ -5,14 +5,14 @@ Each code block in README.md and docs/ follows a comment saying what it must sho
 
     <!-- example: served -->    reflexer answers, and its answer is printed
     <!-- example: straight -->  the provider answers, and reflexer gets no call
-    <!-- example: any -->       either answers
 
-In each, the reflexer key reaches no provider. `bedrock` after the word runs the block twice: with a Bedrock API key in
+In each, an answer is printed for each call, no value printed is missing (None, NaN), and the reflexer key reaches no
+provider. A share of calls (`sample`) is drawn at the middle of its range, so a share below half goes straight. `bedrock` after the word runs the block twice: with a Bedrock API key in
 `AWS_BEARER_TOKEN_BEDROCK`, and with none, its calls signed with made-up AWS credentials. A `python` or `js` block with no
 such comment fails, and so does a code block of any other language but `sh`, a word the comment does not know, or a
 fence of tildes, which no check reads.
 """
-import contextlib, glob, io, os, re, shutil, sys, tempfile, unittest
+import contextlib, faulthandler, glob, io, os, re, shutil, sys, tempfile, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +24,8 @@ from run import AMBIENT  # noqa: E402
 
 DOCS = [os.path.join(ROOT, "README.md"), *sorted(glob.glob(os.path.join(ROOT, "docs", "**", "*.md"), recursive=True))]
 BLOCK = re.compile(r"(?:<!-- example: ([a-z ]+) -->\n)?```(\w*)\n(.*?)^```", re.S | re.M)
-OUTCOMES = ("served", "straight", "any")
+OUTCOMES = ("served", "straight")
+LIMIT = 60  # seconds a block may take: one that hangs ends the run, naming where it hung
 STOCK_FAILS = {"pydantic_ai.models.anthropic": sys.version_info < (3, 11)}  # as the docs say: Pydantic AI's own, on the stock client too
 WAYS = {"key": ({"AWS_BEARER_TOKEN_BEDROCK": bedrock.BEARER}, "Bearer"), "signed": ({}, "AWS4-HMAC-SHA256")}  # Bedrock's
 ENVIRONMENT = bedrock.ENVIRONMENT | {
@@ -70,7 +71,7 @@ class Docs(unittest.TestCase):
             for way in (WAYS if "bedrock" in words else [None]) if language == "python" else ():
                 with self.subTest(where, bedrock=way):
                     if any(fails and module in code for module, fails in STOCK_FAILS.items()):
-                        continue
+                        self.skipTest("Pydantic AI's own failure on this Python, with the stock client too")
                     self.check(where, words[0], code, way)
 
     def test_a_planted_fault_turns_it_red(self):
@@ -83,11 +84,15 @@ class Docs(unittest.TestCase):
             "an answer not printed": ("served", f"{ours}\n{call}\nprint({call})", None, "an answer printed for each call"),
             "a call to reflexer, said to go straight": ("straight", f"{ours}\nprint({call}.replace('served by reflexer', 'from the provider'))", None,
                                                         "reflexer got the call"),
-            "the reflexer key sent to a provider": ("any", f"{stock}\nclient = client.with_options(default_headers={{'x-made-up': "
+            "the reflexer key sent to a provider": ("straight", f"{stock}\nclient = client.with_options(default_headers={{'x-made-up': "
                                                            f"os.environ['REFLEXER_KEY']}})\nprint({call})", None, "the reflexer key reached a provider"),
             "a Bedrock key where a signed call is said": ("served", f"os.environ['AWS_BEARER_TOKEN_BEDROCK'] = {bedrock.BEARER!r}\n{boto3}\n"
                                                                     f"print({converse})", "signed", "not made the way asked"),
             "a call said to be Bedrock's, but not": ("served", f"{ours}\nprint({call})", "key", "not made the way asked"),
+            "a value missing": ("served", f"{ours}\nprint({call}, client.chat.completions.with_raw_response.create(model='m', messages=[])"
+                                          ".headers.get('Reflexer-Answerd-By'))", None, "a value printed is missing"),
+            "a share that has no effect": ("straight", "import os, reflexer.openai\nclient = reflexer.openai.OpenAI(reflexer_key="
+                                                       f"os.environ['REFLEXER_KEY'], sample=0.9)\nprint({call})", None, "must be straight"),
         }
         for name, (outcome, code, way, failure) in planted.items():
             with self.subTest(name), self.assertRaisesRegex(AssertionError, failure):
@@ -99,12 +104,18 @@ class Docs(unittest.TestCase):
         for standin in world.reflexer, world.provider:
             standin.seen.clear()
         environment, scheme = WAYS.get(way, ({}, None))
-        with mock.patch.dict(os.environ, ENVIRONMENT | environment), contextlib.redirect_stdout(io.StringIO()) as out:
-            exec(compile(code, where, "exec"), {"__name__": "__main__"})
+        faulthandler.dump_traceback_later(LIMIT, exit=True)
+        try:
+            with mock.patch.dict(os.environ, ENVIRONMENT | environment), mock.patch("random.random", return_value=0.5), \
+                 contextlib.redirect_stdout(io.StringIO()) as out:
+                exec(compile(code, where, "exec"), {"__name__": "__main__"})
+        finally:
+            faulthandler.cancel_dump_traceback_later()
         printed, reached, provided = out.getvalue(), world.reflexer.message_arrivals(), world.provider.message_arrivals()
-        answers = {"served": {harness.SERVED_TEXT}, "any": {harness.SERVED_TEXT, harness.STRAIGHT_TEXT}}.get(outcome, {harness.STRAIGHT_TEXT})
+        answers = {harness.SERVED_TEXT} if outcome == "served" else {harness.STRAIGHT_TEXT}
         given = {text for text in (harness.SERVED_TEXT, harness.STRAIGHT_TEXT) if text in printed}
         self.assertTrue(given and given <= answers, f"each answer printed must be {outcome}: {printed!r}")
+        self.assertIsNone(re.search(r"\b(None|NaN)\b", printed), f"a value printed is missing: {printed!r}")
         count = sum(printed.count(text) for text in given)
         self.assertGreaterEqual(count, len(reached) + len(provided), f"an answer printed for each call: {printed!r}")
         if outcome == "straight":

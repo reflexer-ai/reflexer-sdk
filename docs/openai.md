@@ -2,7 +2,7 @@
 
 Reflexer in front of your OpenAI calls, Python or TypeScript, by changing one import and one line.
 
-**Before you begin:** the `openai` package (Python 3, TypeScript 7), and `REFLEXER_KEY` set to the key you got at onboarding.
+**Before you begin:** `openai` 3 (Python) or `openai` 7 (TypeScript), and `REFLEXER_KEY` set to the key you got at onboarding. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`: the examples are plain JavaScript.
 
 ## 1. Install
 
@@ -56,7 +56,7 @@ Hello! How can I help you today?
 
 ## 3. Verify
 
-The reply looks the same either way. The `Reflexer-Answered-By` header says who answered: `reflexer`.
+The reply looks the same either way. The `Reflexer-Answered-By` header says who answered: `reflexer`, or `provider` when reflexer passed the call on; it is absent when the call went to OpenAI directly.
 
 <!-- example: served -->
 ```python
@@ -90,9 +90,10 @@ A served reply's `model` ends in `-reflexer`, and `usage.cost` holds its price i
 ## Behavior
 
 - **Reflexer down, slow or busy:** the call goes to OpenAI, and your code gets OpenAI's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to OpenAI too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer; if it fires, the call goes to OpenAI with the same timeout, so a call can take up to twice it.
-- **Timeouts, TypeScript:** after `headersTimeout` (300 seconds by default) the call goes to OpenAI; your client's own timeout covers both calls, and if it fires first, that try fails as a timeout and your SDK's retry goes to OpenAI.
-- **What leaves your machine:** the call, with your OpenAI key, goes to reflexer, which uses the key to call OpenAI. The reflexer key goes to reflexer only.
+- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to OpenAI with the same timeout, so a call can take up to twice it; if reflexer had already passed the call on, OpenAI may run it twice.
+- **Timeouts, TypeScript:** after `headersTimeout` (300 seconds by default) the call goes to OpenAI. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout and your SDK's retry goes to OpenAI; if reflexer had already passed the call on, OpenAI may run it twice.
+- **Which calls:** only the calls that return a model's message go to reflexer. The others (embeddings, files, model lists) and calls to `http`, `localhost` or a private IP go to OpenAI directly.
+- **What leaves your machine:** the call, with your OpenAI key, goes to reflexer, which uses the key to pass the call on. The reflexer key goes to reflexer only.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](../SECURITY.md#known-limits).

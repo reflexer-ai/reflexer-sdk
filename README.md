@@ -24,7 +24,8 @@ What you get:
 
 - Your provider's answers, types and errors, unchanged.
 - A call reflexer does not answer, or cannot be reached for, goes to your provider.
-- No dependencies: the SDK plugs into the provider SDK you have. [Security](SECURITY.md).
+- Your call, with your provider key, goes to reflexer, which passes it on when it does not answer; the reflexer key goes to reflexer only. [Security](SECURITY.md).
+- No dependencies: the SDK plugs into the provider SDK you have.
 - Every example in these docs runs in the tests.
 
 Python 3.10+ · Node 20.3+

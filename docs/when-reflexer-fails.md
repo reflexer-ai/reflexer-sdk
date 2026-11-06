@@ -54,7 +54,7 @@ Hello! How can I help you today?
 
 ## Reflexer is busy or failing
 
-**Problem:** reflexer answered with a 429 or a 5xx, or told the SDK to send calls straight for a while. This is normal under load.
+**Problem:** reflexer answered with a 429 or a 5xx, or asked the SDK to send calls to your provider for a while. This is normal under load.
 
 **What happens:** as when reflexer is down: the call goes to your provider, and the next ones too, for the time reflexer asked or about a minute at most.
 
@@ -64,7 +64,7 @@ Hello! How can I help you today?
 
 **What happens, Python:** your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already passed the call on, your provider may run it twice.
 
-**What happens, TypeScript:** the call to reflexer waits for its answer to start for `headersTimeout`, 300 seconds by default, then goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
+**What happens, TypeScript:** the call to reflexer waits for its answer to start for `headersTimeout`, 300 seconds by default, then goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider; if reflexer had already passed the call on, your provider may run it twice. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
 
 ## Your reflexer key is malformed
 

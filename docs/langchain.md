@@ -2,7 +2,7 @@
 
 Reflexer in front of LangChain's OpenAI and Gemini chat models in Python, and its OpenAI models in LangChain.js. On Bedrock: [Bedrock](bedrock.md#langchain-aws-pydantic-ai-strands).
 
-**Before you begin:** `langchain-openai` 1 or `langchain-google-genai` 4 (Python), or `@langchain/openai` (LangChain.js, Node 22+), and `REFLEXER_KEY` set to the key you got at onboarding.
+**Before you begin:** `langchain-openai` 1 or `langchain-google-genai` 4 (Python), or `@langchain/openai` (LangChain.js, Node 22+), and `REFLEXER_KEY` set to the key you got at onboarding. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`: the examples are plain JavaScript.
 
 ## 1. Install
 
@@ -119,9 +119,10 @@ frontier-x-reflexer
 ## Behavior
 
 - **Reflexer down, slow or busy:** the call goes to your provider, and your code gets your provider's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to your provider too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer; if it fires, the call goes to your provider with the same timeout, so a call can take up to twice it.
-- **Timeouts, TypeScript:** after `headersTimeout` (300 seconds by default) the call goes to your provider; your client's own timeout covers both calls, and if it fires first, that try fails as a timeout and your SDK's retry goes to your provider.
-- **What leaves your machine:** the call, with your your provider key, goes to reflexer, which uses the key to call your provider. The reflexer key goes to reflexer only.
+- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to your provider with the same timeout, so a call can take up to twice it; if reflexer had already passed the call on, your provider may run it twice.
+- **Timeouts, TypeScript:** after `headersTimeout` (300 seconds by default) the call goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout and your SDK's retry goes to your provider; if reflexer had already passed the call on, your provider may run it twice.
+- **Which calls:** only the calls that return a model's message go to reflexer. The others (embeddings, files, model lists) and calls to `http`, `localhost` or a private IP go to your provider directly.
+- **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to pass the call on. The reflexer key goes to reflexer only.
 - **Not covered:** `ChatAnthropic` (Python and LangChain.js) and `@langchain/google-genai`: [Known limits](../SECURITY.md#known-limits).
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
@@ -136,6 +137,6 @@ All of them: [Advanced](advanced.md).
 
 ## Supported versions
 
-`langchain-openai` 1 and `langchain-google-genai` 4 on Python 3.10+; LangChain.js on `openai` 7, Node 22+. Another major raises at import.
+`langchain-openai` 1 and `langchain-google-genai` 4 on Python 3.10+, where another major raises at import. LangChain.js on `openai` 7, Node 22+, checked at the first call.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Advanced](advanced.md) · [Reference](reference.md)

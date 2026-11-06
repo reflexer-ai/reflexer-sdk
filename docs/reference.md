@@ -56,8 +56,8 @@ Hello! How can I help you today?
 | `reflexer.openai.http_client`, `async_http_client`, `azure_http_client`, `azure_async_http_client`; `reflexer.anthropic.http_client`, `async_http_client` | An HTTP client for the stock class's `http_client=` | `key, own=None, base=…, sample=1.0` |
 | `reflexer.gemini.client_args` | A dict for both `client_args` and `async_client_args` | `key, own=None, base=…, sample=1.0` |
 | `reflexer.boto3.client` | A boto3 client | boto3's arguments, and `reflexer_key`, `reflexer_base`, `sample` |
-| `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client given, now through reflexer | `client, key, base=…, sample=1.0` |
-| `reflexer.litellm.client`, `async_client` | An HTTP handler for LiteLLM's `client=` | `key, base=…, sample=1.0` |
+| `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client given, now through reflexer | `client, reflexer_key, base=…, sample=1.0` |
+| `reflexer.litellm.client`, `async_client` | An HTTP handler for LiteLLM's `client=` | `reflexer_key, base=…, sample=1.0` |
 
 <!-- example: served python bedrock -->
 ```python
@@ -90,9 +90,11 @@ Each is the provider SDK's class, taking `reflexerKey`, `reflexerBase` and `samp
 |---|---|---|---|
 | `openai.fetch`, `azure.fetch`, `anthropic.fetch`, `gemini.fetch` | `@reflexer-ai/sdk` | A `fetch` for the provider SDK's `fetch` option | `key, { base, sample, fetch, headersTimeout }` |
 | `wrap` | `@reflexer-ai/sdk/bedrock` | The AWS SDK client given, now through reflexer | `client, key, { base, sample, headersTimeout }` |
-| `fetch`, `anthropicMiddleware` | `@reflexer-ai/sdk/bedrock` | For AnthropicBedrock's `fetch` and `middleware` | `key, { base, sample, fetch, headersTimeout }` |
+| `fetch` | `@reflexer-ai/sdk/bedrock` | A `fetch` for AnthropicBedrock | `key, { base, sample, fetch, headersTimeout }` |
+| `anthropicMiddleware` | `@reflexer-ai/sdk/bedrock` | AnthropicBedrock's `middleware`, last of yours | (a value) |
 | `requestHandler` | `@reflexer-ai/sdk/bedrock` | An AWS SDK request handler, for a client that sets its own | `key, { handler, signer, base, sample, headersTimeout }` |
-| `fetch`, `middleware` | `@reflexer-ai/sdk/bedrock-ai` | For the AI SDK's Bedrock provider and `wrapLanguageModel` | `key, { base, sample, fetch, headersTimeout }` |
+| `fetch` | `@reflexer-ai/sdk/bedrock-ai` | A `fetch` for the AI SDK's Bedrock provider | `key, { base, sample, fetch, headersTimeout }` |
+| `middleware` | `@reflexer-ai/sdk/bedrock-ai` | For `wrapLanguageModel` | (a value) |
 
 <!-- example: served -->
 ```js
@@ -111,7 +113,14 @@ Hello! How can I help you today?
 
 - A malformed key: `ValueError` (TypeScript `Error`), when the client is made. [When reflexer fails](when-reflexer-fails.md#your-reflexer-key-is-malformed).
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
+- A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
+- `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class: `TypeError`.
 - Anything else your code sees is your provider SDK's own error, as before.
+
+## What reflexer adds to a response
+
+- A served reply's `model` ends in `-reflexer`, and `usage.cost` holds its price in USD, also in a stream's usage. Gemini's has no such field: `model_version` (TypeScript `modelVersion`) ends in `-reflexer`.
+- Headers, on every response from reflexer: `Reflexer-Answered-By`, `reflexer` or `provider` (reflexer passed the call on); `Reflexer-Cost`, the price in nano USD; `Reflexer-Request-Id`, the call's id. A call that went to your provider directly has none.
 
 ## Versions
 

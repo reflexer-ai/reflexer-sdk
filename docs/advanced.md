@@ -4,7 +4,7 @@ For tuning reflexer once your calls go through it. Each section: what it does, i
 
 ## Skip reflexer for one call
 
-The `Reflexer-Pass-Through` header sends one call to your provider. It never leaves your machine. Every call goes through reflexer by default.
+The `Reflexer-Pass-Through` header sends one call to your provider; it is taken off before the call leaves your machine, but for a few Bedrock clients ([Known limits](../SECURITY.md#known-limits)). Every call goes through reflexer by default.
 
 <!-- example: straight -->
 ```python
@@ -67,7 +67,7 @@ Hello! How can I help you today?
 
 Where each library takes it:
 
-| Library | The skip |
+| Library | How to skip |
 |---|---|
 | OpenAI, Anthropic, Anthropic's Bedrock clients, LiteLLM, LangChain's `ChatOpenAI` (Python) | `extra_headers={"Reflexer-Pass-Through": "1"}` on the call |
 | Gemini (Python) | `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}` |
@@ -80,7 +80,7 @@ Where each library takes it:
 | LangChain.js | `invoke("Hi", { options: { headers: { "Reflexer-Pass-Through": "1" } } })` |
 | The AWS SDK for JavaScript | `client.send(command, { reflexerPassThrough: true })` |
 
-langchain-aws, Strands, Pydantic AI on Bedrock and LangChain.js on Bedrock make the call themselves: [Known limits](../SECURITY.md#known-limits).
+langchain-aws, Strands, Pydantic AI on Bedrock and LangChain.js on Bedrock make the call themselves, so it takes a hook of yours on the client (same link).
 
 ## Send a share of the calls
 
@@ -113,13 +113,13 @@ console.log(reply.choices[0].message.content);
 Hello! How can I help you today?
 ```
 
-Every reflexer client and function takes `sample`; in TypeScript, the `fetch` functions and `bedrock.wrap` in their options.
+Every reflexer client, and every function that takes the key, takes `sample`; in TypeScript, the `fetch` functions and `bedrock.wrap` in their options.
 
 ## How long reflexer may take
 
-Python: your client's own timeout covers the call to reflexer; when it fires, the call goes to your provider with the same timeout. Set the timeout as you would without reflexer.
+Python: your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already passed the call on, your provider may run it twice. Set the timeout as you would without reflexer.
 
-TypeScript: `headersTimeout` is how long the call to reflexer waits for its answer to start, then the call goes to your provider. By default 300 seconds. Set it in the options of a `fetch` or `bedrock.wrap`; reflexer's classes do not take it.
+TypeScript: `headersTimeout` is how long the call to reflexer waits for its answer to start, then the call goes to your provider. By default 300 seconds. Set it in the options of a `fetch` or `bedrock.wrap`; reflexer's classes do not take it. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider; if reflexer had already passed the call on, your provider may run it twice.
 
 <!-- example: served -->
 ```js

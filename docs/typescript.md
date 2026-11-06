@@ -1,6 +1,6 @@
 # TypeScript
 
-Node 20.3 or newer; install: [README](../README.md#install). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexerBase` to a class, or `base` in the options of a `fetch` or `bedrock.wrap`. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`.
+Node 20.3 or newer; install: [README](../README.md#install). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexerBase` to a class, or `base` in the options of a `fetch` or `bedrock.wrap`. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`, and the price as `(answer.usage as any)?.cost`.
 
 ## OpenAI
 
@@ -156,8 +156,8 @@ console.log(answer.choices[0].message.content);
 ```
 
 - Anthropic, AnthropicBedrock, the AI SDK's `generateText`: the same `headers`.
-- LangChain.js: `invoke("Hi", { options: { headers } })`.
-- Gemini: `config: { httpOptions: { headers } }`.
+- LangChain.js: `invoke("Hi", { options: { headers: { "Reflexer-Pass-Through": "1" } } })`.
+- Gemini: `config: { httpOptions: { headers: { "Reflexer-Pass-Through": "1" } } }`.
 - The AI SDK on Bedrock: `providerOptions: { reflexer: { passThrough: true } }`.
 - The AWS SDK: `{ reflexerPassThrough: true }` as `send`'s second argument, as below. LangChain.js on Bedrock: [Known limits](../SECURITY.md#known-limits).
 

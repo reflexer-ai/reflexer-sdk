@@ -1,10 +1,10 @@
 # reflexer
 
-Put reflexer in front of your LLM calls by changing one line of your code:
+Put reflexer in front of your LLM calls by changing the line that makes your client, and its import:
 
 <!-- example: served python -->
 ```diff
-- import openai
+  import openai
 + import os, reflexer.openai
 - client = openai.OpenAI()
 + client = reflexer.openai.OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
@@ -41,7 +41,7 @@ cd reflexer-sdk/typescript && npm ci && npm pack  # makes reflexer-ai-sdk-VERSIO
 npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz  # in your project
 ```
 
-Then set `REFLEXER_KEY` to the key you got at onboarding, and run the block above. To check that reflexer answered, `answer.model` ends in `-reflexer`.
+Then set `REFLEXER_KEY` to the key you got at onboarding, and run your changed code. To check that reflexer answered: `answer.model` ends in `-reflexer`.
 
 ## Your library
 

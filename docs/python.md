@@ -1,6 +1,6 @@
 # Python
 
-Python 3.10 or newer; install: [README](../README.md#install). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` where you pass `reflexer_key=`, and `base=` where you pass the key by position.
+Python 3.10 or newer; install: [README](../README.md#install). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` to a class or `reflexer.boto3.client`, or `base=` to a function that takes the key first (`http_client`, `client_args`, `through`, `litellm.client`).
 
 ## OpenAI
 

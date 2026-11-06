@@ -16,7 +16,7 @@ import * as check from "./checks.js";
 const { key } = await check.load();
 const ROOT = join(check.PACKAGE, "..");
 const DOCS = [join(ROOT, "README.md"), ...(await readdir(join(ROOT, "docs"), { recursive: true })).filter((name) => name.endsWith(".md")).map((name) => join(ROOT, "docs", name))];
-const BLOCK = /(?:<!-- example: ([a-z ]+) -->\n)?```js\n([\s\S]*?)^```/gm;
+const BLOCK = /(?:<!-- example: ([a-z ]+) -->\n)?```(js|diff)\n([\s\S]*?)^```/gm; // a diff: its comment names its language
 const TEXT = { served: "served by reflexer", straight: "from the provider" };
 const WAYS = { key: "Bearer", signed: "AWS4-HMAC-SHA256" }; // Bedrock's, by the scheme its calls carry
 const ENVIRONMENT = {
@@ -107,7 +107,10 @@ async function blocks() {
   for (const path of DOCS) {
     const text = (await readFile(path, "utf8")).replaceAll("\r\n", "\n");
     for (const match of text.matchAll(BLOCK)) {
-      found.push([`${path.slice(ROOT.length + 1)}:${text.slice(0, match.index).split("\n").length}`, (match[1] ?? "").split(" "), match[2]]);
+      const words = (match[1] ?? "").split(" ");
+      if (match[2] === "diff" && !words.includes("js")) continue;
+      const code = match[2] === "diff" ? match[3].split("\n").filter((line) => /^[+ ]|^$/.test(line)).map((line) => line.slice(2)).join("\n") : match[3];
+      found.push([`${path.slice(ROOT.length + 1)}:${text.slice(0, match.index).split("\n").length}`, words, code]);
     }
   }
   return found;
@@ -168,7 +171,7 @@ describe("The docs' examples", async () => {
   for (const [where, words, code] of found) {
     for (const way of words.includes("bedrock") ? Object.keys(WAYS) : [null]) {
       test(`${where}${way ? ` (Bedrock, ${way})` : ""}`, { skip: await tooNew(code), timeout: LIMIT }, async (t) => {
-        assert.ok(["served", "straight"].includes(words[0]) && words.slice(1).every((word) => word === "bedrock"), "no <!-- example: ... --> it knows");
+        assert.ok(["served", "straight"].includes(words[0]) && words.slice(1).every((word) => ["bedrock", "js"].includes(word)), "no <!-- example: ... --> it knows");
         judge(await run(t, code, way), words[0], way);
       });
     }

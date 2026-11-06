@@ -1,6 +1,6 @@
 # TypeScript
 
-Node 20.3 or newer; install: [README](../README.md#quick-start). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexerBase` to a class, or `base` in the options of a `fetch` or `bedrock.wrap`. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`.
+Node 20.3 or newer; install: [README](../README.md#install). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexerBase` to a class, or `base` in the options of a `fetch` or `bedrock.wrap`. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`.
 
 ## OpenAI
 
@@ -57,7 +57,9 @@ console.log(answer.choices[0].message.content);
 
 Each takes your own `fetch` as `{ fetch }`.
 
-## The AI SDK (Node 22+)
+## The AI SDK
+
+Node 22 or newer.
 
 <!-- example: served -->
 ```js
@@ -71,7 +73,9 @@ console.log((await generateText({ model: openai("your-model"), prompt: "Hi" })).
 
 `createAnthropic` with `reflexer.anthropic.fetch`, and `createGoogleGenerativeAI` with `reflexer.gemini.fetch`, the same way.
 
-## LangChain.js (Node 22+ for `@langchain/openai`)
+## LangChain.js
+
+`@langchain/openai` needs Node 22 or newer.
 
 <!-- example: served -->
 ```js
@@ -205,7 +209,7 @@ console.log(answer.model, answer.usage?.cost); // model ends in "-reflexer"; cos
 console.log(response.headers.get("reflexer-answered-by") ?? "your provider, directly"); // or "reflexer", or "provider" (passed on)
 ```
 
-More, and what happens when reflexer is down or slow: [behaviour.md](behaviour.md).
+If reflexer is down or slow, the call goes to your provider and your code gets its answer, with a warning by `console.warn`. More: [What your code sees](behaviour.md).
 
 ## Versions
 

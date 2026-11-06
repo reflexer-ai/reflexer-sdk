@@ -1,6 +1,6 @@
 # Python
 
-Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` where you pass `reflexer_key=`, and `base=` where you pass the key by position.
+Python 3.10 or newer; install: [README](../README.md#install). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` where you pass `reflexer_key=`, and `base=` where you pass the key by position.
 
 ## OpenAI
 
@@ -250,7 +250,7 @@ print(answer.model, getattr(answer.usage, "cost", ""))  # model ends in "-reflex
 print(raw.headers.get("Reflexer-Answered-By", "your provider, directly"))  # or "reflexer", or "provider" (passed on by reflexer)
 ```
 
-More, and what happens when reflexer is down or slow: [behaviour.md](behaviour.md).
+If reflexer is down or slow, the call goes to your provider and your code gets its answer, with a warning on the `reflexer` logger. More: [What your code sees](behaviour.md).
 
 ## Versions
 

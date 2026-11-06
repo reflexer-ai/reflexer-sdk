@@ -10,7 +10,8 @@ In each, an answer is printed for each call, no value printed is missing (None, 
 provider. A share of calls (`sample`) is drawn at the middle of its range, so a share below half goes straight. `bedrock` after the word runs the block twice: with a Bedrock API key in
 `AWS_BEARER_TOKEN_BEDROCK`, and with none, its calls signed with made-up AWS credentials. A `python` or `js` block with no
 such comment fails, and so does a code block of any other language but `sh`, a word the comment does not know, or a
-fence of tildes, which no check reads.
+fence of tildes, which no check reads. A `diff` block, a change to the reader's code, runs as it reads after the change,
+in the language its comment names: `<!-- example: served python -->`.
 """
 import contextlib, faulthandler, glob, io, os, re, shutil, sys, tempfile, unittest
 from unittest import mock
@@ -42,7 +43,11 @@ def blocks():
         if re.search(r"^\s*~~~", text, re.M):
             yield os.path.relpath(path, ROOT), None, "~~~", ""
         for found in BLOCK.finditer(text):
-            yield f"{os.path.relpath(path, ROOT)}:{text.count(chr(10), 0, found.start()) + 1}", found[1], found[2], found[3]
+            where, marker, language, code = f"{os.path.relpath(path, ROOT)}:{text.count(chr(10), 0, found.start()) + 1}", *found.groups()
+            if language == "diff":  # a change to the reader's code: run as it reads after, in the language its comment names
+                language = next((word for word in (marker or "").split() if word in ("python", "js")), "diff")
+                code = "\n".join(line[2:] for line in code.splitlines() if line[:1] in ("+", " ", "")) + "\n"  # "+ ", "  ": two marks
+            yield where, marker, language, code
 
 
 class Docs(unittest.TestCase):
@@ -66,7 +71,7 @@ class Docs(unittest.TestCase):
         for where, marker, language, code in found:
             self.assertIn(language, ("python", "js"), f"{where}: a code block must be python, js or sh, fenced by backticks")
             words = (marker or "").split()
-            self.assertTrue(words and words[0] in OUTCOMES and set(words[1:]) <= {"bedrock"}, f"{where}: no <!-- example: ... --> it knows")
+            self.assertTrue(words and words[0] in OUTCOMES and set(words[1:]) <= {"bedrock", "python", "js"}, f"{where}: no <!-- example: ... --> it knows")
             for way in (WAYS if "bedrock" in words else [None]) if language == "python" else ():
                 with self.subTest(where, bedrock=way):
                     self.check(where, words[0], code, way)

@@ -84,7 +84,8 @@ NodeHttpHandler.prototype.handle = NodeHttp2Handler.prototype.handle = async fun
 // and no socket leaves this machine, whatever a library connects by
 const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (/** @type {any[]} */ ...args) {
-  const host = typeof args[0] === "object" ? args[0].host ?? args[0].path : args[1];
+  const [first, second] = Array.isArray(args[0]) ? args[0] : args; // `net.connect` hands its arguments on as one array
+  const host = typeof first === "object" ? first.host ?? first.path : typeof second === "string" ? second : undefined;
   if (host && !/^(127\.|::1$|localhost$|\/)/.test(String(host))) throw new Error(`offline: ${host}`);
   return connect.apply(this, /** @type {any} */ (args));
 };
@@ -195,6 +196,7 @@ const client = bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1" }), p
       "signed", /not made the way asked/],
     "a call said to be Bedrock's, but not": ["served", `${ours}\nconsole.log(${text});`, "key", /not made the way asked/],
     "a value missing": ["served", `${ours}\nconsole.log(${text}, (await ${call}).usage.cots);`, null, /a value printed is missing/],
+    "a socket off this machine": ["served", 'import net from "node:net";\nnet.connect({ host: "192.0.2.1", port: 80 });', null, /offline/],
     "a share that has no effect": ["straight", `import { OpenAI } from "@reflexer-ai/sdk/openai";\nconst client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY, sample: 0.9 });\nconsole.log(${text});`,
       null, /must be straight/],
   };

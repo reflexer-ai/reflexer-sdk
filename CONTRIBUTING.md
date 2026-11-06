@@ -6,7 +6,10 @@ Every change keeps each promise in [SECURITY.md](SECURITY.md): a new promise nam
     uv run python -m unittest discover -s tests -t .           # gates, unit tests, promises, each with its faults
     uv run python tests/acceptance/run.py                      # the provider SDKs over real sockets, offline
     uv run python -m unittest tests.acceptance.test_controls   # each fault planted in the SDK turns its cases red
+    uv run python -m unittest tests.acceptance.test_docs       # every example in README.md and docs/, run as written
 
-    cd typescript && npm ci && npm run build && npm test      # TypeScript: types, gates, tests, each with its planted fault
+    cd typescript && npm ci && npm run build && npm test      # TypeScript: types, gates, tests and the docs' examples, each with its planted fault
+
+Every code example in README.md and `docs/` runs in those checks, after a comment saying what it must show (`tests/acceptance/test_docs.py`); an example no check runs is a bug.
 
 The code stays within the size budget in `pyproject.toml` (TypeScript: in `typescript/package.json`); a pull request that raises it says why there. No dependency is added to either package: the provider SDKs are the client's.

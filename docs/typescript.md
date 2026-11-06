@@ -1,6 +1,6 @@
 # TypeScript
 
-Node 20.3 or newer; install: [README](../README.md#quick-start). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. `reflexerBase` (`base` in the options of a `fetch` or `bedrock.wrap`) changes reflexer's address, `https://api.reflexer.ai` by default.
+Node 20.3 or newer; install: [README](../README.md#quick-start). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexerBase` to a class, or `base` in the options of a `fetch` or `bedrock.wrap`. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`.
 
 ## OpenAI
 
@@ -13,7 +13,7 @@ const answer = await client.chat.completions.create({ model: "your-model", messa
 console.log(answer.choices[0].message.content);
 ```
 
-`AzureOpenAI`, from the same module, the same way. The Responses API too, and any router that speaks OpenAI's format, by its `baseURL`.
+`AzureOpenAI`, from the same module, works the same way, as do the Responses API and any OpenAI-compatible router set by `baseURL`.
 
 ## Anthropic
 
@@ -86,7 +86,7 @@ console.log((await chat.invoke("Hi")).content);
 
 ## Amazon Bedrock
 
-The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4).
+The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). What each library cannot do: [Known limits](../SECURITY.md#known-limits).
 
 ### The AWS SDK
 
@@ -140,8 +140,6 @@ const model = wrapLanguageModel({ model: bedrock("your-model-id"), middleware: b
 console.log((await generateText({ model, prompt: "Hi" })).text);
 ```
 
-What each Bedrock library cannot do: [Known limits](../SECURITY.md#known-limits).
-
 ## Skip reflexer for one call
 
 <!-- example: straight -->
@@ -157,7 +155,7 @@ console.log(answer.choices[0].message.content);
 - LangChain.js: `invoke("Hi", { options: { headers } })`.
 - Gemini: `config: { httpOptions: { headers } }`.
 - The AI SDK on Bedrock: `providerOptions: { reflexer: { passThrough: true } }`.
-- The AWS SDK: an option of `send`, below. LangChain.js on Bedrock: [Known limits](../SECURITY.md#known-limits).
+- The AWS SDK: `{ reflexerPassThrough: true }` as `send`'s second argument, as below. LangChain.js on Bedrock: [Known limits](../SECURITY.md#known-limits).
 
 <!-- example: straight bedrock -->
 ```js
@@ -192,7 +190,7 @@ const answer = await client.chat.completions.create({ model: "your-model", messa
 console.log(answer.choices[0].message.content);
 ```
 
-300 seconds by default; `bedrock.wrap` takes it too.
+300 seconds by default. `bedrock.wrap` takes it too; reflexer's classes do not, so use a `fetch` for it.
 
 ## Who answered
 
@@ -204,7 +202,7 @@ const call = client.chat.completions.create({ model: "your-model", messages: [{ 
 const { data: answer, response } = await call.withResponse();
 console.log(answer.choices[0].message.content);
 console.log(answer.model, answer.usage?.cost); // model ends in "-reflexer"; cost in USD
-console.log(response.headers.get("reflexer-answered-by")); // "reflexer", or "provider" when reflexer passed the call on
+console.log(response.headers.get("reflexer-answered-by") ?? "your provider, directly"); // or "reflexer", or "provider" (passed on)
 ```
 
 More, and what happens when reflexer is down or slow: [behaviour.md](behaviour.md).

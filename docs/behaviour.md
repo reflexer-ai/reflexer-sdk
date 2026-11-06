@@ -9,7 +9,7 @@ Calls that return a model's message: Chat Completions and Responses (OpenAI, Azu
 Your provider's format, unchanged, so your code reads it as before.
 
 - `model` ends in `-reflexer`, and `usage.cost` holds the price in USD. Gemini has no such field: its model is at `model_version`, its price in the `Reflexer-Cost` header. Converse has no `model`: read the headers.
-- Headers: `Reflexer-Request-Id`; `Reflexer-Answered-By`, `reflexer` or `provider` (reflexer passed the call on); `Reflexer-Cost`, in nano USD. A call that went to your provider directly has none.
+- Headers: `Reflexer-Answered-By` is `reflexer`, or `provider` when reflexer passed the call on; `Reflexer-Cost` is the price in nano USD; `Reflexer-Request-Id` names the call. A call that went to your provider directly has none of them.
 - Streams arrive event by event; their usage holds the price. Errors raise your SDK's own classes.
 
 ## When reflexer is down

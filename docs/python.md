@@ -1,6 +1,6 @@
 # Python
 
-Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. `reflexer_base=` on a class, `base=` on a function, changes reflexer's address, `https://api.reflexer.ai` by default.
+Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. To change reflexer's address (`https://api.reflexer.ai` by default), pass `reflexer_base=` to a class or `base=` to a function.
 
 ## OpenAI
 
@@ -13,7 +13,7 @@ answer = client.chat.completions.create(model="your-model", messages=[{"role": "
 print(answer.choices[0].message.content)
 ```
 
-`AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` the same way. The Responses API too, and any router that speaks OpenAI's format, by its `base_url`.
+`AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` work the same way, as do the Responses API and any OpenAI-compatible router set by `base_url`.
 
 ## Anthropic
 
@@ -56,7 +56,7 @@ print(answer.choices[0].message.content)
 - Anthropic: `reflexer.anthropic.http_client`, `async_http_client`.
 - Gemini: `args = reflexer.gemini.client_args(key)`, given as both: `genai.Client(http_options={"client_args": args, "async_client_args": args})`.
 
-Each takes your own HTTP client as `own=`.
+Each takes your own HTTP client as `own=`; `client_args` takes your own `client_args`.
 
 ## LangChain
 
@@ -101,7 +101,7 @@ Anthropic the same way, `AnthropicProvider(anthropic_client=reflexer.anthropic.A
 
 ## Amazon Bedrock
 
-The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4).
+The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). What each library cannot do: [Known limits](../SECURITY.md#known-limits).
 
 ### boto3
 
@@ -179,7 +179,7 @@ answer = client.messages.create(model="your-model-id", max_tokens=1024, messages
 print(answer.content[0].text)
 ```
 
-`AsyncAnthropicBedrock`, `AnthropicBedrockMantle` and `AsyncAnthropicBedrockMantle` too.
+`AsyncAnthropicBedrock` too. `AnthropicBedrockMantle` and `AsyncAnthropicBedrockMantle` with a Bedrock API key; their signed calls go to Bedrock directly.
 
 ### LiteLLM
 
@@ -197,7 +197,7 @@ print(answer.choices[0].message.content)
 
 ### Bedrock's OpenAI and Anthropic endpoints
 
-The OpenAI and Anthropic clients above, with Bedrock's `base_url` and the Bedrock API key as `api_key`. What each Bedrock library cannot do: [Known limits](../SECURITY.md#known-limits).
+Use the OpenAI or Anthropic client above, with Bedrock's `base_url` and your Bedrock API key as `api_key`.
 
 ## Skip reflexer for one call
 
@@ -210,10 +210,11 @@ answer = client.chat.completions.create(model="your-model", messages=[{"role": "
 print(answer.choices[0].message.content)
 ```
 
-- Anthropic, Anthropic's Bedrock clients, LiteLLM, LangChain's `invoke`: the same `extra_headers`.
+- Anthropic, Anthropic's Bedrock clients, LiteLLM, LangChain's `ChatOpenAI.invoke`: the same `extra_headers`.
+- LangChain's `ChatGoogleGenerativeAI.invoke`: `http_options={"headers": {"Reflexer-Pass-Through": "1"}}`.
 - Pydantic AI: `model_settings={"extra_headers": {"Reflexer-Pass-Through": "1"}}`.
 - Gemini: `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}`.
-- boto3, aiobotocore: an argument, below. Libraries built on them: [Known limits](../SECURITY.md#known-limits).
+- boto3, aiobotocore: `ReflexerPassThrough=True` in the call, as below. Libraries built on them: [Known limits](../SECURITY.md#known-limits).
 
 <!-- example: straight bedrock -->
 ```python

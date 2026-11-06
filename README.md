@@ -1,6 +1,6 @@
 # reflexer
 
-Reflexer's SDK for Python and TypeScript. It sends your LLM calls through reflexer, on the provider SDK you already use: one line of your code changes. A call reflexer does not answer, or cannot be reached for, goes to your provider as before, unless reflexer refuses your key.
+Reflexer's SDK for Python and TypeScript. It sends your LLM calls through reflexer, on the provider SDK you already use: one line of your code changes. If reflexer does not answer a call, or cannot be reached, the call goes to your provider as before. Only a key reflexer refuses makes a call fail.
 
 It has no dependency of its own: it plugs into the HTTP client of the provider SDK you have. Its security promises, and the check that holds each one: [SECURITY.md](SECURITY.md).
 
@@ -16,7 +16,7 @@ pip install ./reflexer-sdk
 ```sh
 git clone https://github.com/reflexer-ai/reflexer-sdk
 cd reflexer-sdk/typescript && npm ci && npm pack  # makes reflexer-ai-sdk-VERSION.tgz
-cd your-project && npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz
+npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz  # in your project
 ```
 
 Add your reflexer key, given at onboarding, to the client you already make. Your provider's key and settings stay as they were.

@@ -13,6 +13,7 @@ from gc import get_referents
 import aiohttp, yarl
 import aiobotocore.awsrequest, aiobotocore.httpsession, botocore.awsrequest, botocore.exceptions
 from . import BASE, OURS, Reflexer, log, supported
+from .transport import alone
 from .bedrock import BEDROCK, aagain_if_refused, answered, botocore_route, lower, signed_anew, signing_anew, skip_taken, straight
 
 supported("aiobotocore", [3])
@@ -51,17 +52,18 @@ def through(client, reflexer_key, base=BASE, sample=1.0):
         holds no key past it."""
         route = leg = None
         try:
-            route = botocore_route(reflexer, request)
-            if route is None:
-                return None, False
-            leg = botocore.awsrequest.AWSRequest(request.method, route[0], data=request.body, headers=route[1], stream_output=True).prepare()
-            leg.context = request.context  # the call's own settings for its session, such as a read timeout of its own
-            answer = await aagain_if_refused(lambda: send(leg))
-        except Exception as failure:
-            reflexer.failed(failure)
-            return None, route is not None
-        except BaseException as stopped:  # a cancel, a ^C: raised on without the frames below, which hold the leg
-            raise stopped.with_traceback(None)
+            try:
+                route = botocore_route(reflexer, request)
+                if route is None:
+                    return None, False
+                leg = botocore.awsrequest.AWSRequest(request.method, route[0], data=request.body, headers=route[1], stream_output=True).prepare()
+                leg.context = request.context  # the call's own settings for its session, such as a read timeout of its own
+                answer = await aagain_if_refused(lambda: send(leg))
+            except Exception as failure:
+                reflexer.failed(failure)
+                return None, route is not None
+        except BaseException as stopped:  # a cancel, a ^C, on the leg or as its failure is counted: raised on alone
+            raise alone(stopped)
         finally:
             route = leg = None  # what an error's traceback, raised on, would show of this frame
         if reflexer.goes_straight(answer.status_code, answer.headers):

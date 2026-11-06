@@ -86,6 +86,13 @@ def to_reflexer(reflexer, request):
     return same_library_request(request.method, url, headers=headers, content=body, extensions=kept)
 
 
+def alone(stopped):
+    """A cancel or a ^C during reflexer's leg, to raise on alone: without the frames below the leg, nor the errors it came
+    while handling, whose frames hold reflexer's request in clear. Its type and message stay, and the frames above."""
+    stopped.__context__ = stopped.__cause__ = None
+    return stopped.with_traceback(None)
+
+
 class Through:
     """A transport, by duck typing: one HTTP exchange, going where the logic says. Whatever fails on the way to reflexer,
     the client's own call still goes. An answer cut after its headers left is read above, so it is an error as from the
@@ -114,31 +121,33 @@ class Through:
 
     def handle_request(self, request):
         try:
-            ours = to_reflexer(self.reflexer, request)
-            if ours is not None:
-                answer = self.send(ours)
-                if not self.reflexer.goes_straight(answer.status_code, answer.headers):
-                    return without_its_cookie(answer)
-                answer.close()
-        except Exception as failure:
-            self.reflexer.failed(failure)
-        except BaseException as stopped:  # a cancel, a ^C: raised on without the frames below, which hold our request in clear
-            raise stopped.with_traceback(None)
+            try:
+                ours = to_reflexer(self.reflexer, request)
+                if ours is not None:
+                    answer = self.send(ours)
+                    if not self.reflexer.goes_straight(answer.status_code, answer.headers):
+                        return without_its_cookie(answer)
+                    answer.close()
+            except Exception as failure:
+                self.reflexer.failed(failure)
+        except BaseException as stopped:  # a cancel, a ^C, on reflexer's leg or as its failure is counted
+            raise alone(stopped)
         return self.send(stays_straight(request))
 
     async def handle_async_request(self, request):
         """`handle_request`, for an async client: the language asks for a second copy, not any provider."""
         try:
-            ours = to_reflexer(self.reflexer, request)
-            if ours is not None:
-                answer = await self.send(ours)
-                if not self.reflexer.goes_straight(answer.status_code, answer.headers):
-                    return without_its_cookie(answer)
-                await answer.aclose()
-        except Exception as failure:
-            self.reflexer.failed(failure)
+            try:
+                ours = to_reflexer(self.reflexer, request)
+                if ours is not None:
+                    answer = await self.send(ours)
+                    if not self.reflexer.goes_straight(answer.status_code, answer.headers):
+                        return without_its_cookie(answer)
+                    await answer.aclose()
+            except Exception as failure:
+                self.reflexer.failed(failure)
         except BaseException as stopped:
-            raise stopped.with_traceback(None)
+            raise alone(stopped)
         return await self.send(stays_straight(request))
 
     def close(self):

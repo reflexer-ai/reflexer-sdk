@@ -466,12 +466,24 @@ def stopped(made, calls, client):
             return error
 
 
+def stopped_counting(made, calls, client):
+    """A scene: reflexer down, a `BaseException` lands as the SDK counts its leg's failure (in its log's handler, say)."""
+    made.reflexer.set("dead")
+    client = client()
+    with mock.patch.object(reflexer.Reflexer, "failed", lambda *_: stop()):
+        try:
+            calls.run(calls.lib.call(client, calls.lib.ops[0], None, None, None))
+        except Stop as error:
+            return error
+
+
 ERRORS = {  # scene: (the call, raising to the client, the line having taken it; the libraries it is made on)
     "cut": (asked(lambda w: w.reflexer.set("cut")), ("boto3", "aiobotocore", "anthropic-bedrock", "litellm")),
     "replay, reflexer busy": (asked(lambda w: w.reflexer.set("busy"), "invoke", {"replay_response": {"id": "made-up"}}),
                               ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle", "anthropic-compat", "openai-compat")),
     "the client's deadline, reflexer stalled": (deadline, ("aiobotocore",)),
     "not an Exception, in the leg": (stopped, ("boto3",)),
+    "not an Exception, as the leg's failure is counted": (stopped_counting, ("boto3", "aiobotocore")),
 }
 SIGNED_ERRORS = {"boto3", "aiobotocore", "anthropic-bedrock"}  # whose signed call also raises in a scene but "cut", which falls back
 
@@ -496,6 +508,7 @@ def token_carried(made, own):
 HTTPX = ("anthropic-bedrock", "anthropic-mantle", "litellm", "anthropic-compat", "openai-compat", "gemini")  # the lines on httpx:
 # Bedrock's (`Keyed`), and the shipped ones (`Through`), Gemini's at its own route
 LONG = 60  # seconds: past every deadline of a scene's
+DEADLINE = 0.5  # seconds: a client's own deadline on a call reflexer stalls
 
 
 def on_httpx(lib, key, keyed, is_async, http2):
@@ -530,10 +543,11 @@ def on_httpx(lib, key, keyed, is_async, http2):
     return lambda: client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=message)
 
 
-def at_our_headers(sync, carried):
+def at_our_headers(sync, carried, asynced=None):
     """httpcore's network streams patched, httpcore's and httpcore2's, sync and async: as one writes reflexer's leg's request
     headers, HTTP/1.1's or HTTP/2's (`_send_request_headers` below it, for reflexer's host), `sync()` runs on a sync
-    stream, and on an async one the call waits past its client's deadline. Their headers' text kept in `carried`."""
+    stream, and on an async one `asynced()` is awaited (by default, the call waits past its client's deadline). Their
+    headers' text kept in `carried`."""
     import contextlib, httpcore, httpcore2
 
     def ours():
@@ -552,7 +566,7 @@ def at_our_headers(sync, carried):
     def awrite(real):
         async def written(stream, *args, **kwargs):
             if ours():
-                await asyncio.sleep(LONG)
+                await (asynced or hold)()
             return await real(stream, *args, **kwargs)
         return written
     patched = contextlib.ExitStack()
@@ -566,10 +580,28 @@ def stop():
     raise Stop()
 
 
+async def hold():
+    await asyncio.sleep(LONG)
+
+
+async def cancel():
+    """The client cancels its call (`task.cancel()`) here."""
+    asyncio.current_task().cancel()
+    await hold()
+
+
+def fail():
+    raise OSError("made up")
+
+
+async def afail():
+    fail()
+
+
 def deadline_of(call):
     """The error the client's own deadline (`asyncio.wait_for`) raises on its call."""
     async def called():
-        await asyncio.wait_for(call(), 0.5)
+        await asyncio.wait_for(call(), DEADLINE)
     try:
         asyncio.run(called())
     except asyncio.TimeoutError as error:
@@ -585,10 +617,47 @@ def stopped_at_our_headers(made, call, carried):
             return error
 
 
-def deadline_at_our_headers(made, call, carried):
-    """A scene, async: the client's own deadline cancels its call as reflexer's leg writes its request headers."""
-    with at_our_headers(stop, carried):
-        return deadline_of(call)
+def cancelled_of(call):
+    """The error the client gets cancelling its call (`asyncio.run` raising the cancel)."""
+    try:
+        asyncio.run(call())
+    except asyncio.CancelledError as error:
+        return error
+
+
+def cancelled_at_our_headers(made, call, carried):
+    """A scene, async: the client cancels its call as reflexer's leg writes its request headers."""
+    with at_our_headers(None, carried, cancel):
+        return cancelled_of(call)
+
+
+def stopped_counting_a_failure(made, call, carried):
+    """A scene, sync: reflexer's leg fails at its header write, and a `BaseException` lands as the SDK counts that failure
+    (in its log's handler, say)."""
+    with at_our_headers(fail, carried), mock.patch.object(reflexer.Reflexer, "failed", lambda *_: stop()):
+        try:
+            call()
+        except Stop as error:
+            return error
+
+
+def cancelled_handling_a_failure(made, call, carried):
+    """A scene, async: reflexer's leg fails at its header write, and the client cancels its call while a library below the
+    leg handles that failure, as LiteLLM's aiohttp transport does retrying a session found closed."""
+    import contextlib, httpcore, httpcore2
+
+    def handling(real):
+        async def handled(pool, *args, **kwargs):
+            try:
+                return await real(pool, *args, **kwargs)
+            except OSError:
+                await cancel()
+        return handled
+    with at_our_headers(None, carried, afail), contextlib.ExitStack() as patched:
+        for core in (httpcore, httpcore2):
+            patched.enter_context(mock.patch.object(core.AsyncConnectionPool, "handle_async_request",
+                                                    handling(core.AsyncConnectionPool.handle_async_request)))
+        return cancelled_of(call)
 
 
 def deadline_while_stalled(made, call, carried):
@@ -599,8 +668,10 @@ def deadline_while_stalled(made, call, carried):
 
 HTTPX_ERRORS = {  # scene: (the call, raising to the client; whether its client is async, and whether it runs on HTTP/2 too)
     "not an Exception, at the header write": (stopped_at_our_headers, False, True),
-    "the client's deadline, at the header write": (deadline_at_our_headers, True, True),
+    "the client's cancel, at the header write": (cancelled_at_our_headers, True, True),
     "the client's deadline, reflexer stalled": (deadline_while_stalled, True, False),  # the stand-ins speak HTTP/1.1 only
+    "not an Exception, as the leg's failure is counted": (stopped_counting_a_failure, False, True),
+    "the client's cancel, as a library below handles the leg's failure": (cancelled_handling_a_failure, True, True),
 }
 
 
@@ -609,8 +680,8 @@ def httpx_scenes():
     for scene, (made_by, is_async, on_http2) in HTTPX_ERRORS.items():
         for lib in HTTPX:
             for http2 in (False, True) if on_http2 else (False,):
-                if lib == "litellm" and is_async and made_by is deadline_at_our_headers and not http2:
-                    continue  # by aiohttp, whose write of the headers does not wait: no cancel lands there
+                if lib == "litellm" and is_async and made_by is not deadline_while_stalled and not http2:
+                    continue  # by aiohttp on HTTP/1.1, whose writes these scenes do not reach: its scene, reflexer stalled
                 for keyed in (True, False) if lib in SIGNED_ERRORS else (True,):
                     yield lib, scene, keyed, is_async, http2
 
@@ -631,10 +702,12 @@ def errors_in_clear():
     for lib, scene, keyed, is_async, http2 in httpx_scenes():
         made, _ = world(lib if lib in bedrock.LIBS else "openai-compat")  # Gemini's stand-ins: any line's
         if http2:
-            made.reflexer.context.set_alpn_protocols(["h2", "http/1.1"])  # reflexer's stand-in takes HTTP/2 as TLS settles it
-        carried = []
-        error = HTTPX_ERRORS[scene][0](made, on_httpx(lib, made.key, keyed, is_async, http2), carried)
-        found[(lib, f"{scene}{', HTTP/2' if http2 else ''}{', async' if is_async else ''}", keyed)] = shown(error, made, keyed, (), carried)
+            made.reflexer.context.set_alpn_protocols(["h2", "http/1.1"])  # the world's stand-ins, reflexer's among them, take HTTP/2
+        carried, made_by = [], HTTPX_ERRORS[scene][0]
+        error = made_by(made, on_httpx(lib, made.key, keyed, is_async, http2), carried)
+        landed = made.reflexer.seen if made_by is deadline_while_stalled else carried  # the scene ran where it says
+        found[(lib, f"{scene}{', HTTP/2' if http2 else ''}{', async' if is_async else ''}", keyed)] = \
+            shown(error, made, keyed, (), carried) + ([] if landed else ["the scene did not land on reflexer's leg"])
     return found
 
 
@@ -1068,19 +1141,17 @@ class Broken(Case):
         self.assertEqual((outcome.text, bool(made.provider.seen)), (harness.STRAIGHT_TEXT, True))
 
     def test_reflexers_leg_raising_a_cancel_on_with_the_frames_below_turns_it_red(self):
-        # the shipped transport's legs raise a cancel or a ^C on as it came, httpcore's frames below them holding our request
-        import inspect
-        source = inspect.getsource(reflexer.transport.Through)
-        planted = dict(vars(reflexer.transport))
-        exec(compile(source.replace("raise stopped.with_traceback(None)", "raise"), reflexer.transport.__file__, "exec"), planted)
-        self.assertEqual(source.count("raise stopped.with_traceback(None)"), 2, "the fault no longer plants")
-        with mock.patch.object(reflexer.transport.Through, "handle_request", planted["Through"].handle_request), \
-             mock.patch.object(reflexer.transport.Through, "handle_async_request", planted["Through"].handle_async_request):
+        # each leg raises a cancel or a ^C on as it came: the frames below it, and the errors it came while handling
+        as_it_came = lambda stopped: stopped  # noqa: E731
+        with mock.patch.object(reflexer.transport, "alone", as_it_came), mock.patch.object(reflexer.boto3, "alone", as_it_came), \
+             mock.patch.object(reflexer.aiobotocore, "alone", as_it_came):
             found = errors_in_clear()
-        at_the_write = [scene for scene in found if "at the header write" in scene[1]]
-        self.assertTrue(at_the_write)
-        self.assertEqual([scene for scene in at_the_write if not found[scene]], [])
-        self.assertTrue(found[("litellm", "the client's deadline, reflexer stalled, async", True)])
+        httpx = [scene for scene in found if scene[0] in HTTPX and scene[1].split(", HTTP/2")[0].split(", async")[0] in HTTPX_ERRORS]
+        self.assertTrue(httpx)
+        self.assertEqual([scene for scene in httpx if not found[scene] and "stalled" not in scene[1]], [])
+        for scene in [("litellm", "the client's deadline, reflexer stalled, async", True), ("boto3", "not an Exception, in the leg", True),
+                      *[(lib, "not an Exception, as the leg's failure is counted", keyed) for lib in ("boto3", "aiobotocore") for keyed in (True, False)]]:
+            self.assertTrue(found[scene], scene)
 
     def test_a_key_in_a_frame_of_the_lines_on_an_error_turns_it_red(self):
         # a frame of the line's own file holding the key as a replay raises through it

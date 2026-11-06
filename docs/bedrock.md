@@ -218,7 +218,7 @@ Add reflexer's `fetch` to the provider, and its middleware to the model.
 Hello! How can I help you today?
 ```
 
-Bedrock's OpenAI and Anthropic endpoints take the [OpenAI](openai.md) and [Anthropic](anthropic.md) lines, with Bedrock's `base_url` and your Bedrock API key as `api_key`.
+Bedrock's OpenAI and Anthropic endpoints take the change on the [OpenAI](openai.md) and [Anthropic](anthropic.md) pages, with Bedrock's `base_url` and your Bedrock API key as `api_key`.
 
 ## 3. Verify
 
@@ -276,21 +276,22 @@ await client.send(new ConverseCommand({ modelId: "frontier-x", messages: [{ role
 reflexer
 ```
 
-Elsewhere: aiobotocore as boto3; Anthropic's Python clients by `with_raw_response`, as on [Anthropic](anthropic.md#3-verify); LiteLLM in `reply._hidden_params["additional_headers"]`; the AI SDK in `result.response.headers`.
+Elsewhere: aiobotocore as boto3; Anthropic's Python clients by `with_raw_response`, as on [Anthropic](anthropic.md#3-verify); LiteLLM in `reply._hidden_params["additional_headers"]["llm_provider-reflexer-answered-by"]`; the AI SDK in `result.response.headers`.
 
 ## Behavior
 
 - **Reflexer down, slow or busy:** the call goes to Bedrock, and your code gets Bedrock's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to Bedrock too, for about a minute at most, then reflexer is tried again.
 - **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to Bedrock with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, Bedrock may run it, and bill it, twice.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to Bedrock. If your client's own timeout fires first, that try fails as a timeout, and your SDK's retry goes to Bedrock. Either way, if reflexer had already forwarded the call, Bedrock may run it, and bill it, twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to Bedrock. If your client's own timeout fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to Bedrock. Either way, if reflexer had already forwarded the call, Bedrock may run it, and bill it, twice.
 - **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to Bedrock. A key revoked less than a day ago still sends calls to Bedrock, with a warning.
 - **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
 - **What leaves your machine:** the call, with your Bedrock key, goes to reflexer, which uses the key to forward the call to Bedrock when it does not answer. The reflexer key goes to reflexer only.
-- **A signed call:** reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library, as when reflexer is down. Your AWS secret never leaves your library.
+- **A signed call:** reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library (LiteLLM and the AI SDK: as first signed, while the signature holds; [Known limits](limits.md)), as when reflexer is down. Your AWS secret never leaves your library.
 - **Mantle:** with a Bedrock API key, through reflexer; signed calls go to Bedrock directly.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
+
 ## Options
 
 - `sample=0.01` (TypeScript `{ sample: 0.01 }` in the options of `bedrock.wrap` or the `fetch`): send that share of the calls to reflexer, the rest to Bedrock.
@@ -299,8 +300,8 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
   - The AWS SDK for JavaScript: `client.send(command, { reflexerPassThrough: true })`; in a `.ts` file, cast the options to `any`.
   - langchain-aws, Pydantic AI, Strands: a hook of yours on the boto3 client, [Advanced](advanced.md#skip-reflexer-for-one-call).
   - The AI SDK: `providerOptions: { reflexer: { passThrough: true } }`.
-  - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Pass-Through": "1"}`.
-- `reflexer_base=` (TypeScript `{ base }`): reflexer's address, if you were given another.
+  - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Pass-Through": "1"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's second argument.
+- Reflexer's address, if you were given another: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
 
 All of them: [Advanced](advanced.md).
 

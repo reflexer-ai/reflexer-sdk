@@ -142,7 +142,7 @@ Every reflexer client, and every function that takes the key, takes `sample`; in
 
 Python: your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already forwarded the call, your provider may run it, and bill it, twice. Set the timeout as you would without reflexer.
 
-TypeScript: `headersTimeout` is how long the call to reflexer waits for its answer to start, then the call goes to your provider. By default 300 seconds. Set it in the options of a `fetch` or `bedrock.wrap`; reflexer's classes do not take it. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider; if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
+TypeScript: `headersTimeout` is how long the call to reflexer waits for its answer to start, then the call goes to your provider. By default 300 seconds. Set it in the options of a `fetch` or `bedrock.wrap`; reflexer's classes do not take it. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to your provider; if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
 
 <!-- example: served -->
 ```js
@@ -164,7 +164,7 @@ Hello! How can I help you today?
 
 ## Your own HTTP client
 
-Reflexer's calls go by your HTTP client, with its proxy, TLS settings and hooks: give it to reflexer's class as before (`http_client=`; TypeScript `fetch`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
+Reflexer's calls go by your HTTP client, with its proxy, TLS settings and hooks: give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
 
 ## Async
 

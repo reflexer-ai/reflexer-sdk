@@ -127,6 +127,6 @@ Hello! How can I help you today?
 
 ## Versions
 
-The SDK runs only on the majors of each provider SDK it is tested on: a new major raises before any call, until a release of the SDK is tested on it. The releases each supports are on its library page. The package is at 0.1.0 and has no release yet.
+The SDK runs only on the majors of each provider SDK it is tested on: a new major raises before any call, until a release of the SDK is tested on it. The AI SDK's OpenAI, Anthropic and Google providers are not checked. The releases each supports are on its library page. The package is at 0.1.0 and has no release yet.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Known limits](limits.md)

@@ -6,7 +6,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 
 | Case | What happens | What you can do |
 |---|---|---|
-| Reflexer is slow | Python: the call goes to your provider when your timeout fires, so it can take up to twice your timeout. TypeScript: your timeout covers both calls; if it fires during the call to reflexer, that try fails and your SDK's retry goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice | Keep your timeouts as before; in TypeScript, a lower `headersTimeout` ([Advanced](advanced.md#how-long-reflexer-may-take)) |
+| Reflexer is slow | Python: the call goes to your provider when your timeout fires, so it can take up to twice your timeout. TypeScript: your timeout covers both calls; if it fires during the call to reflexer, that try fails, and a retry of your SDK's, if it makes one, goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice | Keep your timeouts as before; in TypeScript, a lower `headersTimeout` ([Advanced](advanced.md#how-long-reflexer-may-take)) |
 | A `base_url` on a private name (a host only your network knows) | The call goes to reflexer first, which cannot reach the host and sends it back; it then goes to the host directly: one more trip | Skip reflexer for those calls, or leave them on a stock client |
 | TypeScript: a call given as a `Request` object, or with a streamed body | It goes to your provider, not reflexer | Pass the body as a string or bytes, as the provider SDKs do |
 | TypeScript: you cancel a call while it is at reflexer | Counted as a reflexer failure: the next calls go to your provider for a while | Nothing |

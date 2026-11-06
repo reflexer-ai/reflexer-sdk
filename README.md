@@ -18,7 +18,7 @@ Put reflexer in front of your LLM calls, from the provider SDK you already use: 
 Hello! How can I help you today?
 ```
 
-The reply is OpenAI's format, as before. Remove the line and your code is as it was.
+That's the whole change: the reply is OpenAI's format, as before, and removing the line puts your code back as it was.
 
 What you get:
 

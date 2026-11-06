@@ -64,6 +64,7 @@ frontier-x-reflexer
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
+
 ## Options
 
 - `sample=0.01` on reflexer's client: send that share of the calls to reflexer, the rest to your provider.

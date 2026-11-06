@@ -54,13 +54,14 @@ reflexer
 ## Behavior
 
 - **Reflexer down, slow or busy:** the call goes to your provider, and your code gets your provider's answer. The SDK logs a warning by `console.warn`. After a failure, the next calls go to your provider too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to your provider. If your client's own timeout fires first, that try fails as a timeout, and your SDK's retry goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to your provider. If your client's own timeout fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
 - **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to your provider. A key revoked less than a day ago still sends calls to your provider, with a warning.
 - **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
 - **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to forward the call to your provider when it does not answer. The reflexer key goes to reflexer only.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
+
 ## Options
 
 - `reflexer.openai.fetch(key, { sample: 0.01 })`: send that share of the calls to reflexer, the rest to your provider.

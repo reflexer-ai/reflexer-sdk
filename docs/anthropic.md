@@ -91,13 +91,14 @@ A reply from reflexer has a `model` ending in `-reflexer`, and `usage.cost` hold
 
 - **Reflexer down, slow or busy:** the call goes to Anthropic, and your code gets Anthropic's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to Anthropic too, for about a minute at most, then reflexer is tried again.
 - **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to Anthropic with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, Anthropic may run it, and bill it, twice.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to Anthropic. If your client's own timeout fires first, that try fails as a timeout, and your SDK's retry goes to Anthropic. Either way, if reflexer had already forwarded the call, Anthropic may run it, and bill it, twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to Anthropic. If your client's own timeout fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to Anthropic. Either way, if reflexer had already forwarded the call, Anthropic may run it, and bill it, twice.
 - **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to Anthropic. A key revoked less than a day ago still sends calls to Anthropic, with a warning.
 - **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
 - **What leaves your machine:** the call, with your Anthropic key, goes to reflexer, which uses the key to forward the call to Anthropic when it does not answer. The reflexer key goes to reflexer only.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
+
 ## Options
 
 - `sample=0.01` (TypeScript `sample: 0.01`): send that share of the calls to reflexer, the rest to Anthropic.

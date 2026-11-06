@@ -10,7 +10,7 @@ For when a call did not go as you expected. Most cases need nothing from you: th
 | Your reflexer key is malformed | Raises when the client is made, before any call | Copy the key again from onboarding |
 | Reflexer refuses your key | Your SDK raises its own authentication error | Check the key; ask for a new one |
 | Your key was revoked in the last day | Calls go to your provider, with a warning | Ask for a new key |
-| Your provider SDK is a release reflexer is not tested on | Raises at import or at the first call | Use a supported release (each library page lists them) |
+| Your provider SDK is a release reflexer is not tested on | Raises at import or at the first call (the AI SDK's OpenAI, Anthropic and Google providers are not checked) | Use a supported release (each library page lists them) |
 | One call must not go through reflexer | — | Skip reflexer for that call: [Advanced](advanced.md#skip-reflexer-for-one-call) |
 
 **Before you begin:** a working call through reflexer, from your library's page.
@@ -64,7 +64,7 @@ Hello! How can I help you today?
 
 **What happens, Python:** your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
 
-**What happens, TypeScript:** the call to reflexer waits for its answer to start for `headersTimeout`, 300 seconds by default, then goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider; if reflexer had already forwarded the call, your provider may run it, and bill it, twice. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
+**What happens, TypeScript:** the call to reflexer waits for its answer to start for `headersTimeout`, 300 seconds by default, then goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to your provider; if reflexer had already forwarded the call, your provider may run it, and bill it, twice. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
 
 ## Your reflexer key is malformed
 

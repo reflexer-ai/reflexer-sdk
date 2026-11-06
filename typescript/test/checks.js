@@ -21,8 +21,10 @@ const HELD_MS = 1000; // how often a stalled answer's handle wakes: any period h
  * @param {AbortSignal | null | undefined} signal
  */
 export function stalled(signal) {
+  const cut = () => signal?.reason ?? new DOMException("aborted", "AbortError");
+  if (signal?.aborted) return Promise.reject(cut()); // as a real fetch given a signal already aborted
   const held = setInterval(() => {}, HELD_MS);
-  return /** @type {Promise<never>} */ (new Promise((_, fail) => signal?.addEventListener("abort", () => fail(signal.reason ?? new DOMException("aborted", "AbortError")))))
+  return /** @type {Promise<never>} */ (new Promise((_, fail) => signal?.addEventListener("abort", () => fail(cut()), { once: true })))
     .finally(() => clearInterval(held));
 }
 export const CHAT = "https://api.openai.com/v1/chat/completions";

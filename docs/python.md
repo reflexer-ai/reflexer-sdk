@@ -1,6 +1,6 @@
 # Python
 
-Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. `reflexer_base=` changes reflexer's address, `https://api.reflexer.ai` by default.
+Python 3.10 or newer; install: [README](../README.md#quick-start). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one raises `ValueError` at once). Everything else stays yours: the provider key, settings, HTTP client. `reflexer_base=` on a class, `base=` on a function, changes reflexer's address, `https://api.reflexer.ai` by default.
 
 ## OpenAI
 
@@ -39,9 +39,9 @@ answer = client.models.generate_content(model="your-model", contents="Hi")
 print(answer.text)
 ```
 
-## Keeping the stock class
+## Keeping your library's own class
 
-When a library builds the client for you, pass it reflexer's HTTP client instead.
+Give it reflexer's HTTP client.
 
 <!-- example: served -->
 ```python
@@ -52,7 +52,11 @@ answer = client.chat.completions.create(model="your-model", messages=[{"role": "
 print(answer.choices[0].message.content)
 ```
 
-Also `async_http_client`, `azure_http_client` and `azure_async_http_client`, and `reflexer.anthropic.http_client` and `async_http_client`; each takes your own HTTP client as `own=`. Gemini: `args = reflexer.gemini.client_args(key)`, then `genai.Client(http_options={"client_args": args, "async_client_args": args})`, both, or async calls skip reflexer.
+- OpenAI: `reflexer.openai.http_client`, `async_http_client`, `azure_http_client`, `azure_async_http_client`.
+- Anthropic: `reflexer.anthropic.http_client`, `async_http_client`.
+- Gemini: `args = reflexer.gemini.client_args(key)`, given as both: `genai.Client(http_options={"client_args": args, "async_client_args": args})`.
+
+Each takes your own HTTP client as `own=`.
 
 ## LangChain
 
@@ -73,7 +77,8 @@ from langchain_openai import AzureChatOpenAI
 # chat = AzureChatOpenAI(azure_deployment="your-deployment")
 key = os.environ["REFLEXER_KEY"]
 chat = AzureChatOpenAI(azure_deployment="your-deployment", stream_usage=True,  # streams keep their usage
-                       http_client=reflexer.openai.azure_http_client(key), http_async_client=reflexer.openai.azure_async_http_client(key))
+                       http_client=reflexer.openai.azure_http_client(key),
+                       http_async_client=reflexer.openai.azure_async_http_client(key))
 print(chat.invoke("Hi").content)
 ```
 
@@ -96,7 +101,9 @@ Anthropic the same way, `AnthropicProvider(anthropic_client=reflexer.anthropic.A
 
 ## Amazon Bedrock
 
-The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). Reflexer never passes a signature on: if it does not answer a signed call, your library sends it to Bedrock. Your AWS secret never leaves your library.
+The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4).
+
+### boto3
 
 <!-- example: served bedrock -->
 ```python
@@ -108,6 +115,8 @@ print(answer["output"]["message"]["content"][0]["text"])
 ```
 
 For a boto3 client made elsewhere: `reflexer.boto3.through(client, key)`.
+
+### aiobotocore
 
 <!-- example: served bedrock -->
 ```python
@@ -121,14 +130,19 @@ async def main():
 asyncio.run(main())
 ```
 
+### LangChain
+
 <!-- example: served bedrock -->
 ```python
 import os, reflexer.boto3
 from langchain_aws import ChatBedrockConverse
 # chat = ChatBedrockConverse(model="your-model-id", region_name="us-east-1")
-chat = ChatBedrockConverse(model="your-model-id", client=reflexer.boto3.client("bedrock-runtime", reflexer_key=os.environ["REFLEXER_KEY"]))
+client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", reflexer_key=os.environ["REFLEXER_KEY"])
+chat = ChatBedrockConverse(model="your-model-id", client=client)
 print(chat.invoke("Hi").content)
 ```
+
+### Pydantic AI
 
 <!-- example: served bedrock -->
 ```python
@@ -137,9 +151,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 # provider = BedrockProvider(region_name="us-east-1")
-provider = BedrockProvider(bedrock_client=reflexer.boto3.client("bedrock-runtime", reflexer_key=os.environ["REFLEXER_KEY"]))
+client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", reflexer_key=os.environ["REFLEXER_KEY"])
+provider = BedrockProvider(bedrock_client=client)
 print(Agent(BedrockConverseModel("your-model-id", provider=provider)).run_sync("Hi").output)
 ```
+
+### Strands
 
 <!-- example: served bedrock -->
 ```python
@@ -150,6 +167,8 @@ model = BedrockModel(model_id="your-model-id", region_name="us-east-1")
 reflexer.boto3.through(model.client, os.environ["REFLEXER_KEY"])
 print(Agent(model=model, callback_handler=None)("Hi"))
 ```
+
+### Anthropic's Bedrock clients
 
 <!-- example: served bedrock -->
 ```python
@@ -162,16 +181,23 @@ print(answer.content[0].text)
 
 `AsyncAnthropicBedrock`, `AnthropicBedrockMantle` and `AsyncAnthropicBedrockMantle` too.
 
+### LiteLLM
+
 <!-- example: served bedrock -->
 ```python
 import os, litellm, reflexer.litellm
 bedrock = reflexer.litellm.client(os.environ["REFLEXER_KEY"])  # make it once, pass it to every call
 # answer = litellm.completion(model="bedrock/converse/your-model-id", messages=[{"role": "user", "content": "Hi"}])
-answer = litellm.completion(model="bedrock/converse/your-model-id", messages=[{"role": "user", "content": "Hi"}], client=bedrock)
+answer = litellm.completion(model="bedrock/converse/your-model-id", messages=[{"role": "user", "content": "Hi"}],
+                            client=bedrock)
 print(answer.choices[0].message.content)
 ```
 
-`reflexer.litellm.async_client` for `acompletion`. Bedrock's OpenAI and Anthropic endpoints take the OpenAI and Anthropic clients above. What each Bedrock library cannot do: [Known limits](../SECURITY.md#known-limits).
+`reflexer.litellm.async_client` for `acompletion`.
+
+### Bedrock's OpenAI and Anthropic endpoints
+
+The OpenAI and Anthropic clients above, with Bedrock's `base_url` and the Bedrock API key as `api_key`. What each Bedrock library cannot do: [Known limits](../SECURITY.md#known-limits).
 
 ## Skip reflexer for one call
 
@@ -184,13 +210,17 @@ answer = client.chat.completions.create(model="your-model", messages=[{"role": "
 print(answer.choices[0].message.content)
 ```
 
-The same `extra_headers` on Anthropic, LangChain's `invoke`, Anthropic's Bedrock clients and LiteLLM; Pydantic AI, in `model_settings={"extra_headers": ...}`; Gemini, in `config={"http_options": {"headers": ...}}`. On boto3 and aiobotocore it is an argument:
+- Anthropic, Anthropic's Bedrock clients, LiteLLM, LangChain's `invoke`: the same `extra_headers`.
+- Pydantic AI: `model_settings={"extra_headers": {"Reflexer-Pass-Through": "1"}}`.
+- Gemini: `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}`.
+- boto3, aiobotocore: an argument, below. Libraries built on them: [Known limits](../SECURITY.md#known-limits).
 
 <!-- example: straight bedrock -->
 ```python
 import os, reflexer.boto3
 client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", reflexer_key=os.environ["REFLEXER_KEY"])
-answer = client.converse(modelId="your-model-id", messages=[{"role": "user", "content": [{"text": "Hi"}]}], ReflexerPassThrough=True)
+answer = client.converse(modelId="your-model-id", messages=[{"role": "user", "content": [{"text": "Hi"}]}],
+                         ReflexerPassThrough=True)
 print(answer["output"]["message"]["content"][0]["text"])
 ```
 
@@ -214,8 +244,9 @@ import os, reflexer.openai
 client = reflexer.openai.OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
 raw = client.chat.completions.with_raw_response.create(model="your-model", messages=[{"role": "user", "content": "Hi"}])
 answer = raw.parse()
-print(answer.choices[0].message.content, answer.model, answer.usage.cost)  # model ends in "-reflexer"; cost in USD
-print(raw.headers["Reflexer-Answered-By"])  # "reflexer", or "provider" when reflexer passed the call on
+print(answer.choices[0].message.content)
+print(answer.model, getattr(answer.usage, "cost", ""))  # model ends in "-reflexer"; cost in USD
+print(raw.headers.get("Reflexer-Answered-By", "your provider, directly"))  # or "reflexer", or "provider" (passed on by reflexer)
 ```
 
 More, and what happens when reflexer is down or slow: [behaviour.md](behaviour.md).

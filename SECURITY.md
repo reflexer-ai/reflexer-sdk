@@ -71,6 +71,7 @@ A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` on
 - Pydantic AI on Python 3.10: its last release for 3.10 fails Anthropic's calls, with the stock client too.
 - TypeScript, the AI SDK on Gemini names the model asked for, not the answer's: `result.response.headers["reflexer-answered-by"]` says who answered.
 - Amazon Bedrock: on Mantle, a signed call goes to Mantle as stock sends it, not through reflexer.
+- LiteLLM: only its Bedrock calls go through reflexer; its calls to other providers go as stock.
 - TypeScript, Amazon Bedrock: LangChain.js makes the AWS JS call itself: its skip is the `Reflexer-Pass-Through` header, set by a middleware of the client's on the AWS JS client.
 - Ruff's inline `noqa` can silence a finding; the package holds three, each with its reason, for a header's name and for random numbers that guard no secret.
 

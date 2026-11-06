@@ -1,6 +1,6 @@
 # reflexer
 
-Reflexer's SDK for Python and TypeScript. It sends your LLM calls through reflexer, on the provider SDK you already use: one line of your code changes. A call reflexer does not answer, or cannot be reached for, goes to your provider as before.
+Reflexer's SDK for Python and TypeScript. It sends your LLM calls through reflexer, on the provider SDK you already use: one line of your code changes. A call reflexer does not answer, or cannot be reached for, goes to your provider as before, unless reflexer refuses your key.
 
 It has no dependency of its own: it plugs into the HTTP client of the provider SDK you have. Its security promises, and the check that holds each one: [SECURITY.md](SECURITY.md).
 
@@ -10,9 +10,13 @@ Not on PyPI or npm yet: install from a clone of this repository.
 
 ```sh
 git clone https://github.com/reflexer-ai/reflexer-sdk
-pip install ./reflexer-sdk                           # Python
-cd reflexer-sdk/typescript && npm ci && npm pack     # TypeScript: makes reflexer-ai-sdk-VERSION.tgz
-npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz   # TypeScript, in your project
+pip install ./reflexer-sdk
+```
+
+```sh
+git clone https://github.com/reflexer-ai/reflexer-sdk
+cd reflexer-sdk/typescript && npm ci && npm pack  # makes reflexer-ai-sdk-VERSION.tgz
+cd your-project && npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz
 ```
 
 Add your reflexer key, given at onboarding, to the client you already make. Your provider's key and settings stay as they were.
@@ -37,6 +41,8 @@ console.log(answer.choices[0].message.content);
 
 ## More
 
-- [Python](docs/python.md) and [TypeScript](docs/typescript.md): every provider and framework, Amazon Bedrock, skipping reflexer for one call, sampling.
+- [Python](docs/python.md): OpenAI, Azure, Anthropic, Gemini, LangChain, Pydantic AI; on Bedrock: boto3, aiobotocore, LangChain, Pydantic AI, Strands, Anthropic's Bedrock clients, LiteLLM.
+- [TypeScript](docs/typescript.md): OpenAI, Azure, Anthropic, Gemini, the AI SDK, LangChain.js; on Bedrock: the AWS SDK, LangChain.js, AnthropicBedrock, the AI SDK.
+- Both: skipping reflexer for one call, sampling, who answered.
 - [What your code sees](docs/behaviour.md): reflexer's answer, and what happens when it is down or slow.
 - [Known limits](SECURITY.md#known-limits). [Contributing](CONTRIBUTING.md).

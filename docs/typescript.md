@@ -1,6 +1,6 @@
 # TypeScript
 
-Node 20.3 or newer; install: [README](../README.md#quick-start). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. `reflexerBase` changes reflexer's address, `https://api.reflexer.ai` by default.
+Node 20.3 or newer; install: [README](../README.md#quick-start). The examples are ES modules (`import`, top-level `await`). Give reflexer's client your reflexer key (`rfx1_...`, from onboarding; a malformed one throws at once). Everything else stays yours: the provider key, options, `fetch`. `reflexerBase` (`base` in the options of a `fetch` or `bedrock.wrap`) changes reflexer's address, `https://api.reflexer.ai` by default.
 
 ## OpenAI
 
@@ -22,7 +22,8 @@ console.log(answer.choices[0].message.content);
 import { Anthropic } from "@reflexer-ai/sdk/anthropic";
 // const client = new Anthropic();
 const client = new Anthropic({ reflexerKey: process.env.REFLEXER_KEY });
-const answer = await client.messages.create({ model: "your-model", max_tokens: 1024, messages: [{ role: "user", content: "Hi" }] });
+const answer = await client.messages.create({ model: "your-model", max_tokens: 1024,
+  messages: [{ role: "user", content: "Hi" }] });
 console.log(answer.content[0].text);
 ```
 
@@ -37,9 +38,9 @@ const answer = await client.models.generateContent({ model: "your-model", conten
 console.log(answer.text);
 ```
 
-## Keeping the stock class
+## Keeping your library's own class
 
-When a library builds the client for you, pass it reflexer's `fetch` instead.
+Give it reflexer's `fetch`.
 
 <!-- example: served -->
 ```js
@@ -51,7 +52,10 @@ const answer = await client.chat.completions.create({ model: "your-model", messa
 console.log(answer.choices[0].message.content);
 ```
 
-Also `reflexer.azure.fetch` and `reflexer.anthropic.fetch`; Gemini takes it in `httpOptions`: `new GoogleGenAI({ httpOptions: { fetch: reflexer.gemini.fetch(key) } })`. Each takes your own `fetch` as `{ fetch }`.
+- Azure, Anthropic: `reflexer.azure.fetch`, `reflexer.anthropic.fetch`.
+- Gemini: `new GoogleGenAI({ httpOptions: { fetch: reflexer.gemini.fetch(key) } })`.
+
+Each takes your own `fetch` as `{ fetch }`.
 
 ## The AI SDK (Node 22+)
 
@@ -82,7 +86,9 @@ console.log((await chat.invoke("Hi")).content);
 
 ## Amazon Bedrock
 
-The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4). Reflexer never passes a signature on: if it does not answer a signed call, your library sends it to Bedrock. Your AWS secret never leaves your library.
+The same code works with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) and with your AWS credentials (SigV4).
+
+### The AWS SDK
 
 <!-- example: served bedrock -->
 ```js
@@ -90,9 +96,11 @@ import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-r
 import * as bedrock from "@reflexer-ai/sdk/bedrock";
 // const client = new BedrockRuntimeClient({ region: "us-east-1" });
 const client = bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1" }), process.env.REFLEXER_KEY);
-const answer = await client.send(new ConverseCommand({ modelId: "your-model-id", messages: [{ role: "user", content: [{ text: "Hi" }] }] }));
-console.log(answer.output.message.content[0].text);
+const command = new ConverseCommand({ modelId: "your-model-id", messages: [{ role: "user", content: [{ text: "Hi" }] }] });
+console.log((await client.send(command)).output.message.content[0].text);
 ```
+
+### LangChain.js
 
 <!-- example: served bedrock -->
 ```js
@@ -105,15 +113,21 @@ const chat = new ChatBedrockConverse({ model: "your-model-id", region: "us-east-
 console.log((await chat.invoke("Hi")).content);
 ```
 
+### AnthropicBedrock
+
 <!-- example: served bedrock -->
 ```js
 import { AnthropicBedrock } from "@anthropic-ai/bedrock-sdk";
 import * as bedrock from "@reflexer-ai/sdk/bedrock";
 // const client = new AnthropicBedrock({ awsRegion: "us-east-1" });
-const client = new AnthropicBedrock({ awsRegion: "us-east-1", fetch: bedrock.fetch(process.env.REFLEXER_KEY), middleware: [bedrock.anthropicMiddleware] }); // ours last
-const answer = await client.messages.create({ model: "your-model-id", max_tokens: 1024, messages: [{ role: "user", content: "Hi" }] });
+const client = new AnthropicBedrock({ awsRegion: "us-east-1", fetch: bedrock.fetch(process.env.REFLEXER_KEY),
+  middleware: [bedrock.anthropicMiddleware] }); // keep bedrock.anthropicMiddleware last
+const answer = await client.messages.create({ model: "your-model-id", max_tokens: 1024,
+  messages: [{ role: "user", content: "Hi" }] });
 console.log(answer.content[0].text);
 ```
+
+### The AI SDK
 
 <!-- example: served bedrock -->
 ```js
@@ -121,8 +135,8 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { generateText, wrapLanguageModel } from "ai";
 import * as bedrockAi from "@reflexer-ai/sdk/bedrock-ai";
 // const model = createAmazonBedrock({ region: "us-east-1" })("your-model-id");
-const model = wrapLanguageModel({ model: createAmazonBedrock({ region: "us-east-1", fetch: bedrockAi.fetch(process.env.REFLEXER_KEY) })("your-model-id"),
-  middleware: bedrockAi.middleware });
+const bedrock = createAmazonBedrock({ region: "us-east-1", fetch: bedrockAi.fetch(process.env.REFLEXER_KEY) });
+const model = wrapLanguageModel({ model: bedrock("your-model-id"), middleware: bedrockAi.middleware });
 console.log((await generateText({ model, prompt: "Hi" })).text);
 ```
 
@@ -139,7 +153,11 @@ const answer = await client.chat.completions.create({ model: "your-model", messa
 console.log(answer.choices[0].message.content);
 ```
 
-The same `headers` on Anthropic and AnthropicBedrock, in the AI SDK's `generateText`, and in LangChain.js as `invoke("Hi", { options: { headers } })`; Gemini, in `config: { httpOptions: { headers } }`; the AI SDK's Bedrock provider, `providerOptions: { reflexer: { passThrough: true } }`. On AWS JS it is an option of `send`:
+- Anthropic, AnthropicBedrock, the AI SDK's `generateText`: the same `headers`.
+- LangChain.js: `invoke("Hi", { options: { headers } })`.
+- Gemini: `config: { httpOptions: { headers } }`.
+- The AI SDK on Bedrock: `providerOptions: { reflexer: { passThrough: true } }`.
+- The AWS SDK: an option of `send`, below. LangChain.js on Bedrock: [Known limits](../SECURITY.md#known-limits).
 
 <!-- example: straight bedrock -->
 ```js
@@ -160,7 +178,7 @@ const answer = await client.chat.completions.create({ model: "your-model", messa
 console.log(answer.choices[0].message.content);
 ```
 
-`sample` goes in the options of `reflexer.*.fetch` and `bedrock.wrap` too.
+`sample` goes in the options of every `fetch` and `bedrock.wrap` too.
 
 ## How long reflexer may take
 
@@ -168,8 +186,9 @@ console.log(answer.choices[0].message.content);
 ```js
 import OpenAI from "openai";
 import * as reflexer from "@reflexer-ai/sdk";
-const fetch = reflexer.openai.fetch(process.env.REFLEXER_KEY, { headersTimeout: 10_000 }); // ms; then the call goes to OpenAI
-const answer = await new OpenAI({ fetch }).chat.completions.create({ model: "your-model", messages: [{ role: "user", content: "Hi" }] });
+const fetch = reflexer.openai.fetch(process.env.REFLEXER_KEY, { headersTimeout: 10_000 }); // ms, then the call goes to OpenAI
+const client = new OpenAI({ fetch });
+const answer = await client.chat.completions.create({ model: "your-model", messages: [{ role: "user", content: "Hi" }] });
 console.log(answer.choices[0].message.content);
 ```
 
@@ -181,8 +200,10 @@ console.log(answer.choices[0].message.content);
 ```js
 import { OpenAI } from "@reflexer-ai/sdk/openai";
 const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY });
-const { data: answer, response } = await client.chat.completions.create({ model: "your-model", messages: [{ role: "user", content: "Hi" }] }).withResponse();
-console.log(answer.choices[0].message.content, answer.model, answer.usage.cost); // model ends in "-reflexer"; cost in USD
+const call = client.chat.completions.create({ model: "your-model", messages: [{ role: "user", content: "Hi" }] });
+const { data: answer, response } = await call.withResponse();
+console.log(answer.choices[0].message.content);
+console.log(answer.model, answer.usage?.cost); // model ends in "-reflexer"; cost in USD
 console.log(response.headers.get("reflexer-answered-by")); // "reflexer", or "provider" when reflexer passed the call on
 ```
 
@@ -190,4 +211,4 @@ More, and what happens when reflexer is down or slow: [behaviour.md](behaviour.m
 
 ## Versions
 
-Tested on openai 7, @anthropic-ai/sdk 1, @google/genai 2 from 2.29.0, @aws-sdk/client-bedrock-runtime 3 from 3.1160.0 and @ai-sdk/amazon-bedrock 5 from 5.0.132. On any other release reflexer throws where the stock SDK would answer.
+Tested on openai 7, @anthropic-ai/sdk 1, @google/genai 2 from 2.29.0, @aws-sdk/client-bedrock-runtime 3 from 3.1160.0 and @ai-sdk/amazon-bedrock 5 from 5.0.132. On another major, or below its floor, reflexer throws where the stock SDK would answer.

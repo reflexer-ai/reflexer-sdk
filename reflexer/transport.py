@@ -110,7 +110,7 @@ class Through:
 
     async def aland(self):
         if self.due():
-            await self.inner.aclose()
+            await closed_unless_its_loop_ended(self.inner)
 
     def handle_request(self, request):
         try:
@@ -200,6 +200,18 @@ def dropped(through, overdue):
         through.inner.close()
 
 
+async def closed_unless_its_loop_ended(client):
+    """`client.aclose()`, for Gemini's: one holding a connection of an event loop that has ended, which none can use again,
+    is left unclosed, its pool's other connections with it till they are collected, as google-genai leaves its own aiohttp
+    sessions of such a loop. Any other failure to close is raised."""
+    try:
+        await client.aclose()
+    except RuntimeError as failure:
+        if str(failure) != "Event loop is closed":  # asyncio's, on any use of a loop that has ended
+            raise
+        log.info("a client of a finished event loop was left unclosed")
+
+
 def without_its_cookie(answer):
     """Reflexer's answer. The outer client would file its cookie under the provider's name, and send it there."""
     answer.headers.pop("set-cookie", None)
@@ -269,7 +281,7 @@ class Both:
     async def aclose(self):
         await self.close_overdue()
         for through in self.out(True):
-            await through.aclose()
+            await closed_unless_its_loop_ended(through)
 
     def __repr__(self):  # what holds it may build a cache's key from its text
         return "reflexer.Both"

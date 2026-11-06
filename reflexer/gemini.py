@@ -11,7 +11,7 @@ try:
 except ImportError:
     LIBRARIES = (httpx,)
 from . import BASE, Reflexer, supported
-from .transport import Both, Through, setup_http_client
+from .transport import Both, Through, closed_unless_its_loop_ended, setup_http_client
 
 supported("google-genai", [2])
 
@@ -65,7 +65,7 @@ class Client(genai.Client):
         async def closing():
             await aclose()
             if self.reflexer_async_built:
-                await self.reflexer_async_http.aclose()
+                await closed_unless_its_loop_ended(self.reflexer_async_http)
 
         return closing
 

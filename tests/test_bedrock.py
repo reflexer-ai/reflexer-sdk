@@ -1148,6 +1148,7 @@ class Broken(Case):
             found = errors_in_clear()
         httpx = [scene for scene in found if scene[0] in HTTPX and scene[1].split(", HTTP/2")[0].split(", async")[0] in HTTPX_ERRORS]
         self.assertTrue(httpx)
+        # reflexer stalled, httpcore's frames no longer hold the headers it sent: only aiohttp's (LiteLLM's async) go red
         self.assertEqual([scene for scene in httpx if not found[scene] and "stalled" not in scene[1]], [])
         for scene in [("litellm", "the client's deadline, reflexer stalled, async", True), ("boto3", "not an Exception, in the leg", True),
                       *[(lib, "not an Exception, as the leg's failure is counted", keyed) for lib in ("boto3", "aiobotocore") for keyed in (True, False)]]:

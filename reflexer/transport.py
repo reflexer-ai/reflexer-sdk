@@ -87,8 +87,9 @@ def to_reflexer(reflexer, request):
 
 
 def alone(stopped):
-    """A cancel or a ^C during reflexer's leg, to raise on alone: without the frames below the leg, nor the errors it came
-    while handling, whose frames hold reflexer's request in clear. Its type and message stay, and the frames above."""
+    """A cancel or a ^C during reflexer's leg, or any error as its failure is counted, to raise on alone: without the frames
+    below the leg, nor the errors it came while handling, whose frames hold reflexer's request in clear. Its type and
+    message stay, and the frames above."""
     stopped.__context__ = stopped.__cause__ = None
     return stopped.with_traceback(None)
 
@@ -130,7 +131,7 @@ class Through:
                     answer.close()
             except Exception as failure:
                 self.reflexer.failed(failure)
-        except BaseException as stopped:  # a cancel, a ^C, on reflexer's leg or as its failure is counted
+        except BaseException as stopped:  # a cancel, a ^C, any error as the leg's failure is counted
             raise alone(stopped)
         return self.send(stays_straight(request))
 

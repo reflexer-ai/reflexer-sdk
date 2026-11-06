@@ -26,7 +26,6 @@ DOCS = [os.path.join(ROOT, "README.md"), *sorted(glob.glob(os.path.join(ROOT, "d
 BLOCK = re.compile(r"(?:<!-- example: ([a-z ]+) -->\n)?```(\w*)\n(.*?)^```", re.S | re.M)
 OUTCOMES = ("served", "straight")
 LIMIT = 60  # seconds a block may take: one that hangs ends the run, naming where it hung
-STOCK_FAILS = {"pydantic_ai.models.anthropic": sys.version_info < (3, 11)}  # as the docs say: Pydantic AI's own, on the stock client too
 WAYS = {"key": ({"AWS_BEARER_TOKEN_BEDROCK": bedrock.BEARER}, "Bearer"), "signed": ({}, "AWS4-HMAC-SHA256")}  # Bedrock's
 ENVIRONMENT = bedrock.ENVIRONMENT | {
     "REFLEXER_KEY": harness.make_key(), "OPENAI_API_KEY": harness.PROVIDER_KEY["openai"],
@@ -70,8 +69,6 @@ class Docs(unittest.TestCase):
             self.assertTrue(words and words[0] in OUTCOMES and set(words[1:]) <= {"bedrock"}, f"{where}: no <!-- example: ... --> it knows")
             for way in (WAYS if "bedrock" in words else [None]) if language == "python" else ():
                 with self.subTest(where, bedrock=way):
-                    if any(fails and module in code for module, fails in STOCK_FAILS.items()):
-                        self.skipTest("Pydantic AI's own failure on this Python, with the stock client too")
                     self.check(where, words[0], code, way)
 
     def test_a_planted_fault_turns_it_red(self):

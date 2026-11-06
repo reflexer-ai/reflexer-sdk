@@ -19,12 +19,9 @@ Add your reflexer key, given at onboarding, to the client you already make. Your
 
 <!-- example: served -->
 ```python
-import os
-import reflexer.openai
-
+import os, reflexer.openai
 # client = openai.OpenAI()
 client = reflexer.openai.OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
-
 answer = client.chat.completions.create(model="your-model", messages=[{"role": "user", "content": "Hi"}])
 print(answer.choices[0].message.content)
 ```
@@ -32,18 +29,14 @@ print(answer.choices[0].message.content)
 <!-- example: served -->
 ```js
 import { OpenAI } from "@reflexer-ai/sdk/openai";
-
 // const client = new OpenAI();
 const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY });
-
 const answer = await client.chat.completions.create({ model: "your-model", messages: [{ role: "user", content: "Hi" }] });
 console.log(answer.choices[0].message.content);
 ```
 
 ## More
 
-- [Python](docs/python.md): OpenAI, Azure OpenAI, Anthropic, Gemini, LangChain, Pydantic AI, Amazon Bedrock (boto3, aiobotocore, langchain-aws, Strands, Anthropic's Bedrock clients, LiteLLM); skipping reflexer for one call; sending it a share of the calls.
-- [TypeScript](docs/typescript.md): OpenAI, Azure OpenAI, Anthropic, Gemini, the AI SDK, LangChain.js, Amazon Bedrock (AWS JS, LangChain.js, AnthropicBedrock, the AI SDK); the same settings.
-- [What your code sees](docs/behaviour.md): reflexer's answer, and what happens when reflexer fails or is slow.
-- [Known limits](SECURITY.md#known-limits).
-- [Contributing](CONTRIBUTING.md): the checks, and how to run them.
+- [Python](docs/python.md) and [TypeScript](docs/typescript.md): every provider and framework, Amazon Bedrock, skipping reflexer for one call, sampling.
+- [What your code sees](docs/behaviour.md): reflexer's answer, and what happens when it is down or slow.
+- [Known limits](SECURITY.md#known-limits). [Contributing](CONTRIBUTING.md).

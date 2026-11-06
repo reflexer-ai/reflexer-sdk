@@ -66,6 +66,12 @@ A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` on
 - TypeScript, Amazon Bedrock: on the AI SDK, a call not streamed whose timeout cuts reflexer's leg goes straight, given as long again: the client may wait up to twice its timeout, and a cancel during that straight leg is not seen, as the AI SDK joins its timeout and the client's cancel into one signal before any line sees it. A `headersTimeout` below the client's own keeps both its deadline and its cancel.
 - TypeScript, Amazon Bedrock: on AnthropicBedrock, when its timeout fires on reflexer's leg, the call goes straight with the timeout afresh, so the client may wait up to twice it; a cancel of the client's is kept.
 - TypeScript, Amazon Bedrock: the AI SDK's Bedrock provider needs Node 22, its own floor.
+- LangChain: `ChatAnthropic` takes no HTTP client, so its calls cannot go through reflexer. On reflexer's LangChain classes, LangChain's TCP keepalive (`http_socket_options`) does not apply: LangChain sets it only on the HTTP clients it makes. LangChain's serialization (`dumpd`, then `loads`) gives back LangChain's own class, without reflexer. LangChain's own classes, given an HTTP client, stop asking a stream for its usage and price: `stream_usage=True` keeps them.
+- TypeScript, LangChain.js: `@langchain/anthropic`'s `ChatAnthropic` bundles a major of `@anthropic-ai/sdk` this SDK is not tested on, so its calls given reflexer's `fetch` throw; `@langchain/google-genai` takes no `fetch`.
+- Pydantic AI on Python 3.10: its last release for 3.10 fails Anthropic's calls, with the stock client too.
+- TypeScript, the AI SDK on Gemini names the model asked for, not the answer's: `result.response.headers["reflexer-answered-by"]` says who answered.
+- Amazon Bedrock: on Mantle, a signed call goes to Mantle as stock sends it, not through reflexer.
+- TypeScript, Amazon Bedrock: LangChain.js makes the AWS JS call itself: its skip is the `Reflexer-Pass-Through` header, set by a middleware of the client's on the AWS JS client.
 - Ruff's inline `noqa` can silence a finding; the package holds three, each with its reason, for a header's name and for random numbers that guard no secret.
 
 ## Reporting a vulnerability

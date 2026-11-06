@@ -2,7 +2,7 @@
 
 Reflexer in front of Pydantic AI's OpenAI, Anthropic and Gemini models. On Bedrock: [Bedrock](bedrock.md#langchain-aws-pydantic-ai-strands).
 
-**Before you begin:** `pydantic-ai`, and `REFLEXER_KEY` set to the key you got at onboarding.
+**Before you begin:** Pydantic AI 2 on Python 3.10+, and `REFLEXER_KEY` set to the key you got at onboarding.
 
 ## 1. Install
 
@@ -36,7 +36,7 @@ Anthropic: `AnthropicProvider(anthropic_client=reflexer.anthropic.AsyncAnthropic
 
 ## 3. Verify
 
-The reply looks the same either way. A served reply's model name ends in `-reflexer`.
+The reply looks the same either way. A reply from reflexer has a model name ending in `-reflexer`.
 
 <!-- example: served -->
 ```python
@@ -57,12 +57,13 @@ frontier-x-reflexer
 ## Behavior
 
 - **Reflexer down, slow or busy:** the call goes to your provider, and your code gets your provider's answer. The SDK logs a warning on the `reflexer` logger. After a failure, the next calls go to your provider too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to your provider with the same timeout, so a call can take up to twice it; if reflexer had already passed the call on, your provider may run it twice.
-- **Which calls:** only the calls that return a model's message go to reflexer. The others (embeddings, files, model lists) and calls to `http`, `localhost` or a private IP go to your provider directly.
-- **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to pass the call on. The reflexer key goes to reflexer only.
+- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to your provider with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, your provider may run it, and bill it, twice.
+- **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to your provider. A key revoked less than a day ago still sends calls to your provider, with a warning.
+- **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
+- **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to forward the call to your provider when it does not answer. The reflexer key goes to reflexer only.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
-Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](../SECURITY.md#known-limits).
+Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 ## Options
 
 - `sample=0.01` on reflexer's client: send that share of the calls to reflexer, the rest to your provider.

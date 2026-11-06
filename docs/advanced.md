@@ -4,7 +4,7 @@ For tuning reflexer once your calls go through it. Each section: what it does, i
 
 ## Skip reflexer for one call
 
-The `Reflexer-Pass-Through` header sends one call to your provider; it is taken off before the call leaves your machine, but for a few Bedrock clients ([Known limits](../SECURITY.md#known-limits)). Every call goes through reflexer by default.
+The `Reflexer-Pass-Through` header sends one call to your provider; it is taken off before the call leaves your machine, but for a few Bedrock clients ([Known limits](limits.md)). Every call goes through reflexer by default.
 
 <!-- example: straight -->
 ```python
@@ -80,7 +80,30 @@ Where each library takes it:
 | LangChain.js | `invoke("Hi", { options: { headers: { "Reflexer-Pass-Through": "1" } } })` |
 | The AWS SDK for JavaScript | `client.send(command, { reflexerPassThrough: true })` |
 
-langchain-aws, Strands, Pydantic AI on Bedrock and LangChain.js on Bedrock make the call themselves, so it takes a hook of yours on the client (same link).
+langchain-aws, Strands and Pydantic AI on Bedrock make the boto3 call themselves: set the header by a hook on the client, for as long as it is registered.
+
+<!-- example: straight bedrock -->
+```python
+import os
+from langchain_aws import ChatBedrockConverse
+import reflexer.boto3
+
+client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", reflexer_key=os.environ["REFLEXER_KEY"])
+chat = ChatBedrockConverse(model="frontier-x", client=client)
+
+def skip_reflexer(request, **_):
+    request.headers["Reflexer-Pass-Through"] = "1"
+
+client.meta.events.register("before-sign.bedrock-runtime.Converse", skip_reflexer)
+print(chat.invoke("Hi").content)
+client.meta.events.unregister("before-sign.bedrock-runtime.Converse", skip_reflexer)
+```
+
+```text
+Hello! How can I help you today?
+```
+
+LangChain.js on Bedrock: the same header, set by a middleware of yours on the AWS SDK client. In a `.ts` file, `client.send(command, { reflexerPassThrough: true })` needs its options cast to `any`.
 
 ## Send a share of the calls
 
@@ -117,9 +140,9 @@ Every reflexer client, and every function that takes the key, takes `sample`; in
 
 ## How long reflexer may take
 
-Python: your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already passed the call on, your provider may run it twice. Set the timeout as you would without reflexer.
+Python: your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already forwarded the call, your provider may run it, and bill it, twice. Set the timeout as you would without reflexer.
 
-TypeScript: `headersTimeout` is how long the call to reflexer waits for its answer to start, then the call goes to your provider. By default 300 seconds. Set it in the options of a `fetch` or `bedrock.wrap`; reflexer's classes do not take it. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider; if reflexer had already passed the call on, your provider may run it twice.
+TypeScript: `headersTimeout` is how long the call to reflexer waits for its answer to start, then the call goes to your provider. By default 300 seconds. Set it in the options of a `fetch` or `bedrock.wrap`; reflexer's classes do not take it. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout, and your SDK's retry goes to your provider; if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
 
 <!-- example: served -->
 ```js

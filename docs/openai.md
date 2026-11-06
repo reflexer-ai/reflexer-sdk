@@ -56,7 +56,7 @@ Hello! How can I help you today?
 
 ## 3. Verify
 
-The reply looks the same either way. The `Reflexer-Answered-By` header says who answered: `reflexer`, or `provider` when reflexer passed the call on; it is absent when the call went to OpenAI directly.
+The reply looks the same either way. The `Reflexer-Answered-By` header says who answered: `reflexer`, or `provider` when reflexer forwarded the call to OpenAI; it is absent when the call went to OpenAI directly.
 
 <!-- example: served -->
 ```python
@@ -85,18 +85,19 @@ console.log(response.headers.get("reflexer-answered-by"));
 reflexer
 ```
 
-A served reply's `model` ends in `-reflexer`, and `usage.cost` holds its price in USD.
+A reply from reflexer has a `model` ending in `-reflexer`, and `usage.cost` holds its price in USD.
 
 ## Behavior
 
 - **Reflexer down, slow or busy:** the call goes to OpenAI, and your code gets OpenAI's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to OpenAI too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to OpenAI with the same timeout, so a call can take up to twice it; if reflexer had already passed the call on, OpenAI may run it twice.
-- **Timeouts, TypeScript:** after `headersTimeout` (300 seconds by default) the call goes to OpenAI. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout and your SDK's retry goes to OpenAI; if reflexer had already passed the call on, OpenAI may run it twice.
-- **Which calls:** only the calls that return a model's message go to reflexer. The others (embeddings, files, model lists) and calls to `http`, `localhost` or a private IP go to OpenAI directly.
-- **What leaves your machine:** the call, with your OpenAI key, goes to reflexer, which uses the key to pass the call on. The reflexer key goes to reflexer only.
+- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to OpenAI with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, OpenAI may run it, and bill it, twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to OpenAI. If your client's own timeout fires first, that try fails as a timeout, and your SDK's retry goes to OpenAI. Either way, if reflexer had already forwarded the call, OpenAI may run it, and bill it, twice.
+- **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to OpenAI. A key revoked less than a day ago still sends calls to OpenAI, with a warning.
+- **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
+- **What leaves your machine:** the call, with your OpenAI key, goes to reflexer, which uses the key to forward the call to OpenAI when it does not answer. The reflexer key goes to reflexer only.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 
-Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](../SECURITY.md#known-limits).
+Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 ## Options
 
 - `sample=0.01` (TypeScript `sample: 0.01`): send that share of the calls to reflexer, the rest to OpenAI.

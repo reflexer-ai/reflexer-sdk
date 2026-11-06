@@ -22,11 +22,11 @@ The reply is OpenAI's format, as before. Remove the line and your code is as it 
 
 What you get:
 
-- Your provider's answers, types and errors, unchanged.
+- Your provider's types, fields and errors, as before.
 - A call reflexer does not answer, or cannot be reached for, goes to your provider.
-- Your call, with your provider key, goes to reflexer, which passes it on when it does not answer; the reflexer key goes to reflexer only. [Security](SECURITY.md).
+- Your call, with your provider key, goes to reflexer, which forwards it to your provider when it does not answer; the reflexer key goes to reflexer only. [Security](SECURITY.md).
 - No dependencies: the SDK plugs into the provider SDK you have.
-- Every example in these docs runs in the tests.
+- Every code example in these docs runs in the tests, with the output shown.
 
 Python 3.10+ · Node 20.3+
 
@@ -61,4 +61,4 @@ Then set `REFLEXER_KEY` to the key you got at onboarding.
 
 Don't see yours? If it takes your provider SDK's client, an HTTP client or a `fetch`: [another library](docs/other-libraries.md).
 
-Then: [When reflexer fails](docs/when-reflexer-fails.md) · [Advanced](docs/advanced.md) (skip one call, sampling, timeouts) · [Reference](docs/reference.md) · [Known limits](SECURITY.md#known-limits) · [Contributing](CONTRIBUTING.md)
+Then: [When reflexer fails](docs/when-reflexer-fails.md) · [Advanced](docs/advanced.md) (skip one call, sampling, timeouts) · [Reference](docs/reference.md) · [Known limits](docs/limits.md) · [Contributing](CONTRIBUTING.md)

@@ -75,18 +75,23 @@ Hello! How can I help you today?
 
 Also `reflexer.azure.fetch`, `reflexer.anthropic.fetch` and `reflexer.gemini.fetch` (Gemini takes it in `httpOptions: { fetch }`). Each takes your own `fetch` as `{ fetch }`.
 
-## Behavior
-
-- **Reflexer down, slow or busy:** the call goes to your provider, and your code gets your provider's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to your provider too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to your provider with the same timeout, so a call can take up to twice it; if reflexer had already passed the call on, your provider may run it twice.
-- **Timeouts, TypeScript:** after `headersTimeout` (300 seconds by default) the call goes to your provider. Your client's own timeout covers both calls: if it fires first, that try fails as a timeout and your SDK's retry goes to your provider; if reflexer had already passed the call on, your provider may run it twice.
-- **Which calls:** only the calls that return a model's message go to reflexer. The others (embeddings, files, model lists) and calls to `http`, `localhost` or a private IP go to your provider directly.
-- **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to pass the call on. The reflexer key goes to reflexer only.
-- **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
-
-Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](../SECURITY.md#known-limits).
 ## It takes none of these
 
 Then its calls cannot go through reflexer yet. Open an issue on this repository naming it.
 
+## Verify
+
+The reply looks the same either way. The response's `Reflexer-Answered-By` header is `reflexer` when reflexer answered: read it however your library shows headers, as on [OpenAI](openai.md#3-verify).
+
+## Behavior
+
+- **Reflexer down, slow or busy:** the call goes to your provider, and your code gets your provider's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to your provider too, for about a minute at most, then reflexer is tried again.
+- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to your provider with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, your provider may run it, and bill it, twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to your provider. If your client's own timeout fires first, that try fails as a timeout, and your SDK's retry goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
+- **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to your provider. A key revoked less than a day ago still sends calls to your provider, with a warning.
+- **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
+- **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to forward the call to your provider when it does not answer. The reflexer key goes to reflexer only.
+- **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
+
+Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 Next: [When reflexer fails](when-reflexer-fails.md) · [Advanced](advanced.md) · [Reference](reference.md)

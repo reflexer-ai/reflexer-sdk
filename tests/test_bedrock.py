@@ -2,7 +2,7 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, datetime, json, os, socket, sys, tempfile, shutil, time, types, unittest
+import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -56,8 +56,10 @@ def world(lib):
     for standin in SAVED.pop("standins", ()):
         standin._cut_connections()
         standin._close()
+    for server in SAVED.pop("servers", ()):  # the last world's proxy: its loop ends within its poll, then its socket closes
+        threading.Thread(target=lambda server=server: (server.shutdown(), server.server_close()), daemon=True).start()
     made = harness.World((SAVED["certs"].context(), SAVED["certs"].untrusted()))
-    SAVED["standins"] = [made.reflexer, made.provider, made.elsewhere, made.runner]
+    SAVED["standins"], SAVED["servers"] = [made.reflexer, made.provider, made.elsewhere, made.runner], [made.proxy.server]
     test = harness.Test(lines, lib, made)
     import logging
     logging.getLogger().removeHandler(test.logs)
@@ -512,22 +514,23 @@ DEADLINE = 0.5  # seconds: a client's own deadline on a call reflexer stalls
 
 
 def on_httpx(lib, key, keyed, is_async, http2):
-    """An httpx line's call, as a client makes it (a coroutine when async): with a Bedrock API key, or on anthropic's Bedrock
-    client signed with a session token; its own HTTP client on HTTP/2 when asked, LiteLLM's by LiteLLM's own setting."""
+    """An httpx line's call, as a client makes it (a coroutine when async), its client closed after it: with a Bedrock API
+    key, or on anthropic's Bedrock client signed with a session token; its own HTTP client on HTTP/2 when asked, LiteLLM's
+    by LiteLLM's own setting."""
     import anthropic, httpx, litellm, openai
     import reflexer.anthropic, reflexer.gemini, reflexer.openai
     message, prefix = [{"role": "user", "content": bedrock.TEXT}], "Async" if is_async else ""
     if lib == "litellm":
         os.environ["LITELLM_HTTP2"] = str(http2)
+        handler = (reflexer.litellm.async_client if is_async else reflexer.litellm.client)(key)
         given = dict(model=f"bedrock/converse/{bedrock.MODEL}", messages=message, max_tokens=8, aws_region_name=bedrock.REGION,
-                     api_key=bedrock.BEARER, num_retries=0, timeout=LONG)
-        if is_async:
-            return lambda: litellm.acompletion(**given, client=reflexer.litellm.async_client(key))
-        return lambda: litellm.completion(**given, client=reflexer.litellm.client(key))
+                     api_key=bedrock.BEARER, num_retries=0, timeout=LONG, client=handler)
+        return closing(lambda: (litellm.acompletion if is_async else litellm.completion)(**given), handler.close, is_async)
     if lib == "gemini":
         own = {f"httpx{'_async' if is_async else ''}_client": getattr(httpx, f"{prefix}Client")(http2=True)} if http2 else {}
         client = reflexer.gemini.Client(api_key="made-up", reflexer_key=key, http_options=own)
-        return lambda: (client.aio if is_async else client).models.generate_content(model="made-up", contents=bedrock.TEXT)
+        return closing(lambda: (client.aio if is_async else client).models.generate_content(model="made-up", contents=bedrock.TEXT),
+                       client.aio.aclose if is_async else client.close, is_async)
     sdk = openai if lib == "openai-compat" else anthropic
     own = {"http_client": getattr(sdk, f"Default{prefix}HttpxClient")(http2=True)} if http2 else {}
     if lib.endswith("-compat"):
@@ -539,8 +542,29 @@ def on_httpx(lib, key, keyed, is_async, http2):
         client = getattr(reflexer.anthropic_bedrock, f"{prefix}AnthropicBedrock{'Mantle' if lib == 'anthropic-mantle' else ''}")
     client = client(**made, **own, max_retries=0, reflexer_key=key)
     if sdk is openai:
-        return lambda: client.chat.completions.create(model=bedrock.MODEL, messages=message)
-    return lambda: client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=message)
+        return closing(lambda: client.chat.completions.create(model=bedrock.MODEL, messages=message), client.close, is_async)
+    return closing(lambda: client.messages.create(model=bedrock.MODEL, max_tokens=8, messages=message), client.close, is_async)
+
+
+def closing(call, close, is_async):
+    """`call`, then `close` (a coroutine function when async, run in the call's own event loop), whatever the call raised:
+    the scenes' clients left open would hold the process's descriptors."""
+    import contextlib
+
+    def ran():
+        try:
+            return call()
+        finally:
+            with contextlib.suppress(Exception):
+                close()
+
+    async def aran():
+        try:
+            return await call()
+        finally:
+            with contextlib.suppress(Exception):
+                await close()
+    return aran if is_async else ran
 
 
 def at_our_headers(sync, carried, asynced=None):

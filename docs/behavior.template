@@ -1,0 +1,38 @@
+# The "## Behavior" section of every library page in docs/: the one source of its words. tests/test_docs_pages.py renders
+# it for each page that has the section, and fails when the page's copy differs, printing the section expected.
+#
+# A line is CONDITIONS | TEXT. A line is in a page's section when all its conditions hold:
+#   all          every page
+#   py, ts       the page has Python examples; it has TypeScript ones
+#   py-only, ts-only, both   only Python, only TypeScript, both
+#   NAME.md      that page;  !NAME.md  every page but that one
+# In TEXT, {provider} is the page's provider, from the `provider` lines below ("your provider" for the rest), and {key}
+# is "your {provider} key", or "your provider key" where the provider is "your provider".
+#
+# A page's own case is a line here, conditioned on that page: change the words here, then copy the section the test prints.
+
+provider openai.md OpenAI
+provider anthropic.md Anthropic
+provider gemini.md Gemini
+provider bedrock.md Bedrock
+
+all | ## Behavior
+all |
+both | - **Reflexer down, slow or busy:** the call goes to {provider}, and your code gets {provider}'s answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to {provider} too, for about a minute at most, then reflexer is tried again.
+py-only | - **Reflexer down, slow or busy:** the call goes to {provider}, and your code gets {provider}'s answer. The SDK logs a warning on the `reflexer` logger. After a failure, the next calls go to {provider} too, for about a minute at most, then reflexer is tried again.
+ts-only | - **Reflexer down, slow or busy:** the call goes to {provider}, and your code gets {provider}'s answer. The SDK logs a warning by `console.warn`. After a failure, the next calls go to {provider} too, for about a minute at most, then reflexer is tried again.
+py | - **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to {provider} with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, {provider} may run it, and bill it, twice.
+ts !bedrock.md | - **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to {provider}. If your client's own timeout fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to {provider}. Either way, if reflexer had already forwarded the call, {provider} may run it, and bill it, twice.
+bedrock.md | - **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to Bedrock. If your client's own timeout fires first, AnthropicBedrock and the AI SDK (not streamed) send the call to Bedrock with the timeout again, so it can take up to twice it; the AI SDK, streamed, fails as a timeout. Either way, if reflexer had already forwarded the call, Bedrock may run it, and bill it, twice.
+all | - **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to {provider}. A key revoked less than a day ago still sends calls to {provider}, with a warning.
+all | - **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
+all | - **What leaves your machine:** the call, with {key}, goes to reflexer, which uses the key to forward the call to {provider} when it does not answer. The reflexer key goes to reflexer only.
+gemini.md | - **No timeout by default, Python:** google-genai sets none, so nothing of yours bounds the wait at reflexer: set one in `http_options={"timeout": 60_000}` (milliseconds).
+langchain.md | - **Gemini, no timeout by default:** google-genai sets none, so nothing of yours bounds the wait at reflexer: give `ChatGoogleGenerativeAI` a `timeout=`.
+langchain.md | - **Not covered:** `ChatAnthropic` (Python and LangChain.js) and `@langchain/google-genai`: [Known limits](limits.md).
+pydantic-ai.md | - **Gemini, no timeout by default:** google-genai sets none, so nothing of yours bounds the wait at reflexer: give `reflexer.gemini.Client` `http_options={"timeout": 60_000}` (milliseconds).
+bedrock.md | - **A signed call:** reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library (LiteLLM and the AI SDK: as first signed, while the signature holds; [Known limits](limits.md)), as when reflexer is down. Your AWS secret never leaves your library.
+bedrock.md | - **Mantle:** with a Bedrock API key, through reflexer; signed calls go to Bedrock directly.
+all | - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
+all |
+all | Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).

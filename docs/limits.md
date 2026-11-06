@@ -1,0 +1,46 @@
+# Known limits
+
+For when reflexer does less than the library pages say. Each row: the case, what happens, and what you can do. The full list, with the check that holds each promise: [SECURITY.md](../SECURITY.md#known-limits).
+
+## Every library
+
+| Case | What happens | What you can do |
+|---|---|---|
+| Reflexer is slow | Python: the call goes to your provider when your timeout fires, so it can take up to twice your timeout. TypeScript: your timeout covers both calls; if it fires during the call to reflexer, that try fails, and a retry of your SDK's, if it makes one, goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice | Keep your timeouts as before; in TypeScript, a lower `headersTimeout` ([Advanced](advanced.md#how-long-reflexer-may-take)) |
+| A `base_url` on a private name (a host only your network knows) | The call goes to reflexer first, which cannot reach the host and sends it back; it then goes to the host directly: one more trip | Skip reflexer for those calls, or leave them on a stock client |
+| TypeScript: a call given as a `Request` object, or with a streamed body | It goes to your provider, not reflexer | Pass the body as a string or bytes, as the provider SDKs do |
+| TypeScript: you cancel a call while it is at reflexer | Counted as a reflexer failure: the next calls go to your provider for a while | Nothing |
+| TypeScript: a `fetch` dispatcher of yours that follows redirects | It could carry the reflexer key to a redirect's target | Keep redirects off for reflexer's address |
+
+## Libraries
+
+| Case | What happens | What you can do |
+|---|---|---|
+| openai (TypeScript) with X.509 workload identity | It takes no custom `fetch`, so its calls cannot go through reflexer | Use a key |
+| `@google/genai` before 2.23.0 | It takes no `fetch`: its calls go to Gemini, never to reflexer | Upgrade to 2.29.0 or later |
+| LangChain's `ChatAnthropic` (Python and LangChain.js), `@langchain/google-genai` | Their calls cannot go through reflexer | Use the provider's client, or another LangChain model class |
+| LangChain's own classes given an HTTP client | They stop asking a stream for its usage and price | Pass `stream_usage=True` |
+| LangChain's TCP keepalive (`http_socket_options`) | Not applied on reflexer's classes | Set it on an HTTP client of yours, given as `http_client` |
+| LangChain's `dumpd`, then `loads` | Gives back LangChain's own class, without reflexer | Make the model with reflexer's class again |
+| Pydantic AI on Python 3.10 | Its last release for 3.10 fails Anthropic's calls, with the stock client too | Python 3.11 or later |
+| The AI SDK on Gemini | It names the model you asked for, not the reply's | Read `result.response.headers["reflexer-answered-by"]` |
+| LiteLLM | Only its Bedrock calls go through reflexer | Use the provider's own client for the others |
+
+## Amazon Bedrock
+
+| Case | What happens | What you can do |
+|---|---|---|
+| A signed call, with no role granted to reflexer at onboarding | Reflexer cannot forward it; if it does not answer, your library sends it to Bedrock: two trips | Grant reflexer the role at onboarding, or use a Bedrock API key |
+| LiteLLM and the AI SDK, signed | They cannot sign a call again: if reflexer does not answer while the signature holds (about five minutes), the call goes to Bedrock as first signed; a clock far behind AWS's can see it refused | Keep your machine's clock synced |
+| A Bedrock API key limited to your network (source IP, VPC endpoint) | Bedrock refuses reflexer's forward; the call then goes to Bedrock from your machine: one more trip | Use a key without that limit, or a role |
+| Anthropic's Bedrock and Mantle clients, signed | They sign every header, so a reflexer header you set reaches Bedrock; a signed call to Mantle goes to Bedrock directly | Nothing |
+| langchain-aws, Strands, Pydantic AI | They make the boto3 call themselves: no per-call argument reaches it | Skip with a hook on the client ([Advanced](advanced.md#skip-reflexer-for-one-call)) |
+| `ReflexerPassThrough=True` on a stock boto3 client | botocore refuses it | Use it on reflexer's client only |
+| The AWS SDK for JavaScript, `reflexerPassThrough` | Not in the SDK's types | Cast the options to `any` in a `.ts` file |
+| The AWS SDK for JavaScript with its fetch handler (a browser or edge build) | `bedrock.wrap` refuses it, since fetch follows redirects with the key | Use the Node handlers, the default on Node |
+| aiobotocore on another HTTP session class | Refused when the client is given to reflexer | Use aiobotocore's own session |
+| The AI SDK on Bedrock, streamed, when its timeout fires at reflexer | The call fails as a timeout | Lower `headersTimeout` below your timeout |
+| The AI SDK on Bedrock, not streamed, and AnthropicBedrock (TypeScript), when the timeout fires at reflexer | The call goes to Bedrock with the timeout again: up to twice it | Lower `headersTimeout` below your timeout |
+| The AI SDK on Bedrock | Needs Node 22, its own floor | Node 22 or later |
+
+Next: [When reflexer fails](when-reflexer-fails.md) · [Reference](reference.md)

@@ -18,6 +18,7 @@ job_check() {
   uv run --locked python -m unittest discover -s tests -t .
   uv run --locked python tests/acceptance/run.py
   uv run --locked python -m unittest tests.acceptance.test_controls
+  uv run --locked python -m unittest tests.acceptance.test_docs
   uv run --locked zizmor --min-severity low .github
   gitleaks git --redact --exit-code 1 .
   git init -q "$work/planted" && echo 'made_up = "AKIA''IOSFODNN7EXAMPLA"' > "$work/planted/key.py"
@@ -33,6 +34,7 @@ job_python() {
       tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai tests.test_bedrock
     UV_PROJECT_ENVIRONMENT="$work/venv-$v" uv run --locked --no-default-groups --group test --group bedrock \
       python tests/acceptance/run.py
+    UV_PROJECT_ENVIRONMENT="$work/venv-$v" uv run --locked $GROUPS_PY python -m unittest tests.acceptance.test_docs
   done
 }
 

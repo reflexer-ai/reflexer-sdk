@@ -9,6 +9,7 @@ From the repository's root:
     uv run --locked python tests/acceptance/run.py                       # a table, about a minute
     uv run --locked python tests/acceptance/run.py --only stall --sdk openai
     uv run --locked python -m unittest tests.acceptance.test_controls    # the controls, a few minutes
+    uv run --locked python -m unittest tests.acceptance.test_docs        # the docs' examples
 
 `pass`: held. `fail`: broken; the run exits 1. `cannot`: the case cannot apply, and says what the client sees. `open`: a known gap, failing on what is not built yet; reported, not failing the run. `-`: that SDK has no such call. `--json PATH` also writes what each cell saw and measured; the outage traces' phases are under `data`.
 
@@ -16,6 +17,7 @@ From the repository's root:
 
 - `cases.py`: each case, run once per SDK it names: `openai`, `azure`, `anthropic`, `gemini` (async: `client.aio`), and `acme`, a made-up provider (`harness/acme.py`) that shows what adding one takes.
 - `cases_bedrock.py`: Amazon Bedrock's, once per library a client calls it with (`harness/bedrock.py`: boto3, aiobotocore, langchain-aws, Strands, Pydantic AI, LiteLLM, anthropic's Bedrock and Mantle clients, and the shipped lines at Bedrock's OpenAI and Anthropic routes), with a Bedrock API key or signing (SigV4). Bedrock's stand-in answers its JSON and its binary event stream, and refuses a signature as Bedrock does: one botocore's own signer does not recompute, or whose signing time is out of its window at arrival (`window`, five minutes, shortened by the cases that outlast it).
+- `test_docs.py`: every example in README.md and `docs/`, run as written against the stand-ins, judged by the comment before it.
 - `lines.py`: the SDK under test, each client made by the one line a client writes.
 - `harness/`: the stand-ins (`standins.py`, its modes at its top), the resolver, the certificates.
 - `faults.py` and `test_controls.py`: the controls. Each fault breaks one thing the SDK promises; the test checks each turns its cases red, and that every case but those it lists, with their reasons, is turned red by some fault. So a green run means something. Its `CONDITIONS` are a slow machine's moments, planted in the stand-ins (`run.py --condition NAME`): a stand-in slow to notice a client left, a stall on reflexer's return after an outage, the case's process frozen where each case judged by real time breaks (`FREEZES`); the test checks the cases they touch stay green, and that each condition came about. So a red run means something too.

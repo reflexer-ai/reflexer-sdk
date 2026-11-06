@@ -396,13 +396,13 @@ def in_clear(error, secret, own=()):
     its items'. The line's own state stays reachable from them, as the client's HTTP client holds it; what such a tracker
     ships is what is written. `own`: the client's own requests, which show their signature as a stock client's frames
     show them, so a local shows the secret only past them."""
-    def shows(value):
-        if any(value is each for each in own):
+    def shows(value, within=()):
+        if any(value is each for each in own) or id(value) in within:  # a container holding itself: shown once
             return False
         if type(value) is dict:
-            return secret in repr(list(value)) or any(shows(each) for each in value.values())
+            return secret in repr(list(value)) or any(shows(each, (*within, id(value))) for each in value.values())
         if type(value) in (list, tuple, set):
-            return any(shows(each) for each in value)
+            return any(shows(each, (*within, id(value))) for each in value)
         return secret in repr(value)
 
     found, seen, pending = [], set(), [error]
@@ -644,6 +644,17 @@ class Promises(Case):
         for lib, where in what_the_client_is_handed().items():
             with self.subTest(lib=lib):
                 self.assertEqual(where, [])
+
+    def test_the_frame_check_reads_a_local_holding_itself(self):
+        made = {}  # a frame of the line's file, as a library's frame may hold a dict that holds itself
+        exec(compile("def outer(fail, key):\n    looped = {}\n    looped['itself'] = looped\n    looped['held'] = key\n    fail()", reflexer.boto3.__file__, "exec"), made)
+
+        def fail():
+            raise RuntimeError("made up")
+        try:
+            made["outer"](fail, harness.make_key())
+        except RuntimeError as error:
+            self.assertEqual(in_clear(error, harness.make_key()), ["boto3.py:outer.key", "boto3.py:outer.looped"])
 
     def test_an_error_raised_to_the_client_shows_no_key_signature_or_token_in_any_frame(self):
         for (lib, scene, keyed), shown in errors_in_clear().items():

@@ -28,7 +28,7 @@ What you get:
 - No dependencies: the SDK plugs into the provider SDK you have.
 - Every code example in these docs runs in the tests, with the output shown.
 
-Python 3.10+ · Node 20.3+
+Python 3.10+ · Node 20.3+ · [Apache-2.0](LICENSE)
 
 ## Install
 

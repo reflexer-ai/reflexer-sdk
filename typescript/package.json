@@ -2,6 +2,7 @@
   "name": "@reflexer-ai/sdk",
   "version": "0.1.0",
   "description": "Sends a client's LLM calls through reflexer, on the provider SDK the client already uses.",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/reflexer-ai/reflexer-sdk.git",

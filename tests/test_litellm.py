@@ -61,7 +61,7 @@ class World(unittest.TestCase):
         self.addCleanup(lambda: ([setattr(litellm, name, value) for name, value in saved.items()],
                                  [getattr(litellm, name).__setitem__(slice(None), value) for name, value in lists.items()],
                                  litellm.in_memory_llm_clients_cache.flush_cache()))
-        litellm.in_memory_llm_clients_cache.flush_cache()
+        bedrock.without_litellms_line()  # a line another test of this process ran, as the docs' examples do
 
     def close(self):
         for standin in (self.world.reflexer, self.world.provider, self.world.elsewhere, self.world.runner):

@@ -3,18 +3,9 @@ or, on the stock class, `openai.OpenAI(http_client=reflexer.openai.http_client(k
 import openai
 from . import supported
 from .transport import setup_client, setup_http_client
+from .wires import AZURE, CHAT
 
 supported("openai", [3])
-
-CHAT = {
-    "reflexer_path": "/openai",
-    "provider":      "https://api.openai.com",
-    "calls":         r"/v1/(chat/completions|responses)$",
-}
-AZURE = {  # each client's resource is its own host, always named as the upstream
-    "reflexer_path": "/azure",
-    "calls":         r"/openai/((deployments/[^/]+|v1)/(chat/completions|responses)|responses)$",  # the last, Azure's dated Responses
-}
 
 http_client             = setup_http_client(openai.DefaultHttpxClient,      CHAT)
 async_http_client       = setup_http_client(openai.DefaultAsyncHttpxClient, CHAT)

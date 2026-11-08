@@ -138,7 +138,7 @@ Hello! How can I help you today?
 
 ### LiteLLM
 
-LiteLLM takes reflexer's HTTP client per call. Make it once, and give it to every call.
+One line, once, before your first call: LiteLLM's calls go through reflexer, Bedrock's and every other provider's ([LiteLLM](litellm.md)).
 
 <!-- example: served python bedrock -->
 ```diff
@@ -146,9 +146,8 @@ LiteLLM takes reflexer's HTTP client per call. Make it once, and give it to ever
   import litellm
 + import reflexer.litellm
 
-+ bedrock = reflexer.litellm.client(os.environ["REFLEXER_KEY"])
-- reply = litellm.completion(model="bedrock/converse/frontier-x", messages=[{"role": "user", "content": "Hi"}])
-+ reply = litellm.completion(model="bedrock/converse/frontier-x", messages=[{"role": "user", "content": "Hi"}], client=bedrock)
++ reflexer.litellm.through(os.environ["REFLEXER_KEY"])
+  reply = litellm.completion(model="bedrock/converse/frontier-x", messages=[{"role": "user", "content": "Hi"}])
   print(reply.choices[0].message.content)
 ```
 
@@ -156,7 +155,7 @@ LiteLLM takes reflexer's HTTP client per call. Make it once, and give it to ever
 Hello! How can I help you today?
 ```
 
-`reflexer.litellm.async_client` for `acompletion`.
+`acompletion` and `stream=True` too.
 
 ### The AWS SDK for JavaScript, and LangChain.js on it
 
@@ -301,7 +300,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
   - langchain-aws, Pydantic AI, Strands: a hook of yours on the boto3 client, [Advanced](advanced.md#skip-reflexer-for-one-call).
   - The AI SDK: `providerOptions: { reflexer: { passThrough: true } }`.
   - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Pass-Through": "1"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's second argument.
-- Reflexer's address, if you were given another: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
+- Reflexer's address, if you were given another: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on the `through` functions (TypeScript `{ base }`).
 
 All of them: [Advanced](advanced.md).
 

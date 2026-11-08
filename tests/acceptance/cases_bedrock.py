@@ -335,6 +335,24 @@ def bedrock_the_clients_timeout_holds_on_reflexers_leg(t):
     reflexers_leg_held_no_longer_than_the_timeout(t)
 
 
+@bedrock_case("bedrock timeout", libs=("litellm",), steady=True)
+def bedrock_litellm_async_the_clients_timeout_holds_on_reflexers_leg(t):
+    """By `acompletion`, whose call the line gives its handler as `client`: LiteLLM's converse route then hands the handler
+    no timeout, so the line reads the call's own."""
+    import asyncio, litellm
+    made = Calls(t).client(timeout=CLIENT_TIMEOUT)
+    t.reflexer.set("stall")
+    began = time.monotonic()
+    try:
+        answer = asyncio.run(litellm.acompletion(model=f"bedrock/converse/{bedrock.MODEL}", messages=[{"role": "user", "content": bedrock.TEXT}],
+                                                 max_tokens=8, **made))
+        t.last = bedrock.Outcome(text=answer.choices[0].message.content, wall=time.monotonic() - began)
+    except Exception as error:
+        t.last = bedrock.Outcome(error=error, wall=time.monotonic() - began)
+    straight(t, t.last)
+    reflexers_leg_held_no_longer_than_the_timeout(t)
+
+
 # ---- the breaker, and what the client's own client keeps
 
 @bedrock_case("bedrock breaker", libs=("boto3", "anthropic-bedrock", "litellm"))

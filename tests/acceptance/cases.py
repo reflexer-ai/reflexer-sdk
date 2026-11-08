@@ -1433,3 +1433,4 @@ def measure_what_each_4xx_of_reflexers_does(t):
 
 
 import cases_bedrock  # noqa: E402,F401 Amazon Bedrock's cases, registered beside these
+import cases_litellm  # noqa: E402,F401 LiteLLM's cases, on each other provider, registered beside these

@@ -101,7 +101,7 @@ jobs:
           PYTHON: ${{ matrix.python }}
         run: |
           uv sync --locked --no-default-groups --group test --group frameworks --group bedrock --python "$PYTHON"
-          uv run --locked --no-default-groups --group test --group frameworks --group bedrock python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai tests.test_bedrock
+          uv run --locked --no-default-groups --group test --group frameworks --group bedrock python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai tests.test_bedrock tests.test_litellm
           uv run --locked --no-default-groups --group test --group bedrock python tests/acceptance/run.py
           uv run --locked --no-default-groups --group test --group frameworks --group bedrock python -m unittest tests.acceptance.test_docs
 

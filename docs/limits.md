@@ -10,7 +10,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | A `base_url` on a private name (a host only your network knows) | The call goes to reflexer first, which cannot reach the host and sends it back; it then goes to the host directly: one more trip | Skip reflexer for those calls, or leave them on a stock client |
 | TypeScript: a call given as a `Request` object, or with a streamed body | It goes to your provider, not reflexer | Pass the body as a string or bytes, as the provider SDKs do |
 | Python: you cancel a call, or press ^C, while it is at reflexer | The error keeps its type, message and your frames, but none below the SDK's transport and no error it came while handling: those hold the reflexer key | Nothing |
-| Python: making a client fails (a provider key or region missing), or LiteLLM remakes its HTTP client during a call | The SDK's frames on that error can hold the reflexer key, as the provider SDK's hold your provider key | If an error tracker records frame variables, have it scrub `reflexer_key` and `key` |
+| Python: making a client fails (a provider key or region missing) | The SDK's frames on that error can hold the reflexer key, as the provider SDK's hold your provider key | If an error tracker records frame variables, have it scrub `reflexer_key` and `key` |
 | TypeScript: you cancel a call while it is at reflexer | Counted as a reflexer failure: the next calls go to your provider for a while | Nothing |
 | Python: threads sharing one client open new connections at once | A CPython bug ([python/cpython#141012](https://github.com/python/cpython/issues/141012)) can garble a TLS handshake. If it hits the call to reflexer, the call goes to your provider, and so do your next calls for about a second ([When reflexer fails](when-reflexer-fails.md#reflexer-is-down-or-unreachable)); no reply is wrong. Amazon Bedrock's lines first try reflexer once more. On Alpine (musl), the same bug can crash the process, with or without reflexer | Nothing |
 | TypeScript: a `fetch` dispatcher of yours that follows redirects | It could carry the reflexer key to a redirect's target | Keep redirects off for reflexer's address |
@@ -28,7 +28,10 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | Pydantic AI on Python 3.10 | Its last release for 3.10 fails Anthropic's calls, with the stock client too | Python 3.11 or later |
 | Gemini's automatic function calling (google-genai; `@google/genai` given a `CallableTool`) | One SDK call can make several HTTP calls, and the reply shows only the last one's price (`Reflexer-Cost`); your bill counts them all | Run the tool loop yourself: each call's reply then shows its price |
 | The AI SDK on Gemini | It names the model you asked for, not the reply's | Read `result.response.headers["reflexer-answered-by"]` |
-| LiteLLM | Only its Bedrock calls go through reflexer | Use the provider's own client for the others |
+| LiteLLM: a `client_session`, `aclient_session` or `sync_transport` set after the line, or `litellm.callbacks = [...]` replacing the list | The calls they cover go to your provider directly: OpenAI's and Azure's for the sessions; Anthropic's, Gemini's and Bedrock's, sync for the transport and async for the callbacks | Set yours before the line; append to `litellm.callbacks` |
+| LiteLLM's TLS, certificate and proxy settings (`ssl_verify`, `SSL_CERTIFICATE`, the proxy variables) | Read as the line runs: one changed after it, and a call's own `ssl_verify`, do not apply | Set them before the line |
+| LiteLLM with `force_ipv4` | The line raises `RuntimeError`: LiteLLM then sends its calls by a transport of its own | Leave `force_ipv4` off |
+| LiteLLM on Gemini 3 models | LiteLLM calls them at `v1alpha`, which reflexer does not take: they go to Gemini directly | Nothing yet |
 
 ## Amazon Bedrock
 

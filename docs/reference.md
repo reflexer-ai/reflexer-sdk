@@ -4,9 +4,9 @@ For looking a name up. Every public name of the SDK takes the same few arguments
 
 ## The arguments
 
-**`reflexer_key`** (Python) · **`reflexerKey`** (TypeScript): `str`, required. Your reflexer key, `rfx1_...`, from onboarding. Read it from the environment; never commit it. A key not of that form raises `ValueError` (TypeScript: `Error`) when the client is made. The functions take it as their first argument; `through` as its second.
+**`reflexer_key`** (Python) · **`reflexerKey`** (TypeScript): `str`, required. Your reflexer key, `rfx1_...`, from onboarding. Read it from the environment; never commit it. A key not of that form raises `ValueError` (TypeScript: `Error`) when the client is made. The functions take it as their first argument; `reflexer.boto3.through` and `reflexer.aiobotocore.through` as their second.
 
-**`reflexer_base`** · **`reflexerBase`** · **`base`**: `str`, optional, default `"https://api.reflexer.ai"`. Reflexer's address. `https` only. `base` is the name on functions (Python's `http_client`, `client_args`, `through`, `litellm.client`; TypeScript's `fetch` functions and `bedrock.wrap`).
+**`reflexer_base`** · **`reflexerBase`** · **`base`**: `str`, optional, default `"https://api.reflexer.ai"`. Reflexer's address. `https` only. `base` is the name on functions (Python's `http_client`, `client_args`, the `through` functions; TypeScript's `fetch` functions and `bedrock.wrap`).
 
 **`sample`**: `float` from 0 to 1, optional, default 1. The share of calls that go to reflexer; the rest go to your provider. [Advanced](advanced.md#send-a-share-of-the-calls).
 
@@ -60,7 +60,7 @@ Hello! How can I help you today?
 | `reflexer.gemini.client_args` | A dict for both `client_args` and `async_client_args` | `key, own=None, base=…, sample=1.0` | [other libraries](other-libraries.md) |
 | `reflexer.boto3.client` | A boto3 client | boto3's arguments, and `reflexer_key`, `reflexer_base`, `sample` | [bedrock](bedrock.md#boto3) |
 | `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client given, now through reflexer | `client, reflexer_key, base=…, sample=1.0` | [bedrock](bedrock.md#aiobotocore) |
-| `reflexer.litellm.client`, `async_client` | An HTTP handler for LiteLLM's `client=` | `reflexer_key, base=…, sample=1.0` | [bedrock](bedrock.md#litellm) |
+| `reflexer.litellm.through` | Nothing: from now on, every LiteLLM call in the process whose provider reflexer takes goes through it | `reflexer_key, base=…, sample=1.0` | [litellm](litellm.md) |
 
 <!-- example: served python bedrock -->
 ```python
@@ -118,6 +118,7 @@ Hello! How can I help you today?
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
 - A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
 - `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class: `TypeError`.
+- `reflexer.litellm.through` with LiteLLM's `force_ipv4` on: `RuntimeError`, and nothing changed. Run again, it takes the last one's place.
 - TypeScript, Bedrock: `bedrock.wrap` or `requestHandler` on a handler already wrapped, or on the AWS SDK's fetch handler: `Error`, when wrapped.
 - Anything else your code sees is your provider SDK's own error, as before.
 

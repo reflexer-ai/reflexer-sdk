@@ -11,6 +11,7 @@ STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib
 ALLOWED = {  # what each file may import: the standard library, and the provider SDK the client already has, in its own file
     "__init__.py": STDLIB_CORE,
     "transport.py": STDLIB_CORE,
+    "wires.py": set(),  # data only
     "openai.py": {"openai"},
     "anthropic.py": {"anthropic"},
     "gemini.py": {"httpx", "httpx2", "inspect", "google"},
@@ -22,7 +23,7 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     # way to the request headers aiohttp keeps with an answer (P27)
     "aiobotocore.py": {"aiobotocore", "botocore", "aiohttp", "yarl", "asyncio", "gc.get_referents"},
     "anthropic_bedrock.py": {"anthropic", "contextvars", "inspect"},  # contextvars: a call's own state, set by our middleware for our transport
-    "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "datetime", "inspect", "threading", "time"},  # httpx: LiteLLM's own HTTP library; the rest, its window's bound
+    "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "copy", "datetime", "inspect", "re", "threading", "time"},  # httpx: LiteLLM's own HTTP library; copy, re: the client's own session split, a call's wire picked; the rest, Bedrock's window
 }
 
 

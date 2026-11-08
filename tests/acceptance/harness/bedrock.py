@@ -320,8 +320,20 @@ class PydanticAi(Lib):
             undo()
 
 
+def without_litellms_line():
+    """LiteLLM as stock in this process: what reflexer's line set, undone, and the clients LiteLLM made under it dropped."""
+    import litellm
+    from litellm.llms.custom_httpx.http_handler import HTTPHandler
+    for name in ("client_session", "aclient_session", "sync_transport"):
+        setattr(litellm, name, getattr(getattr(litellm, name, None), "reflexer_own", getattr(litellm, name, None)))
+    litellm.callbacks[:] = [each for each in litellm.callbacks if type(each).__module__ != "reflexer.litellm"]
+    litellm.in_memory_llm_clients_cache.flush_cache()
+    litellm.module_level_client = HTTPHandler(timeout=litellm.request_timeout)
+
+
 class Litellm(Lib):
-    """LiteLLM's Bedrock routes: a call's arguments are its client; reflexer's line is `client=`, per call."""
+    """LiteLLM's Bedrock routes: a call's arguments are its client; reflexer's line, `reflexer.litellm.through`, is the
+    process's, so a stock client made after it undoes it."""
     name, ops = "litellm", ("converse", "converse_stream", "invoke", "invoke_stream")
 
     def make(self, key, keyed, settings):
@@ -329,7 +341,9 @@ class Litellm(Lib):
         made = {"aws_region_name": REGION, "num_retries": 0, "timeout": settings.get("timeout") or 60}
         made |= {"api_key": settings.get("bedrock_key", BEARER)} if keyed else {"aws_access_key_id": ACCESS_KEY, "aws_secret_access_key": SECRET}
         if key:
-            made["client"] = reflexer.litellm.client(key, sample=settings.get("share", 1.0))
+            reflexer.litellm.through(key, sample=settings.get("share", 1.0))
+        else:
+            without_litellms_line()
         return made
 
     def call(self, made, op, headers=None, args=None, extra=None):

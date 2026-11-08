@@ -34,7 +34,7 @@ jobs:
           if [ "$RESOLUTION" = highest ]; then groups="$groups --group frameworks" frameworks=tests.test_pydantic_ai; fi  # their floors of the provider SDKs are above ours
           uv pip install --python drift --resolution "$RESOLUTION" $groups -e .
           uv pip list --python drift | grep -E "^(openai|anthropic|google-genai|httpx|httpx2|langchain-openai|langchain-google-genai|pydantic-ai-slim|boto3|botocore|aiobotocore|litellm|langchain-aws|strands-agents) "
-          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_bedrock $frameworks
+          drift/bin/python -m unittest tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_bedrock tests.test_litellm $frameworks
           drift/bin/python tests/acceptance/run.py
 
   majors:

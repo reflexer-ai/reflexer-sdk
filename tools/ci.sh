@@ -31,7 +31,7 @@ job_python() {
     echo "== Python $v"
     UV_PROJECT_ENVIRONMENT="$work/venv-$v" uv sync --locked $GROUPS_PY --python "$v"
     UV_PROJECT_ENVIRONMENT="$work/venv-$v" uv run --locked $GROUPS_PY python -m unittest \
-      tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai tests.test_bedrock
+      tests.test_logic tests.test_transport tests.test_promises tests.test_langchain tests.test_pydantic_ai tests.test_bedrock tests.test_litellm
     UV_PROJECT_ENVIRONMENT="$work/venv-$v" uv run --locked --no-default-groups --group test --group bedrock \
       python tests/acceptance/run.py
     UV_PROJECT_ENVIRONMENT="$work/venv-$v" uv run --locked $GROUPS_PY python -m unittest tests.acceptance.test_docs

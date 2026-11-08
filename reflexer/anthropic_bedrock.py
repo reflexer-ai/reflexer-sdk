@@ -11,7 +11,7 @@ a signed one, to Mantle as stock: reflexer takes signed calls on Bedrock's runti
 import contextvars, inspect
 import anthropic
 from . import BASE, OURS, PASS_THROUGH, supported
-from .anthropic import MESSAGES
+from .wires import MESSAGES
 from .bedrock import BEDROCK, Keyed, setup_http_client, straight
 from .transport import STRAIGHT, Through, setup_client
 

@@ -12,14 +12,9 @@ except ImportError:
     LIBRARIES = (httpx,)
 from . import BASE, Reflexer, supported
 from .transport import Both, Through, closed_unless_its_loop_ended, setup_http_client
+from .wires import GENERATE
 
 supported("google-genai", [2])
-
-GENERATE = {
-    "reflexer_path": "/gemini",
-    "provider":      "https://generativelanguage.googleapis.com",
-    "calls":         r"/v1(beta)?/models/[^/]+:(stream)?[gG]enerateContent$",
-}
 
 http_client       = setup_http_client(httpx.Client,      GENERATE)
 async_http_client = setup_http_client(httpx.AsyncClient, GENERATE)

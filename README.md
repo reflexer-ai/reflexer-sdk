@@ -56,6 +56,7 @@ Then set `REFLEXER_KEY` to the key you got at onboarding.
 | [OpenAI](docs/openai.md), Azure OpenAI | `openai` | `openai` |
 | [Anthropic](docs/anthropic.md) | `anthropic` | `@anthropic-ai/sdk` |
 | [Gemini](docs/gemini.md) | `google-genai` | `@google/genai` |
+| [LiteLLM](docs/litellm.md) | `litellm` | |
 | [Amazon Bedrock](docs/bedrock.md) | boto3, aiobotocore, langchain-aws, Pydantic AI, Strands, Anthropic's Bedrock clients, LiteLLM | the AWS SDK, LangChain.js, AnthropicBedrock, the AI SDK |
 | [LangChain](docs/langchain.md) | `langchain-openai`, `langchain-google-genai` | `@langchain/openai` |
 | [Pydantic AI](docs/pydantic-ai.md) | `pydantic-ai` | |

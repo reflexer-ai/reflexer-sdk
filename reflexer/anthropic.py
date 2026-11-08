@@ -3,14 +3,9 @@ or, on the stock class, `anthropic.Anthropic(http_client=reflexer.anthropic.http
 import anthropic
 from . import supported
 from .transport import setup_client, setup_http_client
+from .wires import MESSAGES
 
 supported("anthropic", [2])
-
-MESSAGES = {
-    "reflexer_path": "/anthropic",
-    "provider":      "https://api.anthropic.com",
-    "calls":         r"/v1/messages$",
-}
 
 http_client       = setup_http_client(anthropic.DefaultHttpxClient,      MESSAGES)
 async_http_client = setup_http_client(anthropic.DefaultAsyncHttpxClient, MESSAGES)

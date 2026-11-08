@@ -35,3 +35,9 @@ def bedrock_client(world, lib, keyed=True, **settings):
     """A Bedrock library's client as a client writes it with reflexer's line (`harness/bedrock.py`, each `make`): with a
     Bedrock API key (`keyed`), or signing its calls. A coroutine on aiobotocore."""
     return bedrock.LIBS[lib].make(world.key, keyed, settings | {"share": world.share})
+
+
+def litellm_line(world):
+    """LiteLLM's line, the process's: `world.key` its key, `world.share` its `sample`."""
+    import reflexer.litellm
+    reflexer.litellm.through(world.key, sample=world.share)

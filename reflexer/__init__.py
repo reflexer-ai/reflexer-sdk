@@ -18,7 +18,7 @@ log = logging.getLogger("reflexer")
 
 
 class Reflexer:
-    """One client's way to reflexer, for one wire format, from a provider file's data: `reflexer_path`, reflexer's path
+    """One client's way to reflexer, for one wire format, from its data (`wires.py`): `reflexer_path`, reflexer's path
     for the format; `provider`, the provider's own address, to which no upstream is named; `calls`, the path
     of the calls that return a model's message, the only ones that go to reflexer."""
 

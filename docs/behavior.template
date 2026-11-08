@@ -33,6 +33,8 @@ langchain.md | - **Not covered:** `ChatAnthropic` (Python and LangChain.js) and 
 pydantic-ai.md | - **Gemini, no timeout by default:** google-genai sets none, so nothing of yours bounds the wait at reflexer: give `reflexer.gemini.Client` `http_options={"timeout": 60_000}` (milliseconds).
 bedrock.md | - **A signed call:** reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library (LiteLLM and the AI SDK: as first signed, while the signature holds; [Known limits](limits.md)), as when reflexer is down. Your AWS secret never leaves your library.
 bedrock.md | - **Mantle:** with a Bedrock API key, through reflexer; signed calls go to Bedrock directly.
+litellm.md | - **Your whole process:** the line sets LiteLLM's own settings, so every LiteLLM call in the process goes through reflexer. A `client_session`, `aclient_session` or `sync_transport` you set after it, or a `litellm.callbacks = [...]` that replaces the list, sends the calls it covers to your provider directly: [Known limits](limits.md).
+litellm.md | - **Gemini 3:** LiteLLM calls Gemini 3 models at `v1alpha`, which reflexer does not take: those calls go to Gemini directly.
 all | - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 all |
 all | Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).

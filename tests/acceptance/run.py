@@ -13,9 +13,9 @@ import argparse, importlib.metadata, json, logging, os, shutil, signal, sys, tem
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, ROOT]  # the suite's modules, and the SDK of this checkout
-from harness import bedrock  # noqa: E402 Bedrock's libraries and its wire, as the suite plays them
+from harness import bedrock, litellm  # noqa: E402 Bedrock's libraries and its wire, LiteLLM's providers, as the suite plays them
 
-SDK_COLUMNS = ("openai", "anthropic", "gemini", "azure", "acme", *bedrock.COLUMNS)
+SDK_COLUMNS = ("openai", "anthropic", "gemini", "azure", "acme", *bedrock.COLUMNS, *litellm.COLUMNS)
 VERSIONS = ("openai", "anthropic", "google-genai", "httpx2", "httpx", "boto3", "aiobotocore", "litellm", "langchain-aws", "strands-agents",
             "pydantic-ai-slim")
 AMBIENT = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",

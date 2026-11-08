@@ -164,10 +164,10 @@ Hello! How can I help you today?
 
 ## Your own HTTP client
 
-Reflexer's calls go by your HTTP client, with its proxy, TLS settings and hooks: give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
+Reflexer's calls go by your HTTP client, with its proxy, TLS settings and hooks: give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each. LiteLLM: set its `client_session` and `aclient_session` before the line, which keeps them under reflexer's.
 
 ## Async
 
-`AsyncOpenAI`, `AsyncAzureOpenAI`, `AsyncAnthropic`, `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` change as their sync classes do; Gemini's `client.aio` as before; aiobotocore and `reflexer.litellm.async_client` on [Bedrock](bedrock.md).
+`AsyncOpenAI`, `AsyncAzureOpenAI`, `AsyncAnthropic`, `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` change as their sync classes do; Gemini's `client.aio` as before; aiobotocore on [Bedrock](bedrock.md); LiteLLM's `acompletion` by the same line as `completion` ([LiteLLM](litellm.md)).
 
 Next: [Reference](reference.md) · [When reflexer fails](when-reflexer-fails.md)

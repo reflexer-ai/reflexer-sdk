@@ -285,14 +285,12 @@ class Line(World):
             self.assertEqual([getattr(litellm, name, None) for name in GLOBALS] + [list(litellm.callbacks)], before)
 
     def test_a_release_that_drops_its_sync_transport_fails_the_line_and_changes_nothing(self):
-        """The setting dropped, or the private name the line reads it by renamed: the line fails as it runs, a line of ours
-        run before it left as it was."""
+        """LiteLLM's handlers no longer sending by the setting, by their helper or past it: the line fails as it runs, a line
+        of ours run before it left as it was, and nothing sent off this machine."""
         reflexer.litellm.through(self.world.key)
         before = [getattr(litellm, name, None) for name in GLOBALS] + [list(litellm.callbacks)]
-        for dropped in (lambda self: None, lambda self: "another", None):
-            with mock.patch.object(HTTPHandler, "_create_sync_transport", dropped), self.assertRaises((RuntimeError, AttributeError)):
-                if dropped is None:
-                    del HTTPHandler._create_sync_transport
+        for name, dropped in (("_create_sync_transport", lambda self: None), ("create_client", lambda self: __import__("httpx").Client())):
+            with mock.patch.object(HTTPHandler, name, dropped), self.assertRaises(RuntimeError):
                 reflexer.litellm.through(self.world.key)
             self.assertEqual([getattr(litellm, name, None) for name in GLOBALS] + [list(litellm.callbacks)], before)
 

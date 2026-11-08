@@ -29,8 +29,10 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | Gemini's automatic function calling (google-genai; `@google/genai` given a `CallableTool`) | One SDK call can make several HTTP calls, and the reply shows only the last one's price (`Reflexer-Cost`); your bill counts them all | Run the tool loop yourself: each call's reply then shows its price |
 | The AI SDK on Gemini | It names the model you asked for, not the reply's | Read `result.response.headers["reflexer-answered-by"]` |
 | LiteLLM: a `client_session`, `aclient_session` or `sync_transport` set after the line, or `litellm.callbacks = [...]` replacing the list | The calls they cover go to your provider directly: OpenAI's and Azure's for the sessions; Anthropic's, Gemini's and Bedrock's, sync for the transport and async for the callbacks | Set yours before the line; append to `litellm.callbacks` |
-| LiteLLM's TLS, certificate and proxy settings (`ssl_verify`, `SSL_CERTIFICATE`, the proxy variables) | Read as the line runs: one changed after it, and a call's own `ssl_verify`, do not apply | Set them before the line |
-| LiteLLM with `force_ipv4` | The line raises `RuntimeError`: LiteLLM then sends its calls by a transport of its own | Leave `force_ipv4` off |
+| LiteLLM's TLS, certificate and proxy settings (`ssl_verify`, `SSL_CERTIFICATE`, the proxy variables) | Read as the line runs: one changed after it does not apply to LiteLLM's sync calls to any provider | Set them before the line |
+| LiteLLM with `force_ipv4` | The line raises `RuntimeError`: LiteLLM then sends its calls by a transport of its own. Turned on after the line, Anthropic's, Gemini's and Bedrock's sync calls go to your provider | Leave `force_ipv4` off |
+| LiteLLM: a call to another host (a router or gateway as `api_base`, an OpenAI-compatible provider, Azure on your own domain, Bedrock's Mantle) | It goes to that host as before, not through reflexer | Call the provider's own host |
+| LiteLLM's async calls other than `acompletion` (`litellm.anthropic.messages.acreate`, say) to Anthropic, Gemini or Bedrock | They go to your provider as before | Use `acompletion` |
 | LiteLLM on Gemini 3 models | LiteLLM calls them at `v1alpha`, which reflexer does not take: they go to Gemini directly | Nothing yet |
 
 ## Amazon Bedrock

@@ -31,10 +31,10 @@ def litellm_each_way_is_served_async_and_streamed(t):
 @case("litellm", sdks=ALL)
 def litellm_reflexer_busy_goes_straight(t):
     reflexer_status(t, overloaded(t.sdk.removeprefix("litellm-")))
-    for is_async in (False, True):
+    for is_async, stream in WAYS:
         t.lines.litellm_line(t.world)  # anew: a breaker closed, so each call tries reflexer
-        t.straight(litellm.ask(t, is_async))
-    t.check(len(t.to_reflexer()) == 2, f"reflexer saw {len(t.to_reflexer())} of 2 calls")
+        t.straight(litellm.ask(t, is_async, stream))
+    t.check(len(t.to_reflexer()) == len(WAYS), f"reflexer saw {len(t.to_reflexer())} of {len(WAYS)} calls")
 
 
 @case("litellm", sdks=ALL)

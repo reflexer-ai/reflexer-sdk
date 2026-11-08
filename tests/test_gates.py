@@ -23,7 +23,7 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     # way to the request headers aiohttp keeps with an answer (P27)
     "aiobotocore.py": {"aiobotocore", "botocore", "aiohttp", "yarl", "asyncio", "gc.get_referents"},
     "anthropic_bedrock.py": {"anthropic", "contextvars", "inspect"},  # contextvars: a call's own state, set by our middleware for our transport
-    "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "copy", "datetime", "inspect", "re", "threading", "time"},  # httpx: LiteLLM's own HTTP library; copy, re: the client's own session split, a call's wire picked; the rest, Bedrock's window
+    "litellm.py": {"litellm", "httpx", "asyncio", "contextvars", "copy", "datetime", "functools", "inspect", "re", "threading", "time", "weakref"},  # httpx: LiteLLM's own HTTP library; copy, re: the client's own session split, a call's wire picked; the rest, Bedrock's window
 }
 
 

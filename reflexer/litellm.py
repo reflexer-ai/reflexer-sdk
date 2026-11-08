@@ -25,12 +25,12 @@ A call's timeout: LiteLLM's Bedrock converse handler, not streamed, posts by a g
 builds its client with it; so our handler takes it from the call's own parameters, which LiteLLM hands `post` with its
 `logging_obj`. A release that moves them fails the call, never drops its timeout.
 """
-import asyncio, contextvars, copy, datetime, inspect, re, threading, time
+import asyncio, contextvars, copy, datetime, functools, inspect, re, threading, time, weakref
 import httpx, litellm
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 from . import BASE, Reflexer, supported
-from .bedrock import BEDROCK, Keyed
+from .bedrock import BEDROCK, Keyed, straight
 from .transport import STRAIGHT, Through
 from .wires import AZURE, CHAT, GENERATE, MESSAGES
 
@@ -106,24 +106,55 @@ def awithin(seconds, sent):
     return asyncio.wait_for(sent, seconds)
 
 
-LINES = ((CHAT, Through), (AZURE, Through), (MESSAGES, Through), (GENERATE, Through), (BEDROCK, Windowed))  # the first a call's path matches
+LINES = (  # each wire's line, and the hosts its calls go to: the provider's own, or Azure's and AWS's domains, whose hosts are each client's
+    (CHAT, Through, "api.openai.com"), (AZURE, Through, ".azure.com"), (MESSAGES, Through, "api.anthropic.com"),
+    (GENERATE, Through, "generativelanguage.googleapis.com"), (BEDROCK, Windowed, ".amazonaws.com"),
+)
+
+
+def at(host, where):
+    """Whether a call's host is `where`: that host, or, written with a leading dot, any host of that domain."""
+    return host.endswith(where) if where.startswith(".") else host == where
 
 
 class Wires:
-    """A transport, by duck typing, for every wire above: a call goes by the line of the first wire whose calls it is, any
-    other straight, as by any line. Shared by many HTTP clients: a close of one leaves it, and the client under it, open."""
+    """A transport, by duck typing, for every wire above: a call goes by the line of the wire whose calls it is, at its host;
+    any other as stock, LiteLLM's other providers' (a router, Bedrock's Mantle) among them, our headers off. `inner`: the
+    HTTP client under it; or, async, a function making one, called once per event loop, as LiteLLM keeps its own clients.
+    Shared by many HTTP clients: a close of one leaves it, and the clients under it, open."""
 
     def __init__(self, inner, key, base=BASE, sample=1.0):
-        self.lines = [line(Reflexer(key, wire, base, sample), inner) for wire, line in LINES]
+        self.reflexers = [(Reflexer(key, wire, base, sample), line, host) for wire, line, host in LINES]
+        self.inner, self.loops, self.lock = inner, weakref.WeakKeyDictionary(), threading.Lock()
+        self.lines = None if callable(inner) else self.over(inner)
 
-    def line_of(self, request):
-        return next((line for line in self.lines if re.search(line.reflexer.calls, request.url.path)), self.lines[0])
+    def over(self, inner):
+        """Its lines over one HTTP client, and that client's own send, for a call no line takes."""
+        return [(line(reflexer, inner), host) for reflexer, line, host in self.reflexers], \
+            functools.partial(inner.send, stream=True, follow_redirects=False, auth=None)
+
+    def now(self):
+        """Its lines and send: over its one HTTP client, or over the running event loop's own."""
+        if self.lines is not None:
+            return self.lines
+        loop = asyncio.get_running_loop()
+        with self.lock:
+            if loop not in self.loops:
+                self.loops[loop] = self.over(self.inner())
+            return self.loops[loop]
+
+    def line_of(self, request, lines):
+        return next((line for line, host in lines if at(request.url.host, host) and re.search(line.reflexer.calls, request.url.path)), None)
 
     def handle_request(self, request):
-        return self.line_of(request).handle_request(request)
+        lines, send = self.now()
+        line = self.line_of(request, lines)
+        return line.handle_request(request) if line else send(straight(request, request.headers, None))
 
     async def handle_async_request(self, request):
-        return await self.line_of(request).handle_async_request(request)
+        lines, send = self.now()
+        line = self.line_of(request, lines)
+        return await (line.handle_async_request(request) if line else send(straight(request, request.headers, None)))
 
     def close(self):
         pass
@@ -173,7 +204,8 @@ class Hook(CustomLogger):
 def provider(kwargs):
     """The call's provider, as LiteLLM reads it from its model; None for a model it cannot read, whose call fails as stock."""
     try:
-        return litellm.get_llm_provider(model=kwargs.get("model"), custom_llm_provider=kwargs.get("custom_llm_provider"),
+        model = kwargs.get("model") or getattr(kwargs.get("litellm_logging_obj"), "model", None)  # given by name, or by position
+        return litellm.get_llm_provider(model=model, custom_llm_provider=kwargs.get("custom_llm_provider"),
                                         api_base=kwargs.get("api_base"))[1]
     except litellm.BadRequestError:
         return None
@@ -189,15 +221,17 @@ def through(reflexer_key, base=BASE, sample=1.0):
     was = getattr(litellm, "sync_transport", None)
     own = {name: getattr(getattr(litellm, name, None), "reflexer_own", getattr(litellm, name, None)) for name in SET}  # the client's
     try:
-        litellm.sync_transport = own["sync_transport"]  # so LiteLLM's own HTTP clients, made now by its settings, are over it
-        sync, aio = Wires(HTTPHandler().create_client(), **way), Wires(AsyncHTTPHandler().create_client(None, None), **way)
+        litellm.sync_transport = own["sync_transport"]  # so LiteLLM's own HTTP client, made now by its settings, is over it
+        sync = Wires(HTTPHandler(client=httpx.Client()).create_client(), **way)  # a handler holding none over the client's
+        # own transport, whose finalizer would close it
+        aio = Wires(lambda: AsyncHTTPHandler().create_client(None, None), **way)  # LiteLLM's own, one per event loop
+        sync.reflexer_own = own["sync_transport"]
         litellm.sync_transport = sync
         if HTTPHandler()._create_sync_transport() is not sync:  # read as the line runs: a release that renames it fails here
             raise RuntimeError("LiteLLM does not send its handlers' calls by `litellm.sync_transport`: a release that dropped it, or `force_ipv4`")
     except BaseException:
         litellm.sync_transport = was
         raise
-    sync.reflexer_own = own["sync_transport"]
     for name, kind, transport in (("client_session", httpx.Client, sync), ("aclient_session", httpx.AsyncClient, aio)):
         outer = kind(transport=transport, follow_redirects=True) if own[name] is None else split(own[name], way)  # as LiteLLM's own
         outer.reflexer_own = own[name]

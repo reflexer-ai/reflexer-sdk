@@ -2,7 +2,7 @@
 LiteLLM's real library over the acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this
 machine only), sync and async, streamed and not; and each check shown red under a planted fault.
 Offline, every key and answer made up. Run: python -m unittest tests.test_litellm"""
-import asyncio, contextlib, json, os, socket, sys, tempfile, shutil, time, unittest
+import asyncio, contextlib, json, os, socket, sys, tempfile, shutil, threading, time, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -12,7 +12,7 @@ from harness import bedrock, certs, standins  # noqa: E402
 import litellm  # noqa: E402
 from litellm.integrations.custom_logger import CustomLogger  # noqa: E402
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler  # noqa: E402
-import reflexer.litellm  # noqa: E402
+import reflexer.litellm, reflexer.transport  # noqa: E402
 
 SAVED = {}
 MESSAGES = [{"role": "user", "content": "Hi"}]
@@ -25,10 +25,16 @@ PROVIDERS = {  # each provider's call as a LiteLLM user writes it, with its own 
 }
 PROVIDER_KEY_HEADER = {"openai": "authorization", "azure": "api-key", "anthropic": "x-api-key", "gemini": "x-goog-api-key", "bedrock": "authorization"}
 UPSTREAM = {"azure": harness.AZURE_ENDPOINT, "bedrock": f"https://{bedrock.RUNTIME}"}  # the rest: the provider's own, named by none
+OTHERS = [  # LiteLLM's calls to other providers, at hosts the suite resolves to its stand-ins, on wires reflexer takes
+    ("groq/frontier-x", dict(api_key="gsk-made-up")), ("openrouter/made-up/frontier-x", dict(api_key="or-made-up")),
+    *[(model, dict(aws_region_name=bedrock.REGION, max_tokens=8) | auth) for model in ("bedrock_mantle/anthropic.frontier-b-made-up-v1:0", "bedrock_mantle/openai.frontier-o")
+      for auth in (dict(api_key=bedrock.BEARER), dict(aws_access_key_id=bedrock.ACCESS_KEY, aws_secret_access_key=bedrock.SECRET))],
+]
 WAYS = [(is_async, stream) for is_async in (False, True) for stream in (False, True)]
 GLOBALS = ("client_session", "aclient_session", "sync_transport")
 CALLBACK_LISTS = ("callbacks", "input_callback", "success_callback", "failure_callback", "_async_success_callback",
                   "_async_failure_callback")  # where LiteLLM files each callback, on its first call after it is set
+LOOPS, LOOP_OVERLAP = 6, 0.5  # event loops at once, each its thread's, and seconds reflexer holds each answer so they overlap
 LOGGED_WAIT, LOGGED_POLL = 5.0, 0.01  # seconds a callback is waited on, at most
 
 
@@ -73,7 +79,7 @@ class World(unittest.TestCase):
     def ask(self, provider, is_async=False, stream=False, logged=None, **more):
         """One call as a LiteLLM user writes it: its text, or the error it raised. `logged`: a callback's list, waited on
         till LiteLLM, which logs after the call returns, has handed it this call."""
-        given = dict(messages=MESSAGES, num_retries=0, timeout=10, stream=stream) | PROVIDERS[provider] | more
+        given = dict(messages=MESSAGES, num_retries=0, timeout=10, stream=stream) | PROVIDERS.get(provider, {}) | more
 
         def text(chunks):
             return "".join((chunk.choices[0].delta.content or "") for chunk in chunks if chunk.choices)
@@ -138,13 +144,58 @@ class Line(World):
 
     def test_reflexer_busy_or_dead_each_call_reaches_the_provider(self):
         for mode in ("busy", "dead"):
-            reflexer.litellm.through(self.world.key)  # anew: a breaker closed
             self.world.reflexer.set(mode)
             for provider in PROVIDERS:
                 for is_async, stream in WAYS:
                     with self.subTest(mode=mode, provider=provider, is_async=is_async, stream=stream):
+                        reflexer.litellm.through(self.world.key)  # anew, its breaker closed: each call tries reflexer first
+                        tried = len(self.world.reflexer.seen)
                         self.assertEqual(self.ask(provider, is_async, stream), standins.STRAIGHT_TEXT)
+                        self.assertTrue(mode == "dead" or len(self.world.reflexer.seen) > tried)
         self.assertEqual(self.keyed_elsewhere(), [])
+
+    def test_async_calls_in_several_event_loops_at_once_or_in_turn_are_served(self):
+        """As stock LiteLLM keeps an async HTTP client per event loop: threads each running their own, at once, on aiohttp's
+        transport; and loops one after the other on httpx's."""
+        reflexer.litellm.through(self.world.key)
+        self.world.reflexer.set("ok", delay=LOOP_OVERLAP)
+        for provider in PROVIDERS:
+            said = []
+            threads = [threading.Thread(target=lambda: said.append(self.ask(provider, True))) for _ in range(LOOPS)]
+            for each in threads:
+                each.start()
+            for each in threads:
+                each.join()
+            self.assertEqual(said, [standins.SERVED_TEXT] * LOOPS, provider)
+        self.world.reflexer.set("ok")
+        with mock.patch.object(litellm, "disable_aiohttp_transport", True):
+            reflexer.litellm.through(self.world.key)
+            for _ in range(LOOPS):
+                for provider in PROVIDERS:
+                    self.assertEqual(self.ask(provider, True), standins.SERVED_TEXT, provider)
+
+    def test_an_async_call_naming_its_model_by_position_goes_through(self):
+        reflexer.litellm.through(self.world.key)
+        for provider in PROVIDERS:
+            given = dict(PROVIDERS[provider])
+
+            async def asked():
+                return (await litellm.acompletion(given.pop("model"), messages=MESSAGES, num_retries=0, **given)).choices[0].message.content
+            self.assertEqual(asyncio.run(asked()), standins.SERVED_TEXT, provider)
+
+    def test_the_clients_own_transport_stays_open(self):
+        closed = []
+
+        class Own(__import__("httpx").HTTPTransport):
+            def close(self):
+                closed.append(self)
+                super().close()
+        litellm.sync_transport = Own()
+        reflexer.litellm.through(self.world.key)
+        reflexer.litellm.through(self.world.key)
+        __import__("gc").collect()
+        self.assertEqual(closed, [])
+        self.assertEqual(self.ask("anthropic"), standins.SERVED_TEXT)
 
     def test_the_skip_goes_straight_and_never_leaves(self):
         reflexer.litellm.through(self.world.key)
@@ -190,6 +241,7 @@ class Line(World):
             for is_async in (False, True):
                 self.assertEqual(self.ask(provider, is_async), standins.SERVED_TEXT)
         self.assertEqual(len(self.world.reflexer.seen), 2 * len(PROVIDERS))  # one leg to reflexer each, never two
+        self.assertEqual({arrival.headers.get("reflexer-key") for arrival in self.world.reflexer.seen}, {self.world.key})
         self.assertEqual({arrival.headers.get("reflexer-upstream") for arrival in self.world.reflexer.seen}, {None, *UPSTREAM.values()})  # never reflexer
         self.assertEqual([getattr(litellm, name).reflexer_own for name in GLOBALS], [None, None, None])
 
@@ -203,6 +255,21 @@ class Line(World):
             for is_async, stream in WAYS:
                 with self.subTest(provider=provider, is_async=is_async, stream=stream):
                     self.assertEqual(self.ask(provider, is_async, stream), standins.SERVED_TEXT)
+
+    def test_another_providers_call_never_reaches_reflexer(self):
+        """Calls on a wire reflexer takes, at a host not the provider's: other providers of LiteLLM's, and Bedrock's Mantle,
+        keyed or signed, go as stock; Azure's own domain on any of its routes goes by Azure's line."""
+        reflexer.litellm.through(self.world.key)
+        for model, given in OTHERS:
+            for is_async in (False, True):
+                with self.subTest(model=model, is_async=is_async):
+                    self.ask(None, is_async, model=model, **given)
+        self.assertEqual(self.world.reflexer.seen, [])
+        self.assertTrue(self.world.provider.seen)
+        wires = reflexer.litellm.Wires(__import__("httpx").Client(), key=self.world.key)
+        for path in ("/openai/v1/chat/completions", "/openai/deployments/frontier-d/chat/completions", "/openai/responses"):
+            line = wires.line_of(__import__("httpx").Request("POST", f"{harness.AZURE_ENDPOINT}{path}"), wires.now()[0])
+            self.assertEqual(line.reflexer.reflexer_path, "/azure", path)
 
     def test_a_call_given_its_own_client_keeps_it(self):
         reflexer.litellm.through(self.world.key)
@@ -251,7 +318,7 @@ class Broken(World):
 
         def unused(self, inner, **way):
             real(self, inner, **way)
-            if hasattr(inner._transport, "handle_request"):  # LiteLLM's own sync transport, as with no line
+            if not callable(inner):  # a sync client: LiteLLM's own transport under it, as with no line
                 self.handle_request = inner._transport.handle_request
         with mock.patch.object(reflexer.litellm.Wires, "__init__", unused):
             served = self.served_everywhere()
@@ -259,10 +326,43 @@ class Broken(World):
 
     def test_a_wire_left_out_turns_its_provider_red(self):
         for left_out in reflexer.litellm.LINES:
-            with self.subTest(wire=left_out[0]["reflexer_path"]), \
+            provider = left_out[0]["reflexer_path"].strip("/")
+            with self.subTest(wire=provider), \
                     mock.patch.object(reflexer.litellm, "LINES", tuple(line for line in reflexer.litellm.LINES if line is not left_out)):
                 served = self.served_everywhere()
-                self.assertFalse(all(served.values()))
+                self.assertEqual({way[0] for way, ok in served.items() if not ok}, {provider})
+
+    def test_lines_picked_by_path_alone_turn_another_providers_call_red(self):
+        with mock.patch.object(reflexer.litellm, "at", lambda host, where: True):  # any host
+            reflexer.litellm.through(self.world.key)
+            for model, given in OTHERS:
+                self.ask(None, model=model, **given)
+        self.assertTrue(self.world.reflexer.seen)
+
+    def test_one_async_client_for_every_event_loop_turns_it_red(self):
+        real = reflexer.litellm.Wires.now
+
+        def shared(self):
+            self.lines = self.lines or real(self)  # the first loop's, for every loop after it
+            return self.lines
+        with mock.patch.object(reflexer.litellm.Wires, "now", shared), mock.patch.object(litellm, "disable_aiohttp_transport", True):
+            reflexer.litellm.through(self.world.key)
+            said = [self.ask(provider, True) for _ in range(LOOPS) for provider in PROVIDERS]
+        self.assertNotEqual(set(said), {standins.SERVED_TEXT})
+
+    def test_the_model_read_by_name_only_turns_a_positional_one_red(self):
+        given = dict(PROVIDERS["anthropic"])
+        with mock.patch.object(reflexer.litellm, "provider", lambda kwargs: litellm.get_llm_provider(model=kwargs.get("model") or "")[1]
+                               if kwargs.get("model") else None):
+            reflexer.litellm.through(self.world.key)
+            said = asyncio.run(litellm.acompletion(given.pop("model"), messages=MESSAGES, num_retries=0, **given)).choices[0].message.content
+        self.assertEqual(said, standins.STRAIGHT_TEXT)
+
+    def test_no_fallback_turns_it_red(self):
+        with mock.patch.object(reflexer.transport, "stays_straight", mock.Mock(side_effect=RuntimeError("made up"))):
+            reflexer.litellm.through(self.world.key)
+            self.world.reflexer.set("busy")
+            self.assertNotEqual(self.ask("anthropic"), standins.STRAIGHT_TEXT)
 
     def test_the_key_in_a_calls_metadata_turns_the_callbacks_red(self):
         key, real = self.world.key, reflexer.litellm.Hook.async_pre_call_deployment_hook
@@ -301,7 +401,7 @@ class Broken(World):
             reflexer.litellm.through(self.world.key)
             reflexer.litellm.through(self.world.key)
             self.ask("openai")
-        self.assertEqual([arrival.headers.get("reflexer-upstream") for arrival in self.world.reflexer.seen], ["https://api.reflexer.ai/openai"])
+        self.assertEqual([arrival.headers.get("reflexer-key") for arrival in self.world.reflexer.seen], [None])  # the line under ours took it off
 
 
 if __name__ == "__main__":

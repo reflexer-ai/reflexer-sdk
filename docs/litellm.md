@@ -1,6 +1,6 @@
 # reflexer with LiteLLM
 
-Reflexer in front of LiteLLM's calls to OpenAI, Azure OpenAI, Anthropic, Gemini and Bedrock: `litellm.completion` and `acompletion`, streamed or not, from your code or from a framework built on LiteLLM. Calls to its other providers go as before. LiteLLM's Proxy is not covered.
+Reflexer in front of LiteLLM's calls to OpenAI, Azure OpenAI, Anthropic, Gemini and Bedrock: `litellm.completion` and `acompletion`, streamed or not, from your code or from a framework built on LiteLLM. Calls to its other providers, or to another host (a router or a gateway as `api_base`), go as before. LiteLLM's Proxy is not covered.
 
 **Before you begin:** LiteLLM 1 on Python 3.10+, and `REFLEXER_KEY` set to the key you got at onboarding. Your provider keys stay where LiteLLM reads them.
 

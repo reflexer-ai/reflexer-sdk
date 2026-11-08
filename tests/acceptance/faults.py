@@ -437,7 +437,7 @@ async def passed_on(self, kwargs, call_type):
 def carrying_the_key(real):
     """LiteLLM's callback, carrying the key to our handler in the call's own metadata, which every callback is handed."""
     async def carried(self, kwargs, call_type):
-        key = self.handler.client._transport.lines[0].reflexer.key
+        key = self.handler.client._transport.reflexers[0][0].key
         return await real(self, kwargs | {"metadata": {"reflexer": key}}, call_type)
     return carried
 

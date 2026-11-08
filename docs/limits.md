@@ -12,6 +12,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | Python: you cancel a call, or press ^C, while it is at reflexer | The error keeps its type, message and your frames, but none below the SDK's transport and no error it came while handling: those hold the reflexer key | Nothing |
 | Python: making a client fails (a provider key or region missing), or LiteLLM remakes its HTTP client during a call | The SDK's frames on that error can hold the reflexer key, as the provider SDK's hold your provider key | If an error tracker records frame variables, have it scrub `reflexer_key` and `key` |
 | TypeScript: you cancel a call while it is at reflexer | Counted as a reflexer failure: the next calls go to your provider for a while | Nothing |
+| Python: many threads opening new connections at once | A CPython bug ([python/cpython#141012](https://github.com/python/cpython/issues/141012)) can garble a TLS handshake. At reflexer, the call goes to your provider, and so do your next calls for about a second; no reply is wrong. Amazon Bedrock's lines first try reflexer once more. On Alpine (musl), the same bug can crash the process, which no SDK can prevent | Nothing |
 | TypeScript: a `fetch` dispatcher of yours that follows redirects | It could carry the reflexer key to a redirect's target | Keep redirects off for reflexer's address |
 
 ## Libraries
@@ -25,6 +26,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | LangChain's TCP keepalive (`http_socket_options`) | Not applied on reflexer's classes | Set it on an HTTP client of yours, given as `http_client` |
 | LangChain's `dumpd`, then `loads` | Gives back LangChain's own class, without reflexer | Make the model with reflexer's class again |
 | Pydantic AI on Python 3.10 | Its last release for 3.10 fails Anthropic's calls, with the stock client too | Python 3.11 or later |
+| Gemini's automatic function calling (google-genai; `@google/genai` given a `CallableTool`) | One SDK call makes several HTTP calls, and the reply shows only the last one's price (`Reflexer-Cost`); your bill counts them all | Run the tool loop yourself: each call's reply then shows its price |
 | The AI SDK on Gemini | It names the model you asked for, not the reply's | Read `result.response.headers["reflexer-answered-by"]` |
 | LiteLLM | Only its Bedrock calls go through reflexer | Use the provider's own client for the others |
 

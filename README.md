@@ -1,6 +1,8 @@
-# reflexer
+# reflexer: Muscle memory for your LLM calls
 
-Put reflexer in front of your LLM calls, from the provider SDK you already use: change one import and one line.
+reflexer answers the LLM calls your app keeps repeating with the answer your provider would have given, for less. Every other call goes to your provider, as before.
+
+Change one import and one line, in the provider SDK you already use.
 
 <!-- example: served python -->
 ```diff
@@ -23,7 +25,7 @@ That's the whole change: the reply is OpenAI's format, as before, and removing t
 What you get:
 
 - Your provider's types, fields and errors, as before.
-- A call reflexer does not answer, or cannot be reached for, goes to your provider.
+- Reflexer down, slow or busy: the call goes to your provider.
 - Your call, with your provider key, goes to reflexer, which forwards it to your provider when it does not answer; the reflexer key goes to reflexer only. [Security](SECURITY.md).
 - No dependencies: the SDK plugs into the provider SDK you have.
 - Every code example in these docs runs in the tests, with the output shown.

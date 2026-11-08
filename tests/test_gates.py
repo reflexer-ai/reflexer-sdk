@@ -82,6 +82,11 @@ def local_paths(root):
     return [name for name in names if name and (root / name).is_file() and LOCAL.search((root / name).read_text(errors="replace"))]
 
 
+def licenses_differ(root):
+    """Whether typescript/LICENSE, which npm packs (only the license beside its package.json), differs from LICENSE."""
+    return (root / "typescript" / "LICENSE").read_bytes() != (root / "LICENSE").read_bytes()
+
+
 class Gates(unittest.TestCase):
     def test_no_local_path_in_any_file(self):
         self.assertEqual(local_paths(ROOT), [])
@@ -114,8 +119,8 @@ class Gates(unittest.TestCase):
     def test_every_promise_is_held_and_can_fail(self):
         self.assertEqual(promises.problems(ROOT), [])
 
-    def test_the_npm_package_carries_the_same_license(self):  # npm packs only the license beside its package.json
-        self.assertEqual((ROOT / "typescript" / "LICENSE").read_bytes(), (ROOT / "LICENSE").read_bytes())
+    def test_the_npm_package_carries_the_same_license(self):
+        self.assertFalse(licenses_differ(ROOT))
 
 
 class Broken(unittest.TestCase):
@@ -315,6 +320,13 @@ class Broken(unittest.TestCase):
     def test_the_keys_header_in_another_route_turns_semgrep_red(self):
         self.plant("__init__.py", 'class MadeUp:\n    def route(self, headers, key):\n        headers["reflexer-key"] = key')
         self.assertNotEqual(semgrep(self.root), 0)
+
+    def test_a_license_copy_that_drifts_turns_it_red(self):
+        shutil.copy(ROOT / "LICENSE", self.root / "LICENSE")
+        shutil.copy(ROOT / "LICENSE", self.root / "typescript" / "LICENSE")
+        self.assertFalse(licenses_differ(self.root))
+        (self.root / "typescript" / "LICENSE").write_text((ROOT / "LICENSE").read_text().replace("2026 reflexer", "2026 made-up"))
+        self.assertTrue(licenses_differ(self.root))
 
     def test_a_local_path_turns_it_red(self):
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)

@@ -114,6 +114,9 @@ class Gates(unittest.TestCase):
     def test_every_promise_is_held_and_can_fail(self):
         self.assertEqual(promises.problems(ROOT), [])
 
+    def test_the_npm_package_carries_the_same_license(self):  # npm packs only the license beside its package.json
+        self.assertEqual((ROOT / "typescript" / "LICENSE").read_bytes(), (ROOT / "LICENSE").read_bytes())
+
 
 class Broken(unittest.TestCase):
     """Each gate above, red on a copy of the tree with one fault planted."""

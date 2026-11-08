@@ -3,6 +3,8 @@ name = "reflexer"
 version = "0.1.0"
 description = "Sends a client's LLM calls through reflexer, on the provider SDK the client already uses."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []  # none, and a gate keeps it so: SECURITY.md
 

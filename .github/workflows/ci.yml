@@ -117,4 +117,5 @@ jobs:
       - name: Every job passed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: for r in $RESULTS; do [ "$r" = success ] || { echo "a job ended: $r"; exit 1; }; done
+        run: |
+          for r in $RESULTS; do [ "$r" = success ] || { echo "a job ended: $r"; exit 1; }; done

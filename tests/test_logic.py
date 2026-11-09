@@ -80,6 +80,13 @@ class Construction(unittest.TestCase):
                 reflexer.Reflexer(KEY, WIRE, base=base)
         reflexer.Reflexer(KEY, WIRE, base="http://127.0.0.1:8000")  # a stand-in on this machine
 
+    def test_a_sample_not_a_number_from_0_to_1_raises(self):
+        for sample in (-0.1, 1.5, float("nan"), "0.5", None, True):
+            with self.assertRaisesRegex(ValueError, "^sample must be a number from 0 to 1: the share of calls sent to reflexer$"):
+                reflexer.Reflexer(KEY, WIRE, sample=sample)
+        for sample in (0, 0.5, 1):
+            reflexer.Reflexer(KEY, WIRE, sample=sample)
+
     def test_a_typo_in_a_provider_file_raises_when_the_client_is_made(self):
         with self.assertRaises(KeyError):
             reflexer.Reflexer(KEY, {"provider": "https://made-up.example"})

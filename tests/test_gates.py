@@ -199,8 +199,8 @@ def imports_not_allowed(root):
 
 BUILTINS = {  # the builtins the SDK reads: none prints, reads the terminal, opens a file, imports or runs code built at run time
     "BaseException", "Exception", "ImportError", "OSError", "RuntimeError", "TimeoutError", "TypeError", "ValueError", "all", "any",
-    "bytes", "dict", "enumerate", "float", "getattr", "hasattr", "id", "int", "isinstance", "iter", "len", "list", "max", "min",
-    "next", "set", "staticmethod", "str", "sum", "super", "type"}
+    "bool", "bytes", "dict", "enumerate", "float", "getattr", "hasattr", "id", "int", "isinstance", "iter", "len", "list", "max",
+    "min", "next", "set", "staticmethod", "str", "sum", "super", "type"}
 
 
 def builtins_not_allowed(root):

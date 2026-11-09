@@ -117,6 +117,7 @@ Hello! How can I help you today?
 - A malformed key: `ValueError` (TypeScript `Error`), when the client is made. [When reflexer fails](when-reflexer-fails.md#your-reflexer-key-is-malformed).
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
 - A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
+- A `sample` that is not a number from 0 to 1: `ValueError` (TypeScript `Error`), when the client is made.
 - `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class: `TypeError`.
 - TypeScript, Bedrock: `bedrock.wrap` or `requestHandler` on a handler already wrapped, or on the AWS SDK's fetch handler: `Error`, when wrapped.
 - Anything else your code sees is your provider SDK's own error, as before.

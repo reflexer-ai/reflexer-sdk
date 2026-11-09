@@ -44,6 +44,12 @@ class Route(unittest.TestCase):
         self.assertEqual(url, "https://api.reflexer.ai/openai/v1/chat/completions")
         self.assertEqual(headers, {"authorization": "Bearer sk-made-up", "reflexer-key": KEY})
 
+    def test_the_lines_namespace_goes_on_each_call_and_a_calls_own_wins(self):
+        way = reflexer.Reflexer(KEY, WIRE, namespace="team-a")
+        self.assertEqual(way.route(CHAT, {})[1]["reflexer-namespace"], "team-a")
+        self.assertEqual(way.route(CHAT, {"reflexer-namespace": "team-b"})[1]["reflexer-namespace"], "team-b")
+        self.assertNotIn("reflexer-namespace", self.reflexer.route(CHAT, {})[1])
+
     def test_a_base_of_the_clients_own_is_named_as_the_upstream(self):
         _, headers = self.reflexer.route("https://api.groq.com/openai/v1/chat/completions", {})
         self.assertEqual(headers["reflexer-upstream"], "https://api.groq.com/openai")
@@ -102,6 +108,13 @@ class Construction(unittest.TestCase):
                 reflexer.Reflexer(KEY, WIRE, sample=sample)
         for sample in (0, 0.5, 1):
             reflexer.Reflexer(KEY, WIRE, sample=sample)
+
+    def test_a_namespace_that_cannot_go_as_a_header_raises(self):
+        for namespace in ("", " team", "team\r\nx-made-up: 1", "équipe", 7):
+            with self.assertRaisesRegex(ValueError, "^a namespace is a string"):
+                reflexer.Reflexer(KEY, WIRE, namespace=namespace)
+        for namespace in (None, "team-a", "Team A/2026"):
+            reflexer.Reflexer(KEY, WIRE, namespace=namespace)
 
     def test_a_typo_in_a_provider_file_raises_when_the_client_is_made(self):
         with self.assertRaises(KeyError):

@@ -9,7 +9,7 @@ export * from "./logic.js";
 
 /** @typedef {import("./logic.js").Wire} Wire */
 /** @typedef {(input: string | URL | Request, init?: RequestInit) => Promise<Response>} Fetch */
-/** @typedef {{ key: string, base?: string, sample?: number, fetch?: Fetch, headersTimeout?: number }} Way */
+/** @typedef {{ key: string, base?: string, sample?: number, namespace?: string, fetch?: Fetch, headersTimeout?: number }} Way */
 
 /** The wire formats: each provider's call paths, and reflexer's path for them. */
 export const WIRES = {
@@ -117,7 +117,7 @@ function staysStraight(input, init) {
 }
 
 /**
- * One provider's `fetch` maker: `openai.fetch(reflexerKey)`, with `{ base, sample, fetch }` as options.
+ * One provider's `fetch` maker: `openai.fetch(reflexerKey)`, with `{ base, sample, namespace, fetch }` as options.
  * `stock`, the `fetch` its SDK uses when given none, if not the global one.
  * @param {Wire} wire
  * @param {Fetch} [stock]
@@ -181,7 +181,7 @@ export function tested(headers) {
 
 /**
  * @template {abstract new (...args: any) => any} C
- * @typedef {(new (options?: ConstructorParameters<C>[0] & { reflexerKey?: string, reflexerBase?: string, sample?: number }) => InstanceType<C>) & C} Reflexed
+ * @typedef {(new (options?: ConstructorParameters<C>[0] & { reflexerKey?: string, reflexerBase?: string, sample?: number, reflexerNamespace?: string }) => InstanceType<C>) & C} Reflexed
  */
 
 /**
@@ -199,8 +199,8 @@ export function client(Stock, wire) {
     #way;
 
     /** @param {any} options */
-    constructor({ reflexerKey, reflexerBase = BASE, sample = 1, ...config } = {}) {
-      const routed = WAYS.has(config.fetch) ? config.fetch : through(wire, { key: reflexerKey, base: reflexerBase, sample, fetch: config.fetch });
+    constructor({ reflexerKey, reflexerBase = BASE, sample = 1, reflexerNamespace, ...config } = {}) {
+      const routed = WAYS.has(config.fetch) ? config.fetch : through(wire, { key: reflexerKey, base: reflexerBase, sample, namespace: reflexerNamespace, fetch: config.fetch });
       super({ ...config, fetch: routed });
       this.#way = WAYS.get(routed);
     }

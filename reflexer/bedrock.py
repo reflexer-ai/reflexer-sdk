@@ -203,14 +203,14 @@ class Keyed(Through):
 def setup_http_client(stock, wire, transport=Keyed):
     """The shipped `setup_http_client`, with Bedrock's transport, `Keyed` or a line's own."""
 
-    def http_client(key, own=None, base=BASE, sample=1.0):
+    def http_client(key, own=None, base=BASE, sample=1.0, namespace=None):
         own = own or stock()
         inner = copy.copy(own)  # the client's own object stays as it was, for its other users; they share connections
         inner.event_hooks = {}  # they run once, above, and never see our key
-        outer = type(own)(transport=transport(Reflexer(key, wire, base, sample), inner), event_hooks=own.event_hooks, auth=own.auth,
+        outer = type(own)(transport=transport(Reflexer(key, wire, base, sample, namespace=namespace), inner), event_hooks=own.event_hooks, auth=own.auth,
                           params=own.params, headers=own.headers, cookies=own.cookies.jar, timeout=own.timeout,
                           follow_redirects=own.follow_redirects, max_redirects=own.max_redirects, base_url=own.base_url)
-        outer.reflexer_through = dict(key=key, base=base, sample=sample)  # what a copy given its own HTTP client is made with
+        outer.reflexer_through = dict(key=key, base=base, sample=sample, namespace=namespace)  # what a copy given its own HTTP client is made with
         return outer
 
     return http_client

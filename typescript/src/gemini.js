@@ -7,9 +7,9 @@ import * as stock from "@google/genai";
 import { BASE, gemini, tested } from "./index.js";
 
 export class GoogleGenAI extends stock.GoogleGenAI {
-  /** @param {stock.GoogleGenAIOptions & { reflexerKey: string, reflexerBase?: string, sample?: number }} options */
-  constructor({ reflexerKey, reflexerBase = BASE, sample = 1, httpOptions = {}, ...config }) {
-    const routed = gemini.fetch(reflexerKey, { base: reflexerBase, sample, fetch: httpOptions.fetch });
+  /** @param {stock.GoogleGenAIOptions & { reflexerKey: string, reflexerBase?: string, sample?: number, reflexerNamespace?: string }} options */
+  constructor({ reflexerKey, reflexerBase = BASE, sample = 1, reflexerNamespace, httpOptions = {}, ...config }) {
+    const routed = gemini.fetch(reflexerKey, { base: reflexerBase, sample, namespace: reflexerNamespace, fetch: httpOptions.fetch });
     /** @type {typeof routed} */
     const checked = (input, init) => {
       if (!tested(new Headers(init?.headers)).includes("@google/genai")) throw new Error("reflexer cannot tell google-genai's version: its calls name none");

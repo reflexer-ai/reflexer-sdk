@@ -36,6 +36,13 @@ describe("Route", () => {
     assert.deepEqual(headers, { authorization: "Bearer sk-made-up", "reflexer-key": KEY });
   });
 
+  test("the line's namespace goes on each call and a call's own wins", () => {
+    const named = new reflexer.Reflexer(KEY, WIRE, { namespace: "team-a" });
+    assert.equal(named.route(CHAT, {})?.[1]["reflexer-namespace"], "team-a");
+    assert.equal(named.route(CHAT, { "reflexer-namespace": "team-b" })?.[1]["reflexer-namespace"], "team-b");
+    assert.equal(Object.hasOwn(way().route(CHAT, {})?.[1] ?? {}, "reflexer-namespace"), false);
+  });
+
   test("a base of the client's own is named as the upstream", () => {
     const [, headers] = way().route("https://api.groq.com/openai/v1/chat/completions", {}) ?? [];
     assert.equal(headers?.["reflexer-upstream"], "https://api.groq.com/openai");
@@ -140,6 +147,13 @@ describe("Construction", () => {
       assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { sample: /** @type {any} */ (sample) }), { message: "sample must be a number from 0 to 1: the share of calls sent to reflexer" });
     }
     for (const sample of [0, 0.5, 1]) new reflexer.Reflexer(KEY, WIRE, { sample });
+  });
+
+  test("a namespace that cannot go as a header throws", () => {
+    for (const namespace of ["", " team", "team\r\nx-made-up: 1", "équipe", 7]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { namespace: /** @type {any} */ (namespace) }), { message: /^a namespace is a string/ });
+    }
+    for (const namespace of [undefined, null, "team-a", "Team A/2026"]) new reflexer.Reflexer(KEY, WIRE, { namespace: /** @type {any} */ (namespace) });
   });
 
   test("a typo in a wire throws when the client is made", () => {

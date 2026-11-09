@@ -150,6 +150,32 @@ class Copies(unittest.TestCase):
             self.assertEqual([r.url.host for r in seen], ["api.reflexer.ai"], module.__name__)
 
 
+    def test_the_lines_namespace_reaches_reflexer_alone_and_a_copy_keeps_it(self):
+        import anthropic, openai
+        import reflexer.anthropic, reflexer.openai
+        for module, made, stock in ((reflexer.openai, lambda c: c.chat.completions.create(model="m", messages=[]), openai),
+                                    (reflexer.anthropic, lambda c: c.messages.create(model="m", max_tokens=1, messages=[]), anthropic)):
+            seen = []
+
+            def busy_reflexer(request):
+                seen.append(request)
+                if request.url.host == "api.reflexer.ai":
+                    return httpx2.Response(503, headers={"reflexer-status-origin": "reflexer"})
+                return served(request)
+            own = lambda: stock.DefaultHttpxClient(transport=httpx2.MockTransport(busy_reflexer))
+            cls = module.OpenAI if module is reflexer.openai else module.Anthropic
+            client = cls(api_key="made-up", reflexer_key=KEY, reflexer_namespace="team-a", max_retries=0, http_client=own())
+            for one in (client, client.with_options(http_client=own())):
+                seen.clear()
+                try:
+                    made(one)
+                except Exception:
+                    pass  # the made-up body is no real answer; what each leg carried is what is checked
+                self.assertEqual([(r.url.host, r.headers.get("reflexer-namespace")) for r in seen],
+                                 [("api.reflexer.ai", "team-a"), ("api.openai.com" if module is reflexer.openai else "api.anthropic.com", None)],
+                                 module.__name__)
+
+
 class GeminiWithAiohttp(unittest.TestCase):
     """google-genai sends async calls by aiohttp when it is installed, unless given an HTTP client or a transport."""
 

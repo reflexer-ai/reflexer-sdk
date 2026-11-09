@@ -133,9 +133,9 @@ def bedrock_client(cls, make_http_client, ours=()):
     copy of a Bedrock client drops it, and would make one with no key)."""
 
     class Client(setup_client(cls, make_http_client)):
-        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, http_client=None, middleware=(), **config):
+        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, http_client=None, middleware=(), **config):
             if not hasattr(http_client, "reflexer_through"):
-                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample)
+                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample, namespace=reflexer_namespace)
             self.reflexer_http_client = http_client
             middleware = (*[each for each in middleware or () if not isinstance(each, Middleware)], *[made() for made in ours])
             super().__init__(*args, http_client=http_client, **({"middleware": middleware} if middleware else {}), **config)

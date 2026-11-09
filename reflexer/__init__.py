@@ -24,11 +24,13 @@ class Reflexer:
     of the calls that return a model's message, the only ones that go to reflexer; `routers`, optional, by host, the wire
     of a router with a route of its own at reflexer, taken for the calls it lists."""
 
-    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic):
+    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic, namespace=None):
         check(key)
+        if namespace is not None and not (isinstance(namespace, str) and re.fullmatch(r"[!-~]+(?: [!-~]+)*", namespace)):
+            raise ValueError("a namespace is a string of letters, digits, signs and inner spaces: it goes as a header")
         if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
             raise ValueError("sample must be a number from 0 to 1: the share of calls sent to reflexer")
-        self.key, self.base, self.sample = key, checked_base(base), sample
+        self.key, self.base, self.sample, self.namespace = key, checked_base(base), sample, namespace
         self.way = way(wire)  # a typo in a provider file raises here, as the client is made, never on a call
         self.routers = {host: way(router) for host, router in wire.get("routers", {}).items()}
         self.breaker = Breaker(clock)
@@ -56,7 +58,8 @@ class Reflexer:
         to = f"{self.base}{reflexer_path}{address.path[call.start():]}"
         if address.query:
             to += f"?{address.query}"
-        return to, theirs | ours
+        given = {NAMESPACE: self.namespace} if self.namespace else {}  # a call's own namespace header wins
+        return to, given | theirs | ours
 
     def goes_straight(self, status, headers):
         """Whether the call goes straight to the provider, given reflexer's response."""

@@ -23,15 +23,15 @@ supported("boto3", [1])
 EVENT = "before-send."
 
 
-def client(*args, reflexer_key=None, reflexer_base=BASE, sample=1.0, **config):
+def client(*args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, **config):
     """`boto3.client(*args, **config)`, through reflexer."""
-    return through(boto3.client(*args, **config), reflexer_key, reflexer_base, sample)
+    return through(boto3.client(*args, **config), reflexer_key, reflexer_base, sample, reflexer_namespace)
 
 
-def through(client, reflexer_key, base=BASE, sample=1.0):
+def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
     """Ours after every `before-send` handler of the client's, on its own emitter; reflexer's leg by its own HTTP session:
     its pool, proxies, TLS and timeouts."""
-    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample)
+    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace)
     send, events = client._endpoint.http_session.send, client.meta.events
     if getattr(events, "reflexer_through", False):  # twice, each call would try reflexer twice
         raise ValueError("this client already goes through reflexer")

@@ -262,6 +262,39 @@ Hello! How can I help you today?
 
 Every reflexer client, and every function that takes the key, takes `sample`; in TypeScript, the `fetch` functions and `bedrock.wrap` in their options.
 
+## Keep calls apart: a namespace
+
+A namespace is a name for a set of your calls that reflexer keeps apart from your others: one per product, team or environment, so that a test environment's calls do not mix with production's. With none, your calls share your default namespace. Give it once, beside your key:
+
+<!-- example: served -->
+```python
+import os
+from reflexer.openai import OpenAI
+
+client = OpenAI(reflexer_key=os.environ["REFLEXER_KEY"], reflexer_namespace="checkout")
+reply = client.chat.completions.create(model="frontier-x", messages=[{"role": "user", "content": "Hi"}])
+print(reply.choices[0].message.content)
+```
+
+```text
+Hello! How can I help you today?
+```
+
+<!-- example: served -->
+```js
+import { OpenAI } from "@reflexer-ai/sdk/openai";
+
+const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY, reflexerNamespace: "checkout" });
+const reply = await client.chat.completions.create({ model: "frontier-x", messages: [{ role: "user", content: "Hi" }] });
+console.log(reply.choices[0].message.content);
+```
+
+```text
+Hello! How can I help you today?
+```
+
+It goes to reflexer only, never to your provider. One call can name another with the `Reflexer-Namespace` header, which wins over the client's: the same way as [skipping reflexer for one call](#skip-reflexer-for-one-call), with that header in place of `Reflexer-Pass-Through`; on Bedrock's signed calls, give it on the client ([Known limits](limits.md#amazon-bedrock)). The functions that take the key take `namespace`, as they take `base`.
+
 ## How long reflexer may take
 
 Python: your client's own timeout covers the call to reflexer. When it fires, the call goes to your provider with the same timeout, so a call can take up to twice your timeout; if reflexer had already forwarded the call, your provider may run it, and bill it, twice. Set the timeout as you would without reflexer. google-genai sets none by default: set one, `http_options={"timeout": 60_000}` (milliseconds).

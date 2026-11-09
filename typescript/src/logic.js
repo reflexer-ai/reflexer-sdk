@@ -23,10 +23,13 @@ export class Reflexer {
   /**
    * @param {string} key
    * @param {Wire} wire
-   * @param {{ base?: string, sample?: number, clock?: () => number }} [options]
+   * @param {{ base?: string, sample?: number, namespace?: string, clock?: () => number }} [options]
    */
-  constructor(key, wire, { base = BASE, sample = 1, clock = () => performance.now() / 1000 } = {}) {
+  constructor(key, wire, { base = BASE, sample = 1, namespace, clock = () => performance.now() / 1000 } = {}) {
     check(key);
+    if (namespace != null && !(typeof namespace === "string" && /^[!-~]+(?: [!-~]+)*$/.test(namespace))) {
+      throw new Error("a namespace is a string of letters, digits, signs and inner spaces: it goes as a header");
+    }
     if (typeof wire.reflexerPath !== "string" || !(wire.calls instanceof RegExp)) {
       throw new TypeError("a wire names its reflexerPath and its calls");
     }
@@ -36,6 +39,7 @@ export class Reflexer {
     this.key = key;
     this.base = checkedBase(base);
     this.sample = sample;
+    this.namespace = namespace;
     this.wire = wire;
     this.breaker = new Breaker(clock);
   }
@@ -64,7 +68,9 @@ export class Reflexer {
     const theirs = Object.entries(headers).filter(([name]) =>
       name !== "host" && (name === NAMESPACE || !name.startsWith(OURS))); // no header of a client's steers us
     const to = `${this.base}${wire.reflexerPath}${address.pathname.slice(call.index)}${address.search}`;
-    return [to, { ...Object.fromEntries(theirs), ...ours }];
+    /** @type {Record<string, string>} */
+    const given = this.namespace ? { [NAMESPACE]: this.namespace } : {}; // a call's own namespace header wins
+    return [to, { ...given, ...Object.fromEntries(theirs), ...ours }];
   }
 
   /**

@@ -87,7 +87,7 @@ async function bounded(start, given, ms) {
  * AI SDK's every timeout, and `AbortSignal.timeout`'s), a call not streamed goes straight, given as long again: a
  * stream's caller has ended it already, above any line. AnthropicBedrock's timer cuts with no reason: its middleware
  * tells it from a cancel (`anthropicMiddleware`).
- * @param {string} key @param {any} [options] `{ base, sample, fetch, headersTimeout, signed }`
+ * @param {string} key @param {any} [options] `{ base, sample, namespace, fetch, headersTimeout, signed }`
  */
 export function fetch(key, options = {}) {
   const own = (/** @type {any} */ input, /** @type {any} */ init) => (options.fetch ?? globalThis.fetch)(input, init);
@@ -155,7 +155,7 @@ export async function anthropicMiddleware(/** @type {any} */ request, /** @type 
  * copy of the request, keyed or signed, bounded to its answer's head as the `fetch` line is; the client's own request
  * never holds the key. A signed call goes to reflexer only given `signer`, the client's own, which signs its straight leg
  * anew after reflexer's (`wrap` gives it). The skip as `send`'s option: `client.send(command, { reflexerPassThrough: true })`.
- * @param {string} key @param {any} options `{ handler, signer, base, sample, headersTimeout }`
+ * @param {string} key @param {any} options `{ handler, signer, base, sample, namespace, headersTimeout }`
  */
 export function requestHandler(key, { handler, signer, ...options }) {
   if (HANDLERS.has(handler)) throw new Error("this handler already sends through reflexer"); // twice, a call would try reflexer twice

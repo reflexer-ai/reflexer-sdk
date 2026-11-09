@@ -25,7 +25,7 @@ export function left(headers) {
  * The AI SDK's `fetch` line: `./bedrock.js`'s, a signed call's leg to reflexer bounded by its window. A signed call with
  * no time left goes straight, as does one holding a header of ours, which the provider signs with the call's own and its
  * fallback would drop (`Reflexer-Namespace`).
- * @param {string} key @param {any} [options] `{ base, sample, fetch, headersTimeout }`
+ * @param {string} key @param {any} [options] `{ base, sample, namespace, fetch, headersTimeout }`
  */
 export function fetch(key, options = {}) {
   const own = (/** @type {any} */ input, /** @type {any} */ init) => (options.fetch ?? globalThis.fetch)(input, init);

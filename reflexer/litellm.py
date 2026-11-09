@@ -102,20 +102,20 @@ def asked(timeout, logging_obj):
     return httpx.Timeout(given) if isinstance(given, (int, float)) else given
 
 
-def client(reflexer_key, base=BASE, sample=1.0):
+def client(reflexer_key, base=BASE, sample=1.0, namespace=None):
     class Handler(HTTPHandler):
         def create_client(self):
-            return http_client(reflexer_key, own=super().create_client(), base=base, sample=sample)
+            return http_client(reflexer_key, own=super().create_client(), base=base, sample=sample, namespace=namespace)
 
         def post(self, *args, timeout=None, logging_obj=None, **kwargs):
             return super().post(*args, timeout=asked(timeout, logging_obj), logging_obj=logging_obj, **kwargs)
     return Handler()
 
 
-def async_client(reflexer_key, base=BASE, sample=1.0):
+def async_client(reflexer_key, base=BASE, sample=1.0, namespace=None):
     class Handler(AsyncHTTPHandler):
         def create_client(self, *args, **kwargs):
-            return async_http_client(reflexer_key, own=super().create_client(*args, **kwargs), base=base, sample=sample)
+            return async_http_client(reflexer_key, own=super().create_client(*args, **kwargs), base=base, sample=sample, namespace=namespace)
 
         async def post(self, *args, timeout=None, logging_obj=None, **kwargs):
             return await super().post(*args, timeout=asked(timeout, logging_obj), logging_obj=logging_obj, **kwargs)

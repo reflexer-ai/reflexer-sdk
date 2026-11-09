@@ -96,8 +96,8 @@
   },
   "reflexer": {
     "budget": {
-      "lines": 291,
-      "ifs": 43,
+      "lines": 299,
+      "ifs": 45,
       "privateNames": 0,
       "bedrock": {
         "files": [

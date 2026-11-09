@@ -77,6 +77,20 @@ describe("Headers", () => {
     assert.ok(![...own.seen[0].headers.keys()].some((name) => name.startsWith("reflexer-")));
   });
 
+  test("the line's namespace reaches reflexer alone, and a copy keeps it", async () => {
+    for (const make of [(/** @type {any} */ fetch) => new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, reflexerNamespace: "team-a", maxRetries: 0, fetch }),
+      (/** @type {any} */ fetch) => new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, reflexerNamespace: "team-a", maxRetries: 0, fetch })]) {
+      for (const copied of [false, true]) {
+        const own = check.mock(check.busy);
+        const client = /** @type {any} */ (copied ? make(undefined).withOptions({ fetch: own.fetch }) : make(own.fetch));
+        await (client.chat ? client.chat.completions.create({ model: "m", messages: [] }) : client.messages.create({ model: "m", max_tokens: 1, messages: [] }))
+          .catch(() => {});
+        assert.deepEqual(own.seen.map(({ url, headers }) => [url.host === check.REFLEXER, headers.get("reflexer-namespace")]),
+          [[true, "team-a"], [false, null]], `${client.constructor.name}${copied ? ", a copy" : ""}`);
+      }
+    }
+  });
+
   test("the namespace reaches reflexer", async () => {
     const { fetch, seen } = made(check.served);
     await fetch(check.CHAT, { method: "POST", body: "{}", headers: new Headers({ "reflexer-namespace": "made-up" }) });

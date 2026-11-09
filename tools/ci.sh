@@ -1,6 +1,5 @@
 #!/bin/sh
-# Every check of .github/workflows/ci.yml, run on this machine. GitHub runs that workflow weekly only, for its
-# minutes; this is what runs before a merge. Keep the two in step: a check added there is added here.
+# Every check of .github/workflows/ci.yml, run on this machine. Keep the two in step: a check added there is added here.
 # Usage: sh tools/ci.sh [check] [python] [typescript]   (all three by default)
 #   PYTHONS="3.10 3.14" NODES="20 24" narrow the matrices (default: every version CI runs).
 set -eu

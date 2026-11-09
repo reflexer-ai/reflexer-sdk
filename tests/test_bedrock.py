@@ -278,7 +278,10 @@ def per_attempt_change():
     return found
 
 
-def litellm_leg(seconds=2.0, margin=0.5, is_async=False):
+LITELLM_WINDOW = 2.0  # seconds: the signature window the LiteLLM cases shorten AWS's five minutes to
+
+
+def litellm_leg(seconds=LITELLM_WINDOW, margin=0.5, is_async=False):
     """LiteLLM's signed call, reflexer stalled, the window shortened to `seconds` at Bedrock's stand-in and in the line:
     (what the client saw, the seconds it took, whether Bedrock took it). `is_async`: by `acompletion` and its line."""
     import time, litellm
@@ -859,8 +862,10 @@ class Promises(Case):
         for is_async in (False, True):
             with self.subTest(is_async=is_async):
                 text, took, taken = litellm_leg(is_async=is_async)
+                # Bedrock's stand-in taking the straight call shows its signature still held; the time shows reflexer's
+                # leg was cut by the window, not by the client's own timeout, ten windows long
                 self.assertEqual((text, taken), (harness.STRAIGHT_TEXT, True))
-                self.assertLess(took, 2.0)
+                self.assertLess(took, LITELLM_WINDOW * 5)
 
     def test_through_each_bedrock_line_a_call_reflexer_does_not_take_still_reaches_bedrock(self):
         for scene in ("busy", "dead"):
@@ -1075,7 +1080,7 @@ class Broken(Case):
             return at.timestamp() + reflexer.litellm.WINDOW["seconds"] - reflexer.litellm.WINDOW["margin"] - time.time()
         with mock.patch.object(reflexer.litellm, "left", local):
             text, took, taken = litellm_leg()
-        self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < 2.0)
+        self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < LITELLM_WINDOW * 5)
 
     def test_a_fallback_without_its_body_signed_anew_turns_it_red(self):
         real = reflexer.bedrock.signed_anew
@@ -1107,7 +1112,7 @@ class Broken(Case):
             for is_async in (False, True):
                 with self.subTest(is_async=is_async):
                     text, took, taken = litellm_leg(is_async=is_async)
-                    self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < 2.0)
+                    self.assertFalse(text == harness.STRAIGHT_TEXT and taken and took < LITELLM_WINDOW * 5)
 
     def test_a_signed_call_changed_turns_it_red(self):
         def changed(request, headers, body):

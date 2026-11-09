@@ -35,3 +35,5 @@ updates:
     ignore:  # the types of the oldest Node the package supports (engines), so no newer Node's API type-checks
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      - dependency-name: typescript  # kept on 6: 7 writes the declarations clients read in another form, and adds a native
+        versions: [">=7"]            # build per OS to the tools; until clients' compatibility is checked

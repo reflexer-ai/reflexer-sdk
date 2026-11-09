@@ -174,6 +174,33 @@ class Line(World):
                 for provider in PROVIDERS:
                     self.assertEqual(self.ask(provider, True), standins.SERVED_TEXT, provider)
 
+    def test_after_litellms_own_cleanup_async_calls_still_go_through(self):
+        """`close_litellm_async_clients`, LiteLLM's own, closes the clients it keeps, the line's among them, in that event
+        loop: the next call makes the line's anew, as LiteLLM's handlers remake theirs. OpenAI's and Azure's, whose
+        session it closes too, fail after it as stock does."""
+        reflexer.litellm.through(self.world.key)
+        for provider in reflexer.litellm.HANDLED:
+            given = dict(messages=MESSAGES, num_retries=0, timeout=10) | PROVIDERS[provider]
+
+            async def twice():
+                first = (await litellm.acompletion(**given)).choices[0].message.content
+                await litellm.close_litellm_async_clients()
+                return first, (await litellm.acompletion(**given)).choices[0].message.content
+            self.assertEqual(asyncio.run(twice()), (standins.SERVED_TEXT, standins.SERVED_TEXT), provider)
+
+    def test_an_event_loops_calls_share_one_client_kept_where_litellm_keeps_its_own(self):
+        """One HTTP client of the line's per event loop, in LiteLLM's cache of its clients, which evicts and closes them
+        as its own: none made per call, none kept past it."""
+        reflexer.litellm.through(self.world.key)
+
+        async def calls():
+            return [(await litellm.acompletion(messages=MESSAGES, num_retries=0, **PROVIDERS[provider])).choices[0].message.content
+                    for provider in PROVIDERS for _ in range(2)]
+        for loops in (1, 2):
+            self.assertEqual(set(asyncio.run(calls())), {standins.SERVED_TEXT})
+            kept = [key for key in litellm.in_memory_llm_clients_cache.cache_dict if key.startswith("reflexer-litellm-")]
+            self.assertEqual(len(kept), loops, kept)
+
     def test_an_async_call_naming_its_model_by_position_goes_through(self):
         reflexer.litellm.through(self.world.key)
         for provider in PROVIDERS:
@@ -235,8 +262,12 @@ class Line(World):
 
     def test_run_again_it_takes_the_last_ones_place(self):
         reflexer.litellm.through(self.world.key)
+        self.ask("anthropic")  # LiteLLM files each callback in its lists at a call
         reflexer.litellm.through(self.world.key)
-        self.assertEqual(sum(isinstance(each, reflexer.litellm.Hook) for each in litellm.callbacks), 1)
+        self.ask("anthropic")
+        for name in ("callbacks", "input_callback"):
+            self.assertEqual(sum(isinstance(each, reflexer.litellm.Hook) for each in getattr(litellm, name)), 1, name)
+        self.world.reflexer.seen.clear()
         for provider in PROVIDERS:
             for is_async in (False, True):
                 self.assertEqual(self.ask(provider, is_async), standins.SERVED_TEXT)
@@ -290,9 +321,11 @@ class Line(World):
         reflexer.litellm.through(self.world.key)
         before = [getattr(litellm, name, None) for name in GLOBALS] + [list(litellm.callbacks)]
         for name, dropped in (("_create_sync_transport", lambda self: None), ("create_client", lambda self: __import__("httpx").Client())):
-            with mock.patch.object(HTTPHandler, name, dropped), self.assertRaises(RuntimeError):
-                reflexer.litellm.through(self.world.key)
+            with mock.patch.object(HTTPHandler, name, dropped), mock.patch.dict(os.environ, ALL_PROXY=self.world.proxy.url), \
+                    self.assertRaises(RuntimeError):
+                reflexer.litellm.through(self.world.key)  # a proxy of the machine's set: the probe goes to none
             self.assertEqual([getattr(litellm, name, None) for name in GLOBALS] + [list(litellm.callbacks)], before)
+        self.assertEqual((self.world.proxy.plain, self.world.proxy.tunnels), ([], []))
 
 
 class Broken(World):
@@ -355,6 +388,12 @@ class Broken(World):
             reflexer.litellm.through(self.world.key)
             said = asyncio.run(litellm.acompletion(given.pop("model"), messages=MESSAGES, num_retries=0, **given)).choices[0].message.content
         self.assertEqual(said, standins.STRAIGHT_TEXT)
+
+    def test_a_client_made_for_each_call_turns_it_red(self):
+        with mock.patch.object(reflexer.litellm.Wires, "now", lambda self: self.lines or self.over(self.inner())):  # none kept
+            reflexer.litellm.through(self.world.key)
+            asyncio.run(litellm.acompletion(messages=MESSAGES, num_retries=0, **PROVIDERS["anthropic"]))
+        self.assertEqual([key for key in litellm.in_memory_llm_clients_cache.cache_dict if key.startswith("reflexer-litellm-")], [])
 
     def test_no_fallback_turns_it_red(self):
         with mock.patch.object(reflexer.transport, "stays_straight", mock.Mock(side_effect=RuntimeError("made up"))):

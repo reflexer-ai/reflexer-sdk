@@ -1,6 +1,7 @@
 """LiteLLM's calls, through reflexer: one line, before the first call, `reflexer.litellm.through(key)`. A call whose wire
-reflexer takes (OpenAI's, Azure OpenAI's, Anthropic's, Gemini's, Bedrock's: `wires.py`, `bedrock.py`) goes through it,
-sync or async, streamed or not, from the client's own code or a framework's; any other call goes as stock.
+reflexer takes (OpenAI's, Azure OpenAI's, Anthropic's, Gemini's, Bedrock's: `wires.py`, `bedrock.py`), at its provider's
+own host, goes through it, sync or async, streamed or not, from the client's own code or a framework's; any other call
+goes as stock, as does one given its own `client`.
 
 No one setting of LiteLLM's reaches every call, so the line sets the four that together do, each by its public name, and
 makes no class of LiteLLM's different:
@@ -12,8 +13,9 @@ makes no class of LiteLLM's different:
   a release dropping it fails the line, never sends a call straight unseen.
 - `callbacks`: a callback's `async_pre_call_deployment_hook`, the one way into the other providers' async calls, gives each
   `acompletion` our handler as its `client`, as a client could on each call.
-What the line makes lives as long as the process, as LiteLLM's own clients do: a close of one leaves it open. Run again,
-it takes the place of the last, over what the client had before it.
+Its sync HTTP client and its sessions live as long as the process: a close of one of LiteLLM's clients over them leaves
+them open. Its async HTTP clients, one per event loop, live in LiteLLM's own cache, as LiteLLM's do. Run again, the line
+takes the place of the last, over what the client had before it.
 
 A Bedrock call given `api_key`, a Bedrock API key, goes through reflexer, and so does a signed one (SigV4). Its fallback:
 LiteLLM signs it before any hook of its own runs, and none signs it anew, so the fallback is the same signed call.
@@ -139,7 +141,7 @@ class Wires:
             return self.lines
         with self.lock:
             inner = litellm.in_memory_llm_clients_cache.get_cache(self.name)
-            if inner is None:
+            if inner is None or inner.is_closed:  # closed by LiteLLM's own cleanup, as its handlers remake theirs
                 inner = self.inner()
                 litellm.in_memory_llm_clients_cache.set_cache(self.name, inner, litellm_owned_client=True)
         return self.over(inner)
@@ -213,7 +215,7 @@ def provider(kwargs):
 
 
 SET = ("client_session", "aclient_session", "sync_transport")
-PROBE = "http://127.0.0.1:0/"  # a port nothing listens on, here: a client not sending by the probe fails at once, sending nothing
+PROBE = "reflexer-probe://line/"  # a scheme no HTTP transport or proxy takes: a client not sending by the probe fails, sending nothing
 
 
 def sends_by_it():
@@ -249,6 +251,7 @@ def through(reflexer_key, base=BASE, sample=1.0):
         outer = kind(transport=transport, follow_redirects=True) if own[name] is None else split(own[name], way)  # as LiteLLM's own
         outer.reflexer_own = own[name]
         setattr(litellm, name, outer)
+    litellm.input_callback[:] = [each for each in litellm.input_callback if not isinstance(each, Hook)]  # where LiteLLM filed the last
     litellm.callbacks[:] = [each for each in litellm.callbacks if not isinstance(each, Hook)] + [Hook(Handler(transport=aio))]
     litellm.in_memory_llm_clients_cache.flush_cache()  # the clients LiteLLM made before, kept for reuse: made anew, by the line
     litellm.module_level_client = HTTPHandler(timeout=litellm.request_timeout)  # its one kept apart, made anew as LiteLLM makes it

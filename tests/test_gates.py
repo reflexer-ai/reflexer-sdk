@@ -325,7 +325,7 @@ class Broken(unittest.TestCase):
         shutil.copy(ROOT / "LICENSE", self.root / "LICENSE")
         shutil.copy(ROOT / "LICENSE", self.root / "typescript" / "LICENSE")
         self.assertFalse(licenses_differ(self.root))
-        (self.root / "typescript" / "LICENSE").write_text((ROOT / "LICENSE").read_text().replace("2026 reflexer", "2026 made-up"))
+        (self.root / "typescript" / "LICENSE").write_text((ROOT / "LICENSE").read_text() + "A made-up line, drifted.\n")  # whatever the notice names
         self.assertTrue(licenses_differ(self.root))
 
     def test_a_local_path_turns_it_red(self):

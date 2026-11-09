@@ -225,6 +225,8 @@ Where each library takes it:
 | Gemini (TypeScript) | `config: { httpOptions: { extraBody: { replay_response: answer } } }` |
 | The AWS SDK for JavaScript | the body of an `InvokeModelCommand`, at its top |
 
+The answer takes the form your provider's would: your provider's whole answer for a call that is not streamed, as above; the text of its stream, as one string, for a streamed call. Reflexer refuses another form, and any dry run on Bedrock's streamed calls (`InvokeModelWithResponseStream`, `ConverseStream`), with a 400: your SDK raises its error for a bad request.
+
 A body given as a stream is not read, so a dry run sent that way is not seen as one, and goes as any other call: give the body whole, as the provider SDKs do ([Known limits](limits.md#every-library)).
 
 ## Send a share of the calls
@@ -286,7 +288,7 @@ Hello! How can I help you today?
 
 ## Your own HTTP client
 
-Reflexer's calls go by your HTTP client, with its proxy and TLS settings; its hooks (httpx's `event_hooks`) see your calls to your provider, never reflexer's, which carry the reflexer key; its transport, or its own `send`, carries both ([Security](../SECURITY.md), P8): one that logs headers logs the reflexer key too. In TypeScript your `fetch` carries both. Give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
+Reflexer's calls go by your HTTP client, with its proxy and TLS settings; its hooks (httpx's `event_hooks`) see your calls to your provider, never reflexer's, which carry the reflexer key; its transport, or its own `send`, carries both ([Security](../SECURITY.md), P8): one that logs headers logs the reflexer key too. In TypeScript your `fetch` carries both. Give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each. LangChain's `ChatOpenAI` (Python) given no HTTP client puts its `openai_proxy`, or `OPENAI_PROXY`, on the HTTP client it makes, so reflexer's calls go by your proxy too.
 
 ## Async
 

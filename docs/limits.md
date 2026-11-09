@@ -23,7 +23,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | openai (TypeScript) with X.509 workload identity | It takes no custom `fetch`, so its calls cannot go through reflexer | Use a key |
 | `@google/genai` before 2.23.0 | It takes no `fetch`: its calls go to Gemini, never to reflexer | Upgrade to 2.29.0 or later |
 | LangChain's `ChatAnthropic` (Python and LangChain.js), `@langchain/google-genai` | Their calls cannot go through reflexer | Use the provider's client, or another LangChain model class |
-| LangChain's own classes given an HTTP client | They stop asking a stream for its usage and price | Pass `stream_usage=True` |
+| LangChain's own classes given an HTTP client | They stop asking a stream for its usage and price; reflexer's `ChatOpenAI` keeps the stock class's choice | Pass `stream_usage=True` |
 | LangChain's TCP keepalive (`http_socket_options`) | Not applied on reflexer's classes | Set it on an HTTP client of yours, given as `http_client` |
 | LangChain's `dumpd`, then `loads` | Gives back LangChain's own class, without reflexer | Make the model with reflexer's class again |
 | Pydantic AI on Python 3.10 | Its last release for 3.10 fails Anthropic's calls, with the stock client too | Python 3.11 or later |
@@ -39,6 +39,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | LiteLLM and the AI SDK, signed | They cannot sign a call again: if reflexer does not answer while the signature holds (about five minutes), the call goes to Bedrock as first signed; a clock far behind AWS's can see it refused | Keep your machine's clock synced |
 | A Bedrock API key limited to your network (source IP, VPC endpoint) | Bedrock refuses reflexer's forward; the call then goes to Bedrock from your machine: one more trip | Use a key without that limit, or a role |
 | Anthropic's Bedrock and Mantle clients, signed | They sign every header, so a reflexer header you set reaches Bedrock; a signed call to Mantle goes to Bedrock directly | Nothing |
+| boto3, aiobotocore and the AWS SDK for JavaScript, signed, when reflexer did not answer and signing the call again fails | It goes to Bedrock as first signed; Python logs the warning "signing the call anew failed" | Nothing |
 | langchain-aws, Strands, Pydantic AI | They make the boto3 call themselves: no per-call argument reaches it | Skip with a hook on the client ([Advanced](advanced.md#skip-reflexer-for-one-call)) |
 | `ReflexerPassThrough=True` on a stock boto3 client | botocore refuses it | Use it on reflexer's client only |
 | The AWS SDK for JavaScript, `reflexerPassThrough` | Not in the SDK's types | Cast the options to `any` in a `.ts` file |

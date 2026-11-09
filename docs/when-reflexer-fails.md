@@ -6,6 +6,8 @@ For when a call did not go as you expected. Most cases need nothing from you: th
 |---|---|---|
 | Reflexer is down or unreachable | The call goes to your provider; a warning is logged | Nothing |
 | Reflexer is busy or failing (a 429 or a 5xx) | The same | Nothing |
+| Your provider answers with an error (a 429, a 5xx, any) | Reflexer passes it on: your SDK handles it as without reflexer, retries included | As without reflexer |
+| Reflexer's answer breaks off after it began | Your SDK raises its error for a broken answer; the call does not go to your provider | As for a broken answer of your provider's |
 | Reflexer is slow | Python: your timeout ends its wait. TypeScript: `headersTimeout` does, 300 s by default. The call goes to your provider | Set your timeout as before; in TypeScript, lower `headersTimeout` if you like ([Advanced](advanced.md#how-long-reflexer-may-take)) |
 | Your reflexer key is malformed | Raises when the client is made, before any call | Copy the key again from onboarding |
 | Reflexer refuses your key | Your SDK raises its own authentication error | Check the key; ask for a new one |
@@ -17,9 +19,9 @@ For when a call did not go as you expected. Most cases need nothing from you: th
 
 ## Reflexer is down or unreachable
 
-**Problem:** the SDK could not reach reflexer, or reflexer's answer was not one: a connection refused, a TLS error, a reply that is not HTTP. This is normal during an outage, or on a network that blocks reflexer.
+**Problem:** the SDK could not reach reflexer, or reflexer's answer was not one: a connection refused, a TLS error, a reply that is not HTTP, a reply reflexer did not make (a proxy's or a load balancer's own error). This is normal during an outage, or on a network that blocks reflexer.
 
-**What happens:** the call goes to your provider, and your code gets its answer. The SDK logs a warning naming the failure, never a message's text: in Python on the `reflexer` logger, in TypeScript by `console.warn`. The next calls go to your provider too, for about a minute at most, then reflexer is tried again.
+**What happens:** the call goes to your provider, and your code gets its answer. The SDK logs a warning naming the failure, never a message's text: in Python on the `reflexer` logger, in TypeScript by `console.warn`. The next calls go to your provider too, for a second after a first failure, twice as long after each failure in a row, up to a minute, each wait stretched by up to a fifth; then reflexer is tried again.
 
 **Trigger it:** point the SDK at an address where nothing listens. "Straight", in the warning, means to your provider, without reflexer.
 
@@ -54,9 +56,9 @@ Hello! How can I help you today?
 
 ## Reflexer is busy or failing
 
-**Problem:** reflexer answered with a 429 or a 5xx, or asked the SDK to send calls to your provider for a while. This is normal under load.
+**Problem:** reflexer itself answered with a 429 or a 5xx, or asked the SDK to send calls to your provider for a while. This is normal under load. Your provider's own 429 or 5xx, which reflexer passes on, is not this case: it reaches your SDK.
 
-**What happens:** as when reflexer is down: the call goes to your provider, and the next ones too, for the time reflexer asked or, after a failure, about a minute at most.
+**What happens:** the call goes to your provider. After a failure, the next ones too, as when reflexer is down. When reflexer asks for a while, the next calls go to your provider once two of its answers in a row have asked, for as long as asked. A redirect from reflexer is never followed: that call goes to your provider.
 
 ## Reflexer is slow
 

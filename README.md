@@ -34,20 +34,20 @@ Python 3.10+ · Node 20.3+ · [Apache-2.0](LICENSE)
 
 ## Install
 
-Not on PyPI or npm yet: install from a clone of this repository.
+Not on PyPI or npm yet: install from a clone of this repository, built as a release is: Python's build tools only as `build-constraints.txt` pins them by hash (pip 26.1 or later), and npm runs no dependency's install script.
 
 ```sh
 git clone https://github.com/reflexer-ai/reflexer-sdk
-pip install ./reflexer-sdk
+pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk
 ```
 
 ```sh
 git clone https://github.com/reflexer-ai/reflexer-sdk
-cd reflexer-sdk/typescript && npm ci && npm pack  # makes reflexer-ai-sdk-VERSION.tgz
+cd reflexer-sdk/typescript && npm ci --ignore-scripts && npm pack  # makes reflexer-ai-sdk-VERSION.tgz
 npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz  # in your project
 ```
 
-Then set `REFLEXER_KEY` to the key you got at onboarding.
+Then set `REFLEXER_KEY` to the key you got at onboarding. No key yet? Contact us at hello@reflexer.ai.
 
 ## Pick your library
 

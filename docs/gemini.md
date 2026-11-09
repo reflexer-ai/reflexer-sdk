@@ -9,7 +9,7 @@ Reflexer in front of your Gemini calls, Python or TypeScript, by changing one im
 Not on PyPI or npm yet: install from a clone of this repository ([README](../README.md#install)).
 
 ```sh
-pip install ./reflexer-sdk
+pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk  # pip 26.1 or later
 ```
 
 ```sh
@@ -104,6 +104,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 
 - `sample=0.01` (TypeScript `sample: 0.01`): send that share of the calls to reflexer, the rest to Gemini.
 - `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}` on a call (TypeScript: `config: { httpOptions: { headers: { "Reflexer-Pass-Through": "1" } } }`): that call goes to Gemini.
+- `config={"http_options": {"extra_body": {"replay_response": answer}}}` on a call (TypeScript: `config: { httpOptions: { extraBody: { replay_response: answer } } }`): a [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer), your Gemini answer given, which never reaches Gemini.
 - `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if you were given another.
 
 All of them: [Advanced](advanced.md).

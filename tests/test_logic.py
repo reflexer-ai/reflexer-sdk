@@ -53,6 +53,13 @@ class Route(unittest.TestCase):
         for private in ("https://localhost./v1/chat/completions", "https://10.0.0.5/v1/chat/completions"):
             self.assertIsNone(self.reflexer.route(private, {}), private)
 
+    def test_a_private_address_in_another_notation_goes_straight(self):
+        """As the system's resolver reads an IPv4 address (inet_aton), which the client's HTTP client goes by."""
+        for host in ("10.1", "127.1", "167772161", "0x0a000001", "0300.0250.0.1", "0X0A.1", "10.0.0.5.", "0"):
+            self.assertIsNone(self.reflexer.route(f"https://{host}/v1/chat/completions", {}), host)
+        for host in ("8.8.8.8", "134744072", "0x08080808", "8.526344", "1.2.3.4.5", "10.1.example", "0x", "0x1g", "08.0.0.1", "1.16777216"):
+            self.assertIsNotNone(self.reflexer.route(f"https://{host}/v1/chat/completions", {}), host)  # public, or a name
+
     def test_no_userinfo_in_the_upstream(self):
         _, headers = self.reflexer.route("https://user:made-up@router.example/v1/chat/completions", {})
         self.assertEqual(headers["reflexer-upstream"], "https://router.example")

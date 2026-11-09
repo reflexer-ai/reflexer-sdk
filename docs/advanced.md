@@ -105,6 +105,128 @@ Hello! How can I help you today?
 
 LangChain.js on Bedrock: the same header, set by a middleware of yours on the AWS SDK client. In a `.ts` file, `client.send(command, { reflexerPassThrough: true })` needs its options cast to `any`.
 
+## A dry run: give reflexer your provider's answer
+
+A call whose body carries your provider's answer, in the field `replay_response` at its top, is a dry run: reflexer answers, or compares its answer with yours, as if your provider had answered with it, and your provider is never called. Calls carry no such field by default. A dry run goes to reflexer whatever the share of calls sent there. If reflexer cannot take it (down, busy, failing), or the call cannot go to reflexer (it carries the skip header, is no call for a model's message, or its address is one reflexer cannot reach: `http`, local, private), the call fails instead of going to your provider: with `ReplayNotTaken`, or with your SDK's connection error caused by it, as your SDK reports its HTTP client's failures. The reply is reflexer's, as on any call it answers.
+
+<!-- example: served python -->
+```python
+import os
+from reflexer.openai import OpenAI
+
+client = OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
+answer = {"id": "chatcmpl-made-up", "object": "chat.completion", "created": 1, "model": "frontier-x",
+          "choices": [{"index": 0, "finish_reason": "stop",
+                       "message": {"role": "assistant", "content": "Hello! How can I help you today?"}}]}
+reply = client.chat.completions.create(model="frontier-x", messages=[{"role": "user", "content": "Hi"}],
+                                       extra_body={"replay_response": answer})
+print(reply.choices[0].message.content)
+```
+
+```text
+Hello! How can I help you today?
+```
+
+<!-- example: served js -->
+```js
+import { OpenAI } from "@reflexer-ai/sdk/openai";
+
+const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY });
+const answer = { id: "chatcmpl-made-up", object: "chat.completion", created: 1, model: "frontier-x",
+  choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Hello! How can I help you today?" } }] };
+const reply = await client.chat.completions.create({ model: "frontier-x", messages: [{ role: "user", content: "Hi" }],
+  replay_response: answer });
+console.log(reply.choices[0].message.content);
+```
+
+```text
+Hello! How can I help you today?
+```
+
+Gemini takes the field in the call's `http_options`:
+
+<!-- example: served python -->
+```python
+import os
+from reflexer.gemini import Client
+
+client = Client(reflexer_key=os.environ["REFLEXER_KEY"])
+answer = {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello! How can I help you today?"}]}}]}
+reply = client.models.generate_content(model="frontier-x", contents="Hi",
+                                       config={"http_options": {"extra_body": {"replay_response": answer}}})
+print(reply.text)
+```
+
+```text
+Hello! How can I help you today?
+```
+
+<!-- example: served js -->
+```js
+import { GoogleGenAI } from "@reflexer-ai/sdk/gemini";
+
+const client = new GoogleGenAI({ reflexerKey: process.env.REFLEXER_KEY });
+const answer = { candidates: [{ content: { role: "model", parts: [{ text: "Hello! How can I help you today?" }] } }] };
+const reply = await client.models.generateContent({ model: "frontier-x", contents: "Hi",
+  config: { httpOptions: { extraBody: { replay_response: answer } } } });
+console.log(reply.text);
+```
+
+```text
+Hello! How can I help you today?
+```
+
+On Bedrock, the field goes in the body of `InvokeModel`, which you write; Converse has no place for it:
+
+<!-- example: served bedrock -->
+```python
+import json, os
+import reflexer.boto3
+
+client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", reflexer_key=os.environ["REFLEXER_KEY"])
+answer = {"id": "msg_made-up", "type": "message", "role": "assistant", "model": "frontier-x", "stop_reason": "end_turn",
+          "content": [{"type": "text", "text": "Hello! How can I help you today?"}]}
+body = {"anthropic_version": "bedrock-2023-05-31", "max_tokens": 64, "messages": [{"role": "user", "content": "Hi"}],
+        "replay_response": answer}
+reply = json.loads(client.invoke_model(modelId="frontier-x", body=json.dumps(body))["body"].read())
+print(reply["content"][0]["text"])
+```
+
+```text
+Hello! How can I help you today?
+```
+
+<!-- example: served bedrock -->
+```js
+import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import * as bedrock from "@reflexer-ai/sdk/bedrock";
+
+const client = bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1" }), process.env.REFLEXER_KEY);
+const answer = { id: "msg_made-up", type: "message", role: "assistant", model: "frontier-x", stop_reason: "end_turn",
+  content: [{ type: "text", text: "Hello! How can I help you today?" }] };
+const body = { anthropic_version: "bedrock-2023-05-31", max_tokens: 64, messages: [{ role: "user", content: "Hi" }],
+  replay_response: answer };
+const reply = await client.send(new InvokeModelCommand({ modelId: "frontier-x", body: JSON.stringify(body), contentType: "application/json" }));
+console.log(JSON.parse(new TextDecoder().decode(reply.body)).content[0].text);
+```
+
+```text
+Hello! How can I help you today?
+```
+
+Where each library takes it:
+
+| Library | Where the field goes |
+|---|---|
+| OpenAI, Anthropic, Anthropic's Bedrock clients (Python) | `extra_body={"replay_response": answer}` on the call |
+| Gemini (Python) | `config={"http_options": {"extra_body": {"replay_response": answer}}}` |
+| boto3, aiobotocore | the body of an `InvokeModel` call, at its top |
+| OpenAI, Anthropic (TypeScript) | `replay_response: answer` among the call's parameters |
+| Gemini (TypeScript) | `config: { httpOptions: { extraBody: { replay_response: answer } } }` |
+| The AWS SDK for JavaScript | the body of an `InvokeModelCommand`, at its top |
+
+A body given as a stream is not read, so a dry run sent that way is not seen as one, and goes as any other call: give the body whole, as the provider SDKs do ([Known limits](limits.md#every-library)).
+
 ## Send a share of the calls
 
 `sample` is the share of calls that go to reflexer; the rest go to your provider. By default 1: every call. Each call is drawn on its own.
@@ -164,7 +286,7 @@ Hello! How can I help you today?
 
 ## Your own HTTP client
 
-Reflexer's calls go by your HTTP client, with its proxy, TLS settings and hooks: give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
+Reflexer's calls go by your HTTP client, with its proxy and TLS settings; its hooks (httpx's `event_hooks`) see your calls to your provider, never reflexer's, which carry the reflexer key; its transport, or its own `send`, carries both ([Security](../SECURITY.md), P8): one that logs headers logs the reflexer key too. In TypeScript your `fetch` carries both. Give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
 
 ## Async
 

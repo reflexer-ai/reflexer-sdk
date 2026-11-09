@@ -6,7 +6,8 @@ none is ours.
 
 Where can my key go? `Reflexer.route`, then `transport.Through`. What happens when reflexer fails? `transport.Through`.
 """
-import base64, hashlib, importlib.metadata, ipaddress, json, logging, random, re, time
+import base64, hashlib, ipaddress, json, logging, random, re, time
+from importlib.metadata import version as installed  # its one function the SDK reads: no other loads a module
 from urllib.parse import urlsplit
 
 BASE = "https://api.reflexer.ai"
@@ -151,9 +152,21 @@ def reachable(address):
     if address.scheme != "https" or host == "localhost":
         return False
     try:
-        return ipaddress.ip_address(host).is_global
+        return ipaddress.ip_address(numeric(host)).is_global
     except ValueError:  # a name: reflexer resolves and checks it
         return True
+
+
+def numeric(host):
+    """The host as the system's resolver reads it: an IPv4 address in any notation inet_aton takes (`10.1`, `167772161`,
+    `0x0a000001`, `0300.0250.0.1`) as its number; anything else (a name, IPv6) as it is."""
+    forms = [re.fullmatch("(0[xX][0-9a-fA-F]+)|(0[0-7]*)|([1-9][0-9]*)", part) for part in host.split(".")]
+    if len(forms) > 4 or not all(forms):
+        return host
+    *high, low = [int(form[0], (16, 8, 10)[form.lastindex - 1]) for form in forms]
+    if any(part > 255 for part in high) or low >= 256 ** (4 - len(high)):
+        return host
+    return sum(part << 8 * (3 - at) for at, part in enumerate(high)) + low
 
 
 def checked_base(base):
@@ -177,6 +190,6 @@ def checksum(text):
 
 def supported(package, majors):
     """A provider file runs only on the majors of its SDK it was tested on: a new major raises at import, never misroutes."""
-    version = importlib.metadata.version(package)
+    version = installed(package)
     if int(version.split(".")[0]) not in majors:
         raise ImportError(f"reflexer is tested on {package} {majors}, not {version}")

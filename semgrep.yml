@@ -36,7 +36,7 @@ rules:
     message: >-
       The SDK logs only by its own logger, `log`, made by `log = logging.getLogger("...")`, and only in the forms
       `log-only-kinds` lets through. Any other way to a logger, a handler or a record (an alias, `getattr`, `makeRecord`
-      and `handle`, the logging module's own functions, another's logger) is a finding, as is `print`, `open`, `input`, `exit`, `quit`, `help` or `breakpoint` reached at all.
+      and `handle`, the logging module's own functions, another's logger) is a finding. A builtin that prints or writes (`print`, `open`) is refused by tests/test_gates.py `builtins_not_allowed`.
     languages: [python]
     severity: ERROR
     paths: {include: ["reflexer/"]}
@@ -45,13 +45,6 @@ rules:
           - pattern: log
           - pattern: logging
           - pattern: logging.$ANY
-          - pattern: print
-          - pattern: open
-          - pattern: input
-          - pattern: exit
-          - pattern: quit
-          - pattern: help
-          - pattern: breakpoint
           - patterns:
               - pattern: $OBJECT.$NAME
               - metavariable-regex:
@@ -71,8 +64,9 @@ rules:
   - id: no-namespace-by-name
     message: >-
       A module or a builtin reached through a namespace read by name escapes the import allowlist: `vars`, `globals`,
-      `locals`, `__builtins__`, `getattr` with a name not written in place, a module's or a function's namespace
-      (`__dict__`, `__globals__`, `__self__`, ...), a frame's but its `__name__`, `inspect`'s ways to a module or a frame.
+      `locals`, `__builtins__`, `getattr` but with a name written in place, not a namespace's, a module's or a function's
+      namespace (`__dict__`, `__globals__`, `__self__`, ...), a frame's but its `__name__`, `inspect` but its `signature`
+      and `iscoroutinefunction`.
     languages: [python]
     severity: ERROR
     paths: {include: ["reflexer/"]}
@@ -82,9 +76,10 @@ rules:
           - pattern: globals
           - pattern: locals
           - pattern: __builtins__
-          - patterns:  # a name not written in place
-              - pattern: getattr($OBJECT, $NAME, ...)
-              - pattern-not: getattr($OBJECT, "...", ...)
+          - patterns:  # a name not written in place, or arguments unpacked
+              - pattern: getattr(...)
+              - pattern-not: getattr($OBJECT, "...")
+              - pattern-not: getattr($OBJECT, "...", $DEFAULT)
           - patterns:  # handed on, to be called where no rule sees it
               - pattern: getattr
               - pattern-not-inside: getattr(...)
@@ -92,18 +87,17 @@ rules:
               - pattern: getattr($OBJECT, "$NAME", ...)
               - metavariable-regex:
                   metavariable: $NAME
-                  regex: ^(__dict__|__globals__|__builtins__|__self__|__subclasses__|__getattribute__|__loader__|__spec__|__import__|__code__|__closure__|f_globals|f_locals|f_builtins)$
-          - pattern: inspect.getattr_static
-          - pattern: inspect.getmodule
-          - pattern: inspect.getmembers
-          - pattern: inspect.currentframe
-          - pattern: inspect.stack
-          - pattern: inspect.trace
+                  regex: ^(__dict__|__globals__|__builtins__|__self__|__subclasses__|__getattribute__|__loader__|__spec__|__import__|__code__|__closure__|__doc__|f_globals|f_locals|f_builtins)$
+          - patterns:  # of inspect, only what reads a function's form: its others reach modules, frames, closures
+              - pattern: inspect.$FUNCTION
+              - metavariable-regex:
+                  metavariable: $FUNCTION
+                  regex: ^(?!(signature|iscoroutinefunction)$)
           - patterns:
               - pattern: $OBJECT.$NAME
               - metavariable-regex:
                   metavariable: $NAME
-                  regex: ^(__dict__|__globals__|__builtins__|__self__|__subclasses__|__getattribute__|__loader__|__spec__|__import__|__code__|__closure__|f_globals|f_locals|f_builtins)$
+                  regex: ^(__dict__|__globals__|__builtins__|__self__|__subclasses__|__getattribute__|__loader__|__spec__|__import__|__code__|__closure__|__doc__|f_globals|f_locals|f_builtins)$
       - pattern-not-inside: frame.tb_frame.f_globals.get("__name__")  # names, so nothing runs inside the exempt form
   - id: no-dynamic-code
     message: The SDK imports by name and runs no code built at run time.
@@ -159,15 +153,17 @@ rules:
               - pattern-either:
                   - pattern: '"$TEXT"'
                   - pattern: '`...$TEXT...`'
+                  - pattern: /$TEXT/
               - metavariable-regex:
                   metavariable: $TEXT
-                  regex: (?is)^.*?(?:(?<![a-z])k(?:ey?)?(?![a-z])|\\(?:x[46]b|u00[46]b|U0000[46]b|1[15]3|N\{LATIN (?:SMALL|CAPITAL) LETTER K\}|u\{0*[46]b\}))
+                  regex: (?is)^.*?(?:(?<![a-z])(?:k|\x{212A})(?:ey?)?(?![a-z])|\\(?:x[46]b|u00[46]b|u212a|u\{0*(?:[46]b|212a)\}))
           - patterns:  # a key not quoted (`{ key }`) is a name, never the header's
               - pattern: '{..., "$TEXT": $VALUE, ...}'
               - metavariable-regex:
                   metavariable: $TEXT
                   regex: (?is)^.*?(?:[-_]k(?:ey?)?(?![a-z])|\\(?:x[46]b|u00[46]b|u\{0*[46]b\}))
-      - pattern-not-inside: throw new $ERROR(...)  # an error's message, to the client
+      - pattern-not-inside: throw new $ERROR("...")  # an error's message, to the client
+      - pattern-not-inside: throw new $ERROR(`...${base}`)  # checkedBase's, which names the address refused
       - pattern-not-inside: |
           class Reflexer {
             ...

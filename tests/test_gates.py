@@ -1,6 +1,6 @@
 """The static promises, and a planted fault for each that shows its gate can fail. Offline, no network.
 Run: uv run --group dev python -m unittest tests.test_gates"""
-import ast, importlib, importlib.util, os, pathlib, re, shutil, subprocess, sys, tempfile, tomllib, types, unittest
+import ast, builtins, importlib, importlib.util, os, pathlib, re, shutil, subprocess, sys, tempfile, tomllib, types, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")  # the import gate imports the provider SDKs: LiteLLM's prices from its own copy
@@ -15,7 +15,7 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "openai.py": {"openai"},
     "anthropic.py": {"anthropic"},
     "gemini.py": {"httpx", "httpx2", "inspect", "google"},
-    "langchain_openai.py": {"langchain_openai", "openai", "os"},  # os: LangChain's own proxy variable, read as LangChain does
+    "langchain_openai.py": {"langchain_openai", "openai", "os.environ"},  # os.environ: LangChain's own proxy variable, read as LangChain does
     "langchain_gemini.py": {"langchain_google_genai"},
     "bedrock.py": {"copy", "inspect", "re"},  # Bedrock's wire and what its lines share: the standard library only
     "boto3.py": {"boto3", "botocore", "urllib3"},  # urllib3: botocore's own HTTP library, whose read timeout botocore names its own
@@ -40,7 +40,8 @@ def allows(allowed, module):
 
 def importable(module, allowed):
     """Whether the gate may import `module` to read its attributes: one the file's allowlist takes, or a package above
-    one (`importlib`, above `importlib.metadata.version`). No other module a plant names runs here."""
+    one (`importlib`, above `importlib.metadata.version`): a provider SDK's own module, or the standard library's allowed.
+    No other module a plant names runs here."""
     return allows(allowed, module) or any(entry.startswith(module + ".") for entry in allowed)
 
 
@@ -106,17 +107,15 @@ SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
 
 def local_names(scope):
-    """The names a function or class binds itself to something else than a module: its arguments, what it assigns or defines."""
-    held = {each.arg for each in ast.walk(scope.args) if isinstance(each, ast.arg)} if hasattr(scope, "args") else set()
-    body = list(ast.iter_child_nodes(scope))
+    """The functions and classes a function or class defines itself. A name bound otherwise (an argument, an assignment,
+    a comprehension's, a `global`) may hold the module still: the gate follows it as the module's, at worst too strictly."""
+    held, body = set(), list(ast.iter_child_nodes(scope))
     while body:
         node = body.pop()
         if isinstance(node, SCOPES):
             held.add(getattr(node, "name", None))
             continue
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            held.add(node.id)
-        body += ast.iter_child_nodes(node)  # an import binds a module, which the gate follows, wherever it is
+        body += ast.iter_child_nodes(node)
     return held
 
 
@@ -183,6 +182,32 @@ def imports_not_allowed(root):
     return list(dict.fromkeys(found))
 
 
+BUILTINS = {  # the builtins the SDK reads: none prints, reads the terminal, opens a file, imports or runs code built at run time
+    "BaseException", "Exception", "ImportError", "OSError", "RuntimeError", "TimeoutError", "TypeError", "ValueError", "all", "any",
+    "bytes", "dict", "enumerate", "float", "getattr", "hasattr", "id", "int", "isinstance", "iter", "len", "list", "max", "min",
+    "next", "set", "staticmethod", "str", "sum", "super", "type"}
+
+
+def builtins_not_allowed(root):
+    """Every builtin a file reads that `BUILTINS` does not list (`print`, `open`, `input`, `license`, `vars`, `__import__`),
+    however it is reached: called, aliased or handed on. A name the file binds itself is its own, not the builtin."""
+    found = []
+    for path in sorted((root / "reflexer").glob("*.py")):
+        tree, own = ast.parse(path.read_text()), set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                own.add(node.name)
+            elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+                own.add(node.id)
+            elif isinstance(node, ast.arg):
+                own.add(node.arg)
+            elif isinstance(node, ast.alias):
+                own.add(node.asname or node.name.split(".")[0])
+        found += [f"{path.name}: {node.id}" for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                  and node.id in dir(builtins) and node.id not in BUILTINS | own]
+    return list(dict.fromkeys(found))
+
+
 def tool(name, *arguments, root=ROOT):
     """A standard tool's verdict on a tree: its exit code. It must be installed: a gate that cannot run is a red gate."""
     found = shutil.which(name)
@@ -225,25 +250,30 @@ def key_header_named(root):
             body = getattr(node, "body", None)
             if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and body and isinstance(body[0], ast.Expr):
                 spared.add(body[0].value)  # a docstring
-            if isinstance(node, ast.ClassDef) and node.name == "Reflexer" and path.name == "__init__.py":
+            if isinstance(node, ast.Module) and path.name == "__init__.py":  # the module's own class, not one nested
+                body = [each.body for each in body if isinstance(each, ast.ClassDef) and each.name == "Reflexer"]
+                body = body[0] if body else []
                 spared |= {each for each in body if isinstance(each, ast.FunctionDef) and each.name == "route"}
-            if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
-                spared |= set(node.exc.args[:1])
+            if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and isinstance(node.exc.func, ast.Name) and node.exc.func.id[:1].isupper():
+                spared |= set(node.exc.args[:1])  # an error's message: `raise ValueError("...")`
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
                     and node.func.value.id == "log" and node.args):
                 spared.add(node.args[0])
         spared = {each for node in spared for each in ([node, *node.values] if isinstance(node, ast.JoinedStr) else [node])}  # its text, not what it formats
         within = {each for node in spared if isinstance(node, ast.FunctionDef) for each in ast.walk(node)}  # route
         found += [f"{path.name}:{node.lineno}" for node in ast.walk(tree) if node not in spared and node not in within
-                  and isinstance(node, ast.Constant) and isinstance(node.value, str) and PART.search(node.value)]
+                  and isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))
+                  and PART.search(node.value if isinstance(node.value, str) else node.value.decode("latin-1"))]
     return found
 
 
 INSTALLERS = ["README.md", "CONTRIBUTING.md", "docs/**/*.md", "tools/*.sh", ".github/workflows/*.yml"]  # what a person or CI runs
 
 
-PYTHON_BUILD = re.compile(r"\b(?:pip3?|uv pip|python3? -m pip|pipx|uv tool|uv) (?:install|wheel|add)\b|\b(?:uv|python3? -m) build\b")
-NODE_INSTALL = re.compile(r"\b(?:npm|pnpm|yarn|bun) (?:ci|install|i|add|rebuild|exec|dlx)\b|\b(?:npx|bunx)\b|^\s*(?:yarn|pnpm|bun)\s*$")
+PYTHON_BUILD = re.compile(r"\b(?:pip3?|uv pip|python3? -m pip|pipx|uv tool|uv) (?:install|wheel|add|download)\b|\b(?:uv|python3? -m) build\b"
+                          r"|\buvx\b|\buv run\b.*\s--with")
+NODE_INSTALL = re.compile(r"\b(?:npm|pnpm|yarn|bun) (?:ci|install|i|it|install-test|add|rebuild|exec|dlx)\b|\b(?:npx|bunx)\b"
+                          r"|^\s*(?:yarn|pnpm|bun)(?:\s+-\S+)*\s*$")
 
 
 def installs_unpinned(root):
@@ -255,13 +285,22 @@ def installs_unpinned(root):
     found = [] if tomllib.loads((root / "pyproject.toml").read_text()).get("tool", {}).get("uv", {}).get("package") is False \
         else ["pyproject.toml: uv builds the SDK, its build tools unhashed"]
     for path in sorted({path for pattern in INSTALLERS for path in root.glob(pattern)}):
-        for number, line in enumerate(path.read_text().split("\n"), 1):
+        lines = path.read_text().split("\n")
+        for number, line in enumerate(lines, 1):
+            if number > 1 and lines[number - 2].endswith("\\"):
+                continue  # read with the line it continues
+            for after in lines[number:]:  # a command continued, whole
+                if not line.endswith("\\"):
+                    break
+                line = line[:-1] + " " + after
             for command in re.split(r"&&|\|\||[;|()#]", line):
                 words, built = command.split(), PYTHON_BUILD.search(command)
-                pinned = any(each.endswith("build-constraints.txt") for each in words) and "--no-build-isolation" not in words and (
+                pinned = any(each.endswith("build-constraints.txt") for each in words) and not any("isolation" in each for each in words) and (
                     re.search(r"(?<!uv )\bpip3? (install|wheel)\b", command) or ("uv build" in command and "--require-hashes" in words))
-                sdk = built and (re.search(r"\bbuild\b", built[0]) or any(each in ("-e", "--editable") or each.startswith((".", "/", "~")) for each in words))
-                node = NODE_INSTALL.search(command) and "--ignore-scripts" not in words and not re.search(r"\bnpm install [./~]\S*\.tgz\b", command)
+                sdk = built and (re.search(r"\bbuild\b|\buvx\b|--with", built[0]) or any(  # a path, an address or an editable install
+                    each.startswith(("-e", "--editable", ".", "/", "~", "git+", "http")) or "/" in each and not each.endswith("build-constraints.txt")
+                    for each in words))
+                node = NODE_INSTALL.search(command) and "--ignore-scripts" not in words and not re.fullmatch(r"\s*npm install [./~]\S*\.tgz\s*", command)
                 if (sdk and not pinned) or node:
                     found.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
                     break
@@ -298,6 +337,9 @@ class Gates(unittest.TestCase):
 
     def test_imports_are_allowed(self):
         self.assertEqual(imports_not_allowed(ROOT), [])
+
+    def test_only_the_builtins_listed(self):
+        self.assertEqual(builtins_not_allowed(ROOT), [])
 
     def test_within_budget(self):
         self.assertEqual(budget.problems(ROOT / "reflexer", tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["reflexer"]["budget"]), [])
@@ -366,14 +408,15 @@ class Broken(unittest.TestCase):
             "pip install ./reflexer-sdk\npip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk\n"
             "cd typescript && npm ci && npm pack  # makes made-up.tgz\nnpm install /path/to/made-up.tgz  # in your project\n"
             "uv build --build-constraint build-constraints.txt\nnpm install https://made-up.example/made-up.tgz\npnpm install\n"
-            "pip install --build-constraint build-constraints.txt --no-build-isolation .\n")
+            "pip install --build-constraint build-constraints.txt --no-build-isolation .\npip install \\\n  ./reflexer-sdk\n"
+            "npm install ./made-up.tgz made-up\n")
         script = self.root / "tools" / "ci.sh"
         lines = len(script.read_text().split("\n"))  # the script's last line, empty, then the two planted
         script.write_text(script.read_text() + 'npx -y -p "node@20" -- npm test\nuv pip install --python made-up -e .\n')
         path = self.root / "pyproject.toml"
         path.write_text(path.read_text().replace("package = false", "package = true"))
         self.assertEqual([each.split(": ")[0] for each in installs_unpinned(self.root)],
-                         ["pyproject.toml", *(f"docs/made_up.md:{line}" for line in (1, 3, 5, 6, 7, 8)), f"tools/ci.sh:{lines}", f"tools/ci.sh:{lines + 1}"])
+                         ["pyproject.toml", *(f"docs/made_up.md:{line}" for line in (1, 3, 5, 6, 7, 8, 9, 11)), f"tools/ci.sh:{lines}", f"tools/ci.sh:{lines + 1}"])
 
     def test_an_import_outside_the_allowlist_turns_it_red(self):
         self.plant("__init__.py", "import made_up_module")
@@ -552,15 +595,25 @@ class Broken(unittest.TestCase):
                      '    StreamHandler().emit(LogRecord("made-up", 30, "made_up.py", 1, body, None, None))',
                      'import logging\ndef made_up():\n    logging.basicConfig(filename="made-up.log")',
                      "import botocore.utils\ndef made_up(body):\n    made = botocore.utils.logger\n    made.warning(body)",
-                     "def made_up(body):\n    say = print\n    say(body)",
-                     'def made_up(body):\n    with open("made-up.txt", "w") as file:\n        file.write(body)',
                      logger + 'def made_up(body):\n    log.warning("made up", type(open("made-up.txt", "w").write(body)).__name__)',
                      logger + 'def made_up():\n    log.debug("made up", type(logging.basicConfig(filename="made-up.log")).__name__)',
-                     "def made_up(body):\n    input(body)", "def made_up(body):\n    exit(body)", "def made_up(body):\n    help(body)"):
+                     ):
             with self.subTest(text):
                 self.setUp()
                 self.plant("__init__.py", text)
                 self.assertNotEqual(semgrep(self.root), 0, text)
+
+    def test_a_builtin_not_listed_turns_it_red(self):
+        for text, found in (("def made_up(body):\n    print(body)", "print"), ("def made_up(body):\n    say = print\n    say(body)", "print"),
+                            ('def made_up(body):\n    with open("made-up.txt", "w") as file:\n        file.write(body)', "open"),
+                            ("def made_up(body):\n    input(body)", "input"), ("def made_up(body):\n    exit(body)", "exit"),
+                            ("def made_up(body):\n    help(body)", "help"), ('def made_up(body):\n    type(license)("made-up", body)()', "license"),
+                            ('made_up = vars(__builtins__)["__import__"]("made_up")', "vars"), ('made_up = __import__("made_up")', "__import__"),
+                            ("def made_up(text):\n    return eval(text)", "eval")):
+            with self.subTest(text):
+                self.setUp()
+                self.plant("__init__.py", text)
+                self.assertIn(f"__init__.py: {found}", builtins_not_allowed(self.root))
 
     def test_a_namespace_read_by_name_turns_semgrep_red(self):
         for text in ('made_up = vars(__builtins__)["__import__"]("made_up")',
@@ -577,7 +630,11 @@ class Broken(unittest.TestCase):
                      'made_up = getattr(object, "__subclasses__")()',
                      'import functools, random\nmade_up = functools.reduce(getattr, ["__globals__"], random.Random.__init__)',
                      'import inspect, random\nmade_up = inspect.getattr_static(random.Random.__init__, "__globals__")',
-                     'def made_up(f):\n    return (globals()["__builtins__"] or f).f_globals.get("__name__")'):
+                     'def made_up(f):\n    return (globals()["__builtins__"] or f).f_globals.get("__name__")',
+                     'import inspect\ndef made_up(name):\n    return getattr(*(inspect.getfile, name))',
+                     'import inspect\nmade_up = inspect.getclosurevars(inspect.getfile).globals',
+                     'import inspect\nmade_up = inspect.getmembers_static(inspect)',
+                     'def made_up():\n    return getattr(made_up, "__doc__")'):
             with self.subTest(text):
                 self.setUp()
                 self.plant("__init__.py", text)
@@ -592,6 +649,8 @@ class Broken(unittest.TestCase):
                             ("def made_up(command):\n    import random\n    return random._os.system(command)", "os"),  # an import in a function
                             ("class MadeUp:\n    import random as made\n    run = made._os.system", "os"),
                             ("import random\ndef made_up(random=random):\n    return random", "random handed on as a value"),
+                            ("import random\ndef made_up():\n    global random\n    random = random\n    return random._os", "os"),
+                            ("import random\nclass MadeUp:\n    random = random\n    run = random._os", "os"),
                             ('from logging.handlers import SocketHandler\nmade_up = SocketHandler("made-up", 1)', "logging.handlers.SocketHandler"),
                             ('import logging.handlers as made\nmade_up = made.SocketHandler("made-up", 1)', "logging.handlers"),
                             ("import logging.config\nmade_up = logging.config.listen(1)", "logging.config"),
@@ -605,6 +664,7 @@ class Broken(unittest.TestCase):
                 self.assertIn(f"__init__.py: {found}", imports_not_allowed(self.root))
         for file, text, found in (("boto3.py", "made_up = botocore.awsrequest.functools", "functools"),  # a provider SDK's module, resolved
                                   ("boto3.py", "made_up = boto3.logging.root", "logging"),
+                                  ("gemini.py", "def made_up():\n    [0 for genai in ()]\n    return genai.live.websockets", "websockets"),  # a comprehension's name
                                   ("openai.py", "from . import random as made\nmade_up = made._os", "random"),  # another SDK file's import
                                   ("openai.py", "from . import transport\nmade_up = transport.copy.copy", "copy")):
             with self.subTest(text):
@@ -628,7 +688,10 @@ class Broken(unittest.TestCase):
                      'def made_up(headers, key):\n    headers["-".join("the reflexer key is revoked".split()[1:3])] = key',
                      'def made_up(headers, key):\n    headers["reflexer-\\x6bey"] = key',
                      'def made_up(headers, key):\n    headers["reflexer-\\N{LATIN SMALL LETTER K}ey"] = key',
-                     'def made_up(headers, key):\n    raise ValueError(f"{headers.update({OURS + \'key\': key})}")'):
+                     'def made_up(headers, key):\n    raise ValueError(f"{headers.update({OURS + \'key\': key})}")',
+                     'def made_up(headers, key):\n    headers[b"reflexer-key"] = key',
+                     'def made_up(headers, key):\n    raise headers.setdefault("reflexer-key", key)',
+                     'def made_up():\n    class Reflexer:\n        def route(self, headers, key):\n            headers["reflexer-key"] = key'):
             with self.subTest(text):
                 self.setUp()
                 self.plant("__init__.py", text)

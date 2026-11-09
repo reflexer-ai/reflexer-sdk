@@ -35,6 +35,7 @@ WAYS = [(is_async, stream) for is_async in (False, True) for stream in (False, T
 GLOBALS = ("client_session", "aclient_session", "sync_transport")
 CALLBACK_LISTS = ("callbacks", "input_callback", "success_callback", "failure_callback", "_async_success_callback",
                   "_async_failure_callback")  # where LiteLLM files each callback, on its first call after it is set
+NONE = object()  # an argument left out of a call
 CALL_TIMEOUT = 1.5  # seconds, a call's own
 LOOPS, LOOP_OVERLAP = 6, 0.5  # event loops at once, each its thread's, and seconds reflexer holds each answer so they overlap
 LOGGED_WAIT, LOGGED_POLL = 5.0, 0.01  # seconds a callback is waited on, at most
@@ -82,6 +83,7 @@ class World(unittest.TestCase):
         """One call as a LiteLLM user writes it: its text, or the error it raised. `logged`: a callback's list, waited on
         till LiteLLM, which logs after the call returns, has handed it this call."""
         given = dict(messages=MESSAGES, num_retries=0, timeout=10, stream=stream) | PROVIDERS.get(provider, {}) | more
+        given = {name: value for name, value in given.items() if value is not NONE}
 
         def text(chunks):
             return "".join((chunk.choices[0].delta.content or "") for chunk in chunks if chunk.choices)
@@ -300,7 +302,7 @@ class Line(World):
                     self.ask(None, is_async, model=model, **given)
         self.assertEqual(self.world.reflexer.seen, [])
         self.assertTrue(self.world.provider.seen)
-        wires = reflexer.litellm.Wires(__import__("httpx").Client(), key=self.world.key)
+        wires = reflexer.litellm.Wires(__import__("httpx").Client(), reflexer.litellm.ways(self.world.key))
         for path in ("/openai/v1/chat/completions", "/openai/deployments/frontier-d/chat/completions", "/openai/responses"):
             line = wires.line_of(__import__("httpx").Request("POST", f"{harness.AZURE_ENDPOINT}{path}"), wires.now()[0])
             self.assertEqual(line.reflexer.reflexer_path, "/azure", path)
@@ -351,6 +353,52 @@ class Line(World):
         self.assertEqual(self.ask("bedrock", True, timeout=CALL_TIMEOUT), standins.STRAIGHT_TEXT)
         self.assertLess(time.monotonic() - began, 2 * CALL_TIMEOUT + LOOP_OVERLAP)
 
+    def test_a_replay_never_reaches_any_host_but_reflexer(self):
+        """A call carrying `replay_response` at its body's top, reflexer busy: at its provider's host, or at a gateway or
+        another provider, which the line does not take, by the line's clients, it raises; never reaches them."""
+        reflexer.litellm.through(self.world.key)
+        self.world.reflexer.set("busy")
+        replay = {"extra_body": {"replay_response": {"id": "made-up"}}}
+        for provider, more, ways in (("openai", {}, (False, True)), ("openai", {"api_base": "https://openrouter.ai/api/v1"}, (False, True)),
+                                     (None, dict(OTHERS[1][1], model=OTHERS[1][0]), (False,))):  # another provider's async: as stock
+            for is_async in ways:
+                with self.subTest(provider=provider, more=more, is_async=is_async):
+                    self.assertIsInstance(self.ask(provider, is_async, **replay, **more), Exception)
+        self.assertEqual([arrival for arrival in self.world.provider.seen if b"replay_response" in (arrival.body or b"")], [])
+
+    def test_an_async_calls_timeout_is_as_stock_resolves_it(self):
+        """None given, the call's own, or one LiteLLM takes as text: what each request of the call is bounded by, as stock."""
+        import httpx
+        read, real = [], httpx.AsyncClient.send
+
+        async def send(client, request, **options):
+            if request.url.host != harness.REFLEXER_NAMES[0]:
+                read.append(request.extensions.get("timeout", {}).get("read"))
+            return await real(client, request, **options)
+
+        def bounds(line, given):
+            if line:
+                reflexer.litellm.through(self.world.key)
+            else:
+                bedrock.without_litellms_line()
+            read.clear()
+            with mock.patch.object(httpx.AsyncClient, "send", send), mock.patch.object(litellm, "disable_aiohttp_transport", True):
+                said = [self.ask(provider, True, **given) for provider in ("gemini", "bedrock")]
+            return said, list(read)
+        self.world.reflexer.set("busy")  # each call to the provider too, by the same handler
+        for given in ({"timeout": NONE}, {"timeout": "5"}, {"timeout": CALL_TIMEOUT}):
+            with self.subTest(given=given):
+                (stock_said, stock_read), (said, ours) = bounds(False, given), bounds(True, given)
+                self.assertEqual(said, stock_said)
+                self.assertEqual(set(ours), set(stock_read))  # by its handler's client and the one under it
+
+    def test_one_breaker_for_sync_and_async_calls(self):
+        reflexer.litellm.through(self.world.key)
+        self.world.reflexer.set("dead")
+        self.assertEqual(self.ask("anthropic"), standins.STRAIGHT_TEXT)  # a failure: the breaker opens
+        self.world.reflexer.set("ok")
+        self.assertEqual(self.ask("anthropic", True), standins.STRAIGHT_TEXT)
+
     def test_a_call_given_its_own_client_keeps_it(self):
         reflexer.litellm.through(self.world.key)
         own = AsyncHTTPHandler()
@@ -396,8 +444,8 @@ class Broken(World):
     def test_no_transport_for_litellms_clients_turns_every_sync_call_red(self):
         real = reflexer.litellm.Wires.__init__
 
-        def unused(self, inner, **way):
-            real(self, inner, **way)
+        def unused(self, inner, way):
+            real(self, inner, way)
             if not callable(inner):  # a sync client: LiteLLM's own transport under it, as with no line, the line's probe aside
                 ours = self.handle_request
                 self.handle_request = lambda request: ours(request) if request.url.scheme == "reflexer-probe" else inner._transport.handle_request(request)
@@ -459,6 +507,13 @@ class Broken(World):
             asyncio.run(litellm.acompletion(messages=MESSAGES, num_retries=0, **PROVIDERS["anthropic"]))
         self.assertEqual([key for key in litellm.in_memory_llm_clients_cache.cache_dict if key.startswith("reflexer-litellm-")], [])
 
+    def test_a_replays_body_unread_turns_it_red(self):
+        with mock.patch.object(reflexer.litellm, "body_of", lambda request: None):
+            reflexer.litellm.through(self.world.key)
+            self.world.reflexer.set("busy")
+            self.ask("openai", api_base="https://openrouter.ai/api/v1", extra_body={"replay_response": {"id": "made-up"}})
+        self.assertTrue([arrival for arrival in self.world.provider.seen if b"replay_response" in (arrival.body or b"")])
+
     def test_no_fallback_turns_it_red(self):
         with mock.patch.object(reflexer.transport, "stays_straight", mock.Mock(side_effect=RuntimeError("made up"))):
             reflexer.litellm.through(self.world.key)
@@ -481,8 +536,8 @@ class Broken(World):
         theirs = litellm.client_session = __import__("httpx").Client(event_hooks={"request": [lambda request: heard.append(dict(request.headers))]})
         real = reflexer.litellm.Wires.__init__
 
-        def kept_below(self, inner, **way):
-            real(self, inner, **way)
+        def kept_below(self, inner, way):
+            real(self, inner, way)
             inner.event_hooks = theirs.event_hooks  # its hooks kept on the client under ours
         with mock.patch.object(reflexer.litellm.Wires, "__init__", kept_below):
             reflexer.litellm.through(self.world.key)

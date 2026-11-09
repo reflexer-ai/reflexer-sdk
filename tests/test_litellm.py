@@ -30,6 +30,7 @@ OTHERS = [  # LiteLLM's calls to other providers, at hosts the suite resolves to
     *[(model, dict(aws_region_name=bedrock.REGION, max_tokens=8) | auth) for model in ("bedrock_mantle/anthropic.frontier-b-made-up-v1:0", "bedrock_mantle/openai.frontier-o")
       for auth in (dict(api_key=bedrock.BEARER), dict(aws_access_key_id=bedrock.ACCESS_KEY, aws_secret_access_key=bedrock.SECRET))],
 ]
+OWN_BASE = {"openai": "https://api.openai.com/v1"}  # a fallback's address where LiteLLM would carry the failing call's over; None: its default
 WAYS = [(is_async, stream) for is_async in (False, True) for stream in (False, True)]
 GLOBALS = ("client_session", "aclient_session", "sync_transport")
 CALLBACK_LISTS = ("callbacks", "input_callback", "success_callback", "failure_callback", "_async_success_callback",
@@ -177,16 +178,19 @@ class Line(World):
     def test_after_litellms_own_cleanup_async_calls_still_go_through(self):
         """`close_litellm_async_clients`, LiteLLM's own, closes the clients it keeps, the line's among them, in that event
         loop: the next call makes the line's anew, as LiteLLM's handlers remake theirs. OpenAI's and Azure's, whose
-        session it closes too, fail after it as stock does."""
+        cached SDK client it closes, fail in that loop as stock's do, and go through in the next."""
         reflexer.litellm.through(self.world.key)
-        for provider in reflexer.litellm.HANDLED:
+        for provider in PROVIDERS:
             given = dict(messages=MESSAGES, num_retries=0, timeout=10) | PROVIDERS[provider]
 
             async def twice():
                 first = (await litellm.acompletion(**given)).choices[0].message.content
                 await litellm.close_litellm_async_clients()
-                return first, (await litellm.acompletion(**given)).choices[0].message.content
+                if provider in reflexer.litellm.HANDLED:
+                    return first, (await litellm.acompletion(**given)).choices[0].message.content
+                return first, standins.SERVED_TEXT
             self.assertEqual(asyncio.run(twice()), (standins.SERVED_TEXT, standins.SERVED_TEXT), provider)
+            self.assertEqual(self.ask(provider, True), standins.SERVED_TEXT, provider)  # a loop after it
 
     def test_an_event_loops_calls_share_one_client_kept_where_litellm_keeps_its_own(self):
         """One HTTP client of the line's per event loop, in LiteLLM's cache of its clients, which evicts and closes them
@@ -302,6 +306,30 @@ class Line(World):
             line = wires.line_of(__import__("httpx").Request("POST", f"{harness.AZURE_ENDPOINT}{path}"), wires.now()[0])
             self.assertEqual(line.reflexer.reflexer_path, "/azure", path)
 
+    def test_litellms_own_fallbacks_to_another_provider_go_through(self):
+        """`fallbacks=`, LiteLLM's own: from a provider on LiteLLM's handlers whose call fails (nothing listens at its
+        address) to OpenAI or Azure, each given its address, as LiteLLM carries the failing call's over."""
+        reflexer.litellm.through(self.world.key)
+        for primary in reflexer.litellm.HANDLED:
+            for fallback in ("openai", "azure"):
+                given = dict(PROVIDERS[primary]) | dict(api_base="https://127.0.0.1:9/")
+
+                async def failing_over():
+                    return (await litellm.acompletion(messages=MESSAGES, num_retries=0, timeout=5, fallbacks=[other], **given)).choices[0].message.content
+                other = {"api_base": OWN_BASE.get(fallback)} | PROVIDERS[fallback]  # its own, not the failing one's, which LiteLLM carries over
+                with self.subTest(primary=primary, fallback=fallback):
+                    self.assertEqual(asyncio.run(failing_over()), standins.SERVED_TEXT)
+
+    def test_a_call_given_its_own_aiohttp_session_keeps_it(self):
+        import aiohttp
+        reflexer.litellm.through(self.world.key)
+
+        async def asked():
+            async with aiohttp.ClientSession() as own:
+                return (await litellm.acompletion(messages=MESSAGES, num_retries=0, shared_session=own, **PROVIDERS["anthropic"])).choices[0].message.content
+        self.assertEqual(asyncio.run(asked()), standins.STRAIGHT_TEXT)  # by the client's own session, as stock
+        self.assertEqual(self.world.reflexer.seen, [])
+
     def test_a_call_given_its_own_client_keeps_it(self):
         reflexer.litellm.through(self.world.key)
         own = AsyncHTTPHandler()
@@ -388,6 +416,20 @@ class Broken(World):
             reflexer.litellm.through(self.world.key)
             said = asyncio.run(litellm.acompletion(given.pop("model"), messages=MESSAGES, num_retries=0, **given)).choices[0].message.content
         self.assertEqual(said, standins.STRAIGHT_TEXT)
+
+    def test_our_handler_carried_to_another_providers_fallback_turns_it_red(self):
+        async def kept(self, kwargs, call_type):  # ours given, never taken back
+            if call_type == "acompletion" and kwargs.get("client") is None and reflexer.litellm.provider(kwargs) in reflexer.litellm.HANDLED:
+                kwargs["client"] = self.handler
+            return kwargs
+        with mock.patch.object(reflexer.litellm.Hook, "async_pre_call_deployment_hook", kept):
+            reflexer.litellm.through(self.world.key)
+
+            async def failing_over():
+                return await litellm.acompletion(messages=MESSAGES, num_retries=0, timeout=5, fallbacks=[PROVIDERS["openai"] | {"api_base": OWN_BASE["openai"]}],
+                                                 **PROVIDERS["anthropic"] | {"api_base": "https://127.0.0.1:9/"})
+            with self.assertRaises(Exception):
+                asyncio.run(failing_over())
 
     def test_a_client_made_for_each_call_turns_it_red(self):
         with mock.patch.object(reflexer.litellm.Wires, "now", lambda self: self.lines or self.over(self.inner())):  # none kept

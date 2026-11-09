@@ -33,7 +33,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | LiteLLM with `force_ipv4` | The line raises `RuntimeError`: LiteLLM then sends its calls by a transport of its own. Turned on after the line, Anthropic's, Gemini's and Bedrock's sync calls go to your provider | Leave `force_ipv4` off |
 | LiteLLM: a call to another host (a router or gateway as `api_base`, an OpenAI-compatible provider, Azure on your own domain, Bedrock's Mantle) | It goes to that host as before, not through reflexer | Call the provider's own host |
 | LiteLLM's async calls other than `acompletion` (`litellm.anthropic.messages.acreate`, say) to Anthropic, Gemini or Bedrock | They go to your provider as before | Use `acompletion` |
-| LiteLLM: a call given its own `client=` | It goes to your provider as before | Leave `client=` out |
+| LiteLLM: a call given its own `client=` or `shared_session=`; async calls by LiteLLM's Responses API route (`openai/responses/...`) | They go to your provider as before | Leave `client=` and `shared_session=` out |
 | LiteLLM on Gemini 3 models | LiteLLM calls them at `v1alpha`, which reflexer does not take: they go to Gemini directly | Nothing yet |
 
 ## Amazon Bedrock

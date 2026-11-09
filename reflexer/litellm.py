@@ -166,6 +166,21 @@ class Wires:
         pass
 
 
+class Kept(httpx.Client):
+    """The session the line gives LiteLLM for the openai SDK, when the client gave none: one for the process, as LiteLLM
+    takes it, so a close of an SDK client over it, LiteLLM's cleanup's, leaves it open, for the next."""
+
+    def close(self):
+        pass
+
+
+class AKept(httpx.AsyncClient):
+    """`Kept`, async."""
+
+    async def aclose(self):
+        pass
+
+
 def split(own, way):
     """The client's own HTTP client, through reflexer, as `setup_http_client` splits one: its hooks run once, above, and
     never see our key; the copy under ours shares its connections."""
@@ -199,8 +214,10 @@ class Hook(CustomLogger):
         self.handler = handler
 
     async def async_pre_call_deployment_hook(self, kwargs, call_type):
-        if call_type == "acompletion" and kwargs.get("client") is None and provider(kwargs) in HANDLED:
-            kwargs["client"] = self.handler
+        """Each call LiteLLM makes of `acompletion`, its own fallbacks to another provider included, which carry the first
+        call's arguments: ours goes only where it is taken; a call given the client's own aiohttp session keeps it."""
+        if call_type == "acompletion" and kwargs.get("client") in (None, self.handler) and kwargs.get("shared_session") is None:
+            kwargs["client"] = self.handler if provider(kwargs) in HANDLED else None
         return kwargs
 
 
@@ -247,7 +264,7 @@ def through(reflexer_key, base=BASE, sample=1.0):
     except BaseException:
         litellm.sync_transport = was
         raise
-    for name, kind, transport in (("client_session", httpx.Client, sync), ("aclient_session", httpx.AsyncClient, aio)):
+    for name, kind, transport in (("client_session", Kept, sync), ("aclient_session", AKept, aio)):
         outer = kind(transport=transport, follow_redirects=True) if own[name] is None else split(own[name], way)  # as LiteLLM's own
         outer.reflexer_own = own[name]
         setattr(litellm, name, outer)

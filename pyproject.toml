@@ -54,8 +54,8 @@ private_names = 0  # in every file, but those each Bedrock line names below
 [tool.reflexer.budget.bedrock]  # Bedrock's files, and LiteLLM's line, which carries Bedrock's signed calls with every other provider's, apart from every other file's: an audit of a provider SDK's path reads none of them
 files = ["bedrock.py", "boto3.py", "aiobotocore.py", "anthropic_bedrock.py", "litellm.py"]
 private_names = 0  # but those allowed below
-lines = 549  # was 469: LiteLLM's line on every provider, one line for the process; was 465: the botocore lines' cancel or ^C raised on alone, as the shared transport's (`alone`); was 300: a signed call through reflexer, its fallback signed anew (the botocore family's signer, anthropic's middleware) or, on LiteLLM, its leg bounded by the signature's window
-ifs = 83  # was 74: LiteLLM's line on every provider; was 42: a signed call through reflexer, as lines at 300
+lines = 555  # was 469: LiteLLM's line on every provider, one line for the process; was 465: the botocore lines' cancel or ^C raised on alone, as the shared transport's (`alone`); was 300: a signed call through reflexer, its fallback signed anew (the botocore family's signer, anthropic's middleware) or, on LiteLLM, its leg bounded by the signature's window
+ifs = 84  # was 74: LiteLLM's line on every provider; was 42: a signed call through reflexer, as lines at 300
 
 [tool.reflexer.budget.private_names_allowed]  # no public name reaches the client's own HTTP session, which reflexer's leg goes by; each read once, as the line is made, so a release renaming one fails the line, never a call
 "boto3.py" = ["_endpoint"]  # botocore's endpoint, whose HTTP session sends the client's calls

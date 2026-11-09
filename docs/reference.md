@@ -117,7 +117,7 @@ Hello! How can I help you today?
 - A malformed key: `ValueError` (TypeScript `Error`), when the client is made. [When reflexer fails](when-reflexer-fails.md#your-reflexer-key-is-malformed).
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
 - A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
-- `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class, or on an aiohttp release that keeps a request's headers where reflexer cannot clear them: `TypeError`.
+- `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class, or on an aiohttp release reflexer's line cannot work with: `TypeError`.
 - TypeScript `GoogleGenAI`, when your headers replace both `User-Agent` and `x-goog-api-client`, so its calls name no `@google/genai` version: `Error`, at the call.
 - A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) reflexer cannot take: `reflexer.ReplayNotTaken` (TypeScript: `ReplayNotTaken`, from `@reflexer-ai/sdk`), or your SDK's connection error caused by it.
 - TypeScript, Bedrock: `bedrock.wrap` or `requestHandler` on a handler already wrapped, or on the AWS SDK's fetch handler: `Error`, when wrapped.
@@ -126,7 +126,6 @@ Hello! How can I help you today?
 ## What reflexer adds to a response
 
 - A reply from reflexer has a `model` ending in `-reflexer`, and `usage.cost` holds its price in USD, also in a stream's usage. Gemini's and Bedrock Converse's have no such fields: Gemini's `model_version` (TypeScript `modelVersion`) ends in `-reflexer`; Converse's names no model, so read the header below.
-- Python: a reply from reflexer reaches your code without its `Set-Cookie` header, so your HTTP client keeps no reflexer cookie as your provider's.
 - Headers, on every response from reflexer: `Reflexer-Answered-By`, `reflexer`, or `provider` when reflexer forwarded the call; `Reflexer-Cost`, the price in nano USD; `Reflexer-Request-Id`, the call's id. A call that went to your provider directly has none.
 
 ## Versions

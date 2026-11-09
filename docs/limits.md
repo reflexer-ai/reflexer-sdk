@@ -23,7 +23,7 @@ For when reflexer does less than the library pages say. Each row: the case, what
 | openai (TypeScript) with X.509 workload identity | It takes no custom `fetch`, so its calls cannot go through reflexer | Use a key |
 | `@google/genai` before 2.23.0 | It takes no `fetch`: its calls go to Gemini, never to reflexer | Upgrade to 2.29.0 or later |
 | LangChain's `ChatAnthropic` (Python and LangChain.js), `@langchain/google-genai` | Their calls cannot go through reflexer | Use the provider's client, or another LangChain model class |
-| LangChain's own classes given an HTTP client | They stop asking a stream for its usage and price; reflexer's `ChatOpenAI` keeps the stock class's choice | Pass `stream_usage=True` |
+| LangChain's own classes given an HTTP client | They stop asking a stream for its usage and price | Pass `stream_usage=True` |
 | LangChain's TCP keepalive (`http_socket_options`) | Not applied on reflexer's classes | Set it on an HTTP client of yours, given as `http_client` |
 | LangChain's `dumpd`, then `loads` | Gives back LangChain's own class, without reflexer | Make the model with reflexer's class again |
 | Pydantic AI on Python 3.10 | Its last release for 3.10 fails Anthropic's calls, with the stock client too | Python 3.11 or later |

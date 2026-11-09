@@ -293,7 +293,7 @@ console.log(reply.choices[0].message.content);
 Hello! How can I help you today?
 ```
 
-It goes to reflexer only, never to your provider. One call can name another with the `Reflexer-Namespace` header, which wins over the client's: the same way as [skipping reflexer for one call](#skip-reflexer-for-one-call), with that header in place of `Reflexer-Pass-Through`. The functions that take the key take `namespace`, as they take `base`.
+It goes to reflexer only, never to your provider. One call can name another with the `Reflexer-Namespace` header, which wins over the client's: the same way as [skipping reflexer for one call](#skip-reflexer-for-one-call), with that header in place of `Reflexer-Pass-Through`; on Bedrock's signed calls, give it on the client ([Known limits](limits.md#amazon-bedrock)). The functions that take the key take `namespace`, as they take `base`.
 
 ## How long reflexer may take
 

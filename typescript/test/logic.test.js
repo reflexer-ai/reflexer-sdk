@@ -150,10 +150,10 @@ describe("Construction", () => {
   });
 
   test("a namespace that cannot go as a header throws", () => {
-    for (const namespace of ["", " team", "team\r\nx-made-up: 1", "équipe", 7, null]) {
+    for (const namespace of ["", " team", "team\r\nx-made-up: 1", "équipe", 7]) {
       assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { namespace: /** @type {any} */ (namespace) }), { message: /^a namespace is a string/ });
     }
-    for (const namespace of [undefined, "team-a", "Team A/2026"]) new reflexer.Reflexer(KEY, WIRE, { namespace });
+    for (const namespace of [undefined, null, "team-a", "Team A/2026"]) new reflexer.Reflexer(KEY, WIRE, { namespace: /** @type {any} */ (namespace) });
   });
 
   test("a typo in a wire throws when the client is made", () => {

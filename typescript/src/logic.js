@@ -27,7 +27,7 @@ export class Reflexer {
    */
   constructor(key, wire, { base = BASE, sample = 1, namespace, clock = () => performance.now() / 1000 } = {}) {
     check(key);
-    if (namespace !== undefined && !(typeof namespace === "string" && /^[!-~]+(?: [!-~]+)*$/.test(namespace))) {
+    if (namespace != null && !(typeof namespace === "string" && /^[!-~]+(?: [!-~]+)*$/.test(namespace))) {
       throw new Error("a namespace is a string of letters, digits, signs and inner spaces: it goes as a header");
     }
     if (typeof wire.reflexerPath !== "string" || !(wire.calls instanceof RegExp)) {

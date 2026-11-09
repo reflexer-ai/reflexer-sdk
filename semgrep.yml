@@ -157,7 +157,7 @@ rules:
               - metavariable-regex:
                   metavariable: $TEXT
                   regex: (?is)^.*?(?:(?<![a-z])(?:k|\x{212A})(?:ey?)?(?![a-z])|\\(?:x[46]b|u00[46]b|u212a|u\{0*(?:[46]b|212a)\}))
-          - patterns:  # a key not quoted (`{ key }`) is a name, never the header's
+          - patterns:  # a key not quoted (`{ key }`) is not read: a header built from one is review's
               - pattern: '{..., "$TEXT": $VALUE, ...}'
               - metavariable-regex:
                   metavariable: $TEXT

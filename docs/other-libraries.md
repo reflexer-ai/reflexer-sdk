@@ -36,7 +36,7 @@ The other HTTP clients reflexer makes:
 | Azure OpenAI | `reflexer.openai.azure_http_client` | `reflexer.openai.azure_async_http_client` |
 | Anthropic | `reflexer.anthropic.http_client` | `reflexer.anthropic.async_http_client` |
 
-Each takes your own HTTP client as `own=`, and keeps its proxy and TLS settings; its hooks see your calls to your provider, never reflexer's. Gemini takes `client_args`: give the same dict as both `client_args` and `async_client_args`; without the async one, async calls skip reflexer.
+Each takes your own HTTP client as `own=`, and keeps its proxy and TLS settings; its hooks see your calls to your provider, never reflexer's; its transport carries both, the reflexer key included. Gemini takes `client_args`: give the same dict as both `client_args` and `async_client_args`; without the async one, async calls skip reflexer.
 
 <!-- example: served python -->
 ```diff

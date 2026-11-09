@@ -104,6 +104,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 
 - `sample=0.01` (TypeScript `sample: 0.01`): send that share of the calls to reflexer, the rest to Gemini.
 - `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}` on a call (TypeScript: `config: { httpOptions: { headers: { "Reflexer-Pass-Through": "1" } } }`): that call goes to Gemini.
+- `config={"http_options": {"extra_body": {"replay_response": answer}}}` on a call (TypeScript: `config: { httpOptions: { extraBody: { replay_response: answer } } }`): a [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer), your Gemini answer given, which never reaches Gemini.
 - `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if you were given another.
 
 All of them: [Advanced](advanced.md).

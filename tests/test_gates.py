@@ -4,7 +4,7 @@ import ast, builtins, importlib, importlib.util, os, pathlib, re, shutil, subpro
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")  # the import gate imports the provider SDKs: LiteLLM's prices from its own copy
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.append(str(ROOT / "tools"))  # after the installed packages: a module planted there never stands in for one
 import budget, majors, promises
 
 STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata.version", "ipaddress", "json", "logging", "random", "re",
@@ -14,7 +14,7 @@ ALLOWED = {  # what each file may import: the standard library, and the provider
     "transport.py": STDLIB_CORE,
     "openai.py": {"openai"},
     "anthropic.py": {"anthropic"},
-    "gemini.py": {"httpx", "httpx2", "inspect", "google"},
+    "gemini.py": {"httpx", "httpx2", "inspect", "google.genai"},
     "langchain_openai.py": {"langchain_openai", "openai", "os.environ"},  # os.environ: LangChain's own proxy variable, read as LangChain does
     "langchain_gemini.py": {"langchain_google_genai"},
     "bedrock.py": {"copy", "inspect", "re"},  # Bedrock's wire and what its lines share: the standard library only
@@ -33,9 +33,8 @@ def dependencies(root):
 
 def allows(allowed, module):
     """Whether a file's allowlist takes `module`: the standard library's by its exact name, so `logging` is not
-    `logging.handlers`; a provider SDK's with its own submodules."""
-    top = module.split(".")[0]
-    return module in allowed or (top not in sys.stdlib_module_names and top in allowed)
+    `logging.handlers`; a provider SDK's with its own submodules (`google.genai`'s, not every `google` package's)."""
+    return module in allowed or module.split(".")[0] not in sys.stdlib_module_names and any(module.startswith(each + ".") for each in allowed)
 
 
 def importable(module, allowed):
@@ -103,30 +102,19 @@ def chain(node):
     return None
 
 
-SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
-
-
-def local_names(scope):
-    """The functions and classes a function or class defines itself. A name bound otherwise (an argument, an assignment,
-    a comprehension's, a `global`) may hold the module still: the gate follows it as the module's, at worst too strictly."""
-    held, body = set(), list(ast.iter_child_nodes(scope))
-    while body:
-        node = body.pop()
-        if isinstance(node, SCOPES):
-            held.add(getattr(node, "name", None))
-            continue
-        body += ast.iter_child_nodes(node)
-    return held
-
-
 def shadowed(name, node, parents):
-    """Whether `name`, read at `node`, is a function's or class's own, not the module's."""
-    while node in parents:
-        node, child = parents[node], node
-        inside = child in (node.body if isinstance(getattr(node, "body", None), list) else [getattr(node, "body", None)])
-        if isinstance(node, SCOPES) and inside and name in local_names(node):  # a default or a decorator is read outside
-            return True
-    return False
+    """Whether `name`, read at `node`, is not the module's: only where Python's own rule is plain, a read in a class's
+    body after that body defines a function or class of the name, with no `global` or `del` of it there. Elsewhere
+    the gate takes the name as the module's: at worst too strictly, never fooled by a scope."""
+    statement = node
+    while statement in parents and not isinstance(parents[statement], ast.ClassDef):
+        if isinstance(parents[statement], (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return False
+        statement = parents[statement]
+    body = getattr(parents.get(statement), "body", [])
+    if statement not in body or any(isinstance(each, (ast.Global, ast.Delete)) for each in ast.walk(parents[statement])):
+        return False
+    return any(isinstance(each, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and each.name == name for each in body[:body.index(statement)])
 
 
 def imports_not_allowed(root):
@@ -189,22 +177,13 @@ BUILTINS = {  # the builtins the SDK reads: none prints, reads the terminal, ope
 
 
 def builtins_not_allowed(root):
-    """Every builtin a file reads that `BUILTINS` does not list (`print`, `open`, `input`, `license`, `vars`, `__import__`),
-    however it is reached: called, aliased or handed on. A name the file binds itself is its own, not the builtin."""
+    """Every name a file reads that is a builtin `BUILTINS` does not list (`print`, `open`, `input`, `license`, `vars`,
+    `__import__`), however it is reached: called, aliased or handed on. A name of the file's own that a builtin has is
+    refused too: the gate reads no scope, so it is never fooled by one."""
     found = []
     for path in sorted((root / "reflexer").glob("*.py")):
-        tree, own = ast.parse(path.read_text()), set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                own.add(node.name)
-            elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-                own.add(node.id)
-            elif isinstance(node, ast.arg):
-                own.add(node.arg)
-            elif isinstance(node, ast.alias):
-                own.add(node.asname or node.name.split(".")[0])
-        found += [f"{path.name}: {node.id}" for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-                  and node.id in dir(builtins) and node.id not in BUILTINS | own]
+        found += [f"{path.name}: {node.id}" for node in ast.walk(ast.parse(path.read_text())) if isinstance(node, ast.Name)
+                  and node.id in dir(builtins) and node.id not in BUILTINS]
     return list(dict.fromkeys(found))
 
 
@@ -267,44 +246,51 @@ def key_header_named(root):
     return found
 
 
-INSTALLERS = ["README.md", "CONTRIBUTING.md", "docs/**/*.md", "tools/*.sh", ".github/workflows/*.yml"]  # what a person or CI runs
+INSTALLERS = ["README.md", "CONTRIBUTING.md", "docs/**/*.md", "tools/*.sh", ".github/**/*.yml", ".github/**/*.yaml"]  # what a person or CI runs
+TOOL = re.compile(r"(?:[A-Z_]+=\S+\s+)*(?:xargs\s+)?(?:pip[\d.]*|pipx|python[\d.]*\s+-m\s+(?:pip|build)|uvx?|hatch|pyproject-build|"
+                  r"npm|npx|pnpm|yarn|bunx?|corepack)(?:\s|$)")
+INSTALLS = [re.compile(form) for form in (  # the commands of a package tool the docs, scripts and workflows may run, whole
+    r"pip install --build-constraint \S*build-constraints\.txt [\w./~-]+",  # the SDK, its build tools pinned and hashed
+    r"uv build --build-constraint build-constraints\.txt --require-hashes( -o \S+)?",
+    r"uv sync( --locked)?( --group \S+| --no-default-groups| --python \S+| \$\w+)*",  # the SDK never built (`package = false`)
+    r"uv run( --locked)?( --group \S+| --no-default-groups| \$\w+)* (python|zizmor) .*",
+    r"uv venv \S+", r"uv pip list .*", r'uv pip install --python \S+ --resolution "\$RESOLUTION" \$groups',  # drift's: no path, no build
+    r"npm ci --ignore-scripts", r"npm pack( --pack-destination \S+)?", r"npm run build", r"npm test", r"npm audit .*", r"npm view .*",
+    r"xargs npm install --no-save --ignore-scripts( < \S+)?", r"npm install /path/to/\S+\.tgz", r"npm publish \S+\.tgz .*")]
 
 
-PYTHON_BUILD = re.compile(r"\b(?:pip3?|uv pip|python3? -m pip|pipx|uv tool|uv) (?:install|wheel|add|download)\b|\b(?:uv|python3? -m) build\b"
-                          r"|\buvx\b|\buv run\b.*\s--with")
-NODE_INSTALL = re.compile(r"\b(?:npm|pnpm|yarn|bun) (?:ci|install|i|it|install-test|add|rebuild|exec|dlx)\b|\b(?:npx|bunx)\b"
-                          r"|^\s*(?:yarn|pnpm|bun)(?:\s+-\S+)*\s*$")
+def commands(path):
+    """(line number, command) for each command a file holds: a script's or a workflow's lines, a page's code blocks and code
+    spans; a line continued read whole, a comment left out, a line split at `&&`, `;`, a pipe or a parenthesis."""
+    lines, code, held = path.read_text().split("\n"), path.suffix != ".md", []
+    for number, line in enumerate(lines, 1):
+        if path.suffix == ".md" and line.lstrip().startswith("```"):
+            code = not code
+            continue
+        if number > 1 and lines[number - 2].endswith("\\"):
+            continue  # read with the line it continues
+        for after in lines[number:]:
+            if not line.endswith("\\"):
+                break
+            line = line[:-1] + " " + after
+        whole = code or line.startswith("    ")  # a code block, fenced or indented
+        for text in [re.split(r"\s#", " " + line)[0]] if whole else re.findall(r"`([^`]+)`", line):
+            text = re.sub(r"^\s*(-\s+)?(run:\s*)?", "", text)
+            held += [(number, " ".join(part.split())) for part in re.split(r"&&|\|\||[;|()]", text) if part.strip()]
+    return held
 
 
 def installs_unpinned(root):
-    """Every install the docs, the scripts or the workflows run that skips a release's pins, command by command: the
-    SDK built (a path or `-e` given to an installer, or a build) but by pip with `build-constraints.txt`, or by `uv build`
-    with it and `--require-hashes`, which enforce its hashes on every build tool; a Node package manager running an
-    install script (but the client's own install of a packed archive on its disk, in its project); uv building the SDK
-    for `uv sync` or `uv run`, which `[tool.uv] package = false` keeps it from."""
+    """Every command of a package tool (pip, uv, npm, and their kin) the docs, the scripts or the workflows run that is
+    not one of `INSTALLS`: an install or a build the release's pins do not hold (the SDK built with its build tools
+    unhashed, a Node package's install script run), or one not yet judged. And uv building the SDK for `uv sync` or
+    `uv run`, which `[tool.uv] package = false` keeps it from."""
     found = [] if tomllib.loads((root / "pyproject.toml").read_text()).get("tool", {}).get("uv", {}).get("package") is False \
         else ["pyproject.toml: uv builds the SDK, its build tools unhashed"]
     for path in sorted({path for pattern in INSTALLERS for path in root.glob(pattern)}):
-        lines = path.read_text().split("\n")
-        for number, line in enumerate(lines, 1):
-            if number > 1 and lines[number - 2].endswith("\\"):
-                continue  # read with the line it continues
-            for after in lines[number:]:  # a command continued, whole
-                if not line.endswith("\\"):
-                    break
-                line = line[:-1] + " " + after
-            for command in re.split(r"&&|\|\||[;|()#]", line):
-                words, built = command.split(), PYTHON_BUILD.search(command)
-                pinned = any(each.endswith("build-constraints.txt") for each in words) and not any("isolation" in each for each in words) and (
-                    re.search(r"(?<!uv )\bpip3? (install|wheel)\b", command) or ("uv build" in command and "--require-hashes" in words))
-                sdk = built and (re.search(r"\bbuild\b|\buvx\b|--with", built[0]) or any(  # a path, an address or an editable install
-                    each.startswith(("-e", "--editable", ".", "/", "~", "git+", "http")) or "/" in each and not each.endswith("build-constraints.txt")
-                    for each in words))
-                node = NODE_INSTALL.search(command) and "--ignore-scripts" not in words and not re.fullmatch(r"\s*npm install [./~]\S*\.tgz\s*", command)
-                if (sdk and not pinned) or node:
-                    found.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
-                    break
-    return found
+        found += [f"{path.relative_to(root)}:{number}: {command}" for number, command in commands(path)
+                  if TOOL.match(command) and not any(form.fullmatch(re.sub(r"^UV_PROJECT_ENVIRONMENT=\S+ ", "", command)) for form in INSTALLS)]  # where uv puts the environment: no other variable
+    return list(dict.fromkeys(found))
 
 
 HOME, MAC, AGENT = "/" + "home/", "/" + "Users/", "." + "claude/"  # in parts, so this file does not name them whole
@@ -403,20 +389,24 @@ class Broken(unittest.TestCase):
 
     def test_an_install_skipping_the_releases_pins_turns_it_red(self):
         self.assertEqual(installs_unpinned(self.root), [])
+        planted = ["pip install ./reflexer-sdk", "pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk",
+                   "cd typescript && npm ci && npm pack  # makes made-up.tgz", "npm install /path/to/made-up.tgz  # in your project",
+                   "uv build --build-constraint build-constraints.txt", "npm install https://made-up.example/made-up.tgz", "pnpm install",
+                   "pip install --build-constraint build-constraints.txt --no-build-isolation .", "pip install \\", "  ./reflexer-sdk",
+                   "PIP_NO_BUILD_ISOLATION=0 pip install --build-constraint build-constraints.txt ./reflexer-sdk", "npm clean-install",
+                   "pip3.12 install ./reflexer-sdk", "hatch build"]
         (self.root / "docs").mkdir()
-        (self.root / "docs" / "made_up.md").write_text(
-            "pip install ./reflexer-sdk\npip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk\n"
-            "cd typescript && npm ci && npm pack  # makes made-up.tgz\nnpm install /path/to/made-up.tgz  # in your project\n"
-            "uv build --build-constraint build-constraints.txt\nnpm install https://made-up.example/made-up.tgz\npnpm install\n"
-            "pip install --build-constraint build-constraints.txt --no-build-isolation .\npip install \\\n  ./reflexer-sdk\n"
-            "npm install ./made-up.tgz made-up\n")
+        (self.root / "docs" / "made_up.md").write_text("Run `pip install .` from a clone.\n\n```sh\n" + "\n".join(planted) + "\n```\n")
         script = self.root / "tools" / "ci.sh"
         lines = len(script.read_text().split("\n"))  # the script's last line, empty, then the two planted
         script.write_text(script.read_text() + 'npx -y -p "node@20" -- npm test\nuv pip install --python made-up -e .\n')
+        (self.root / ".github" / "workflows" / "made_up.yaml").write_text("jobs:\n  made-up:\n    steps:\n      - run: >\n          pip install\n")
         path = self.root / "pyproject.toml"
         path.write_text(path.read_text().replace("package = false", "package = true"))
         self.assertEqual([each.split(": ")[0] for each in installs_unpinned(self.root)],
-                         ["pyproject.toml", *(f"docs/made_up.md:{line}" for line in (1, 3, 5, 6, 7, 8, 9, 11)), f"tools/ci.sh:{lines}", f"tools/ci.sh:{lines + 1}"])
+                         ["pyproject.toml", ".github/workflows/made_up.yaml:5"]
+                         + [f"docs/made_up.md:{line}" for line in (1, 4, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17)]
+                         + [f"tools/ci.sh:{lines}", f"tools/ci.sh:{lines + 1}"])
 
     def test_an_import_outside_the_allowlist_turns_it_red(self):
         self.plant("__init__.py", "import made_up_module")
@@ -609,7 +599,9 @@ class Broken(unittest.TestCase):
                             ("def made_up(body):\n    input(body)", "input"), ("def made_up(body):\n    exit(body)", "exit"),
                             ("def made_up(body):\n    help(body)", "help"), ('def made_up(body):\n    type(license)("made-up", body)()', "license"),
                             ('made_up = vars(__builtins__)["__import__"]("made_up")', "vars"), ('made_up = __import__("made_up")', "__import__"),
-                            ("def made_up(text):\n    return eval(text)", "eval")):
+                            ("def made_up(text):\n    return eval(text)", "eval"),
+                            ('def decoy(open=None):\n    pass\ndef made_up(body):\n    open("made-up.txt", "w").write(body)', "open"),
+                            ('def made_up(body):\n    [0 for input in ()]\n    input(body)', "input")):
             with self.subTest(text):
                 self.setUp()
                 self.plant("__init__.py", text)
@@ -651,6 +643,8 @@ class Broken(unittest.TestCase):
                             ("import random\ndef made_up(random=random):\n    return random", "random handed on as a value"),
                             ("import random\ndef made_up():\n    global random\n    random = random\n    return random._os", "os"),
                             ("import random\nclass MadeUp:\n    random = random\n    run = random._os", "os"),
+                            ("import random\nclass MadeUp:\n    def random(self):\n        pass\n    def run(self, command):\n        return random._os.system(command)", "os"),
+                            ("import random\nclass MadeUp:\n    run = random._os\n    def random(self):\n        pass", "os"),
                             ('from logging.handlers import SocketHandler\nmade_up = SocketHandler("made-up", 1)', "logging.handlers.SocketHandler"),
                             ('import logging.handlers as made\nmade_up = made.SocketHandler("made-up", 1)', "logging.handlers"),
                             ("import logging.config\nmade_up = logging.config.listen(1)", "logging.config"),

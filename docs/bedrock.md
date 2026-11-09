@@ -301,6 +301,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
   - langchain-aws, Pydantic AI, Strands: a hook of yours on the boto3 client, [Advanced](advanced.md#skip-reflexer-for-one-call).
   - The AI SDK: `providerOptions: { reflexer: { passThrough: true } }`.
   - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Pass-Through": "1"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's second argument.
+- A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer), your Bedrock answer given, which never reaches Bedrock: `replay_response` at the top of an `InvokeModel` body; on Anthropic's clients, `extra_body={"replay_response": answer}`.
 - Reflexer's address, if you were given another: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
 
 All of them: [Advanced](advanced.md).

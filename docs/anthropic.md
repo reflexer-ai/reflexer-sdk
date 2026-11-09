@@ -103,6 +103,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 
 - `sample=0.01` (TypeScript `sample: 0.01`): send that share of the calls to reflexer, the rest to Anthropic.
 - `extra_headers={"Reflexer-Pass-Through": "1"}` on a call (TypeScript: `{ headers: { "Reflexer-Pass-Through": "1" } }` as its second argument): that call goes to Anthropic.
+- `extra_body={"replay_response": answer}` on a call (TypeScript: `replay_response: answer` among its parameters): a [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer), your Anthropic answer given, which never reaches Anthropic.
 - `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if you were given another.
 - Your own HTTP client, as `http_client=` (TypeScript `fetch`): reflexer's calls go by it too.
 

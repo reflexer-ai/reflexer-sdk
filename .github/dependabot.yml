@@ -20,3 +20,6 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:  # the types of the oldest Node the package supports (engines), so no newer Node's API type-checks
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]

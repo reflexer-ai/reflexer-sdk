@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "29 6 * * 1"  # weekly, for what moves under a quiet main: new advisories, the full matrices
   workflow_dispatch:
   workflow_call:  # the release runs every check again, from this one definition
 
@@ -57,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # a pull request, the oldest and newest; a push to main, a dispatch and a release, all
+        # a pull request, the oldest and newest; a push to main, the weekly run, a dispatch and a release, all
         node: ${{ github.event_name == 'pull_request' && fromJSON('["20", "24"]') || fromJSON('["20", "22", "24"]') }}
     defaults:
       run:
@@ -106,3 +108,13 @@ jobs:
           uv run --locked --no-default-groups --group test --group bedrock python tests/acceptance/run.py
           uv run --locked --no-default-groups --group test --group frameworks --group bedrock python -m unittest tests.acceptance.test_docs
 
+  every-check:  # the one check main's rule requires, whatever the matrices hold
+    if: always()
+    needs: [check, typescript, python-versions]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: for r in $RESULTS; do [ "$r" = success ] || { echo "a job ended: $r"; exit 1; }; done

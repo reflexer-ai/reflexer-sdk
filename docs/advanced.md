@@ -164,7 +164,7 @@ Hello! How can I help you today?
 
 ## Your own HTTP client
 
-Reflexer's calls go by your HTTP client, with its proxy, TLS settings and hooks: give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
+Reflexer's calls go by your HTTP client, with its proxy and TLS settings; its hooks (httpx's `event_hooks`) see your calls to your provider, never reflexer's, which carry the reflexer key ([Security](../SECURITY.md), P8). In TypeScript your `fetch` carries both. Give it to reflexer's class as before (`http_client=`; Gemini `http_options={"httpx_client": ...}`; TypeScript `fetch`, Gemini `httpOptions: { fetch }`), or to a function as `own=` (TypeScript `{ fetch }`). [Another library](other-libraries.md) shows each.
 
 ## Async
 

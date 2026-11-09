@@ -9,7 +9,7 @@ Reflexer in front of your Bedrock calls, from boto3, aiobotocore, LiteLLM, Anthr
 Not on PyPI or npm yet: install from a clone of this repository ([README](../README.md#install)).
 
 ```sh
-pip install ./reflexer-sdk
+pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk
 ```
 
 ```sh
@@ -286,7 +286,7 @@ Elsewhere: aiobotocore as boto3; Anthropic's Python clients by `with_raw_respons
 - **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to Bedrock. A key revoked less than a day ago still sends calls to Bedrock, with a warning.
 - **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
 - **What leaves your machine:** the call, with your Bedrock key, goes to reflexer, which uses the key to forward the call to Bedrock when it does not answer. The reflexer key goes to reflexer only.
-- **A signed call:** reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library (LiteLLM and the AI SDK: as first signed, while the signature holds; [Known limits](limits.md)), as when reflexer is down. Your AWS secret never leaves your library.
+- **A signed call:** it goes to reflexer as your library signed it: the call with its signature, your access key's id and, with temporary credentials, your session token; never your AWS secret, which only your library's signer reads. Reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library (LiteLLM and the AI SDK: as first signed, while the signature holds; [Known limits](limits.md)), as when reflexer is down.
 - **Mantle:** with a Bedrock API key, through reflexer; signed calls go to Bedrock directly.
 - **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
 

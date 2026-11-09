@@ -1,4 +1,5 @@
-# Pinned actions and the locked tools move only by a pull request, which runs every check; a release waits a week first.
+# Pinned actions and the locked tools move only by a pull request, which every check runs on before its merge
+# (tools/ci.sh, while GitHub's CI runs weekly: CONTRIBUTING.md); a new release waits a week first.
 version: 2
 updates:
   - package-ecosystem: github-actions

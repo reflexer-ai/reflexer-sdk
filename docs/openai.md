@@ -9,7 +9,7 @@ Reflexer in front of your OpenAI calls, Python or TypeScript, by changing one im
 Not on PyPI or npm yet: install from a clone of this repository ([README](../README.md#install)).
 
 ```sh
-pip install ./reflexer-sdk
+pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk
 ```
 
 ```sh

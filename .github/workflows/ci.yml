@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   workflow_call:  # the release runs every check again, from this one definition
 
-concurrency:  # a newer push to a pull request stops the run it replaces
+concurrency:  # a newer push to a pull request stops the run it replaces, once pull requests run this again
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # a pull request runs the oldest and newest; main and a release, all
+        # a pull request, once pull requests run this again, the oldest and newest; the weekly run, a dispatch and a release, all
         node: ${{ github.event_name == 'pull_request' && fromJSON('["20", "24"]') || fromJSON('["20", "22", "24"]') }}
     defaults:
       run:

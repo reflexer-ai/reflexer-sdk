@@ -90,6 +90,21 @@ describe("Reachable", () => {
     }
     assert.equal(reflexer.reachable(new URL("http://api.openai.com/v1")), false);
   });
+
+  // The vectors are tests/test_logic.py's: URL's parser reads an IPv4 address as the system's resolver does (inet_aton)
+  const OTHER_NOTATIONS = ["10.1", "127.1", "167772161", "0x0a000001", "0300.0250.0.1", "0X0A.1", "0"];
+
+  test("a private address in another notation goes straight", () => {
+    const reflexerOf = new reflexer.Reflexer(KEY, WIRE);
+    for (const host of OTHER_NOTATIONS) assert.equal(reflexerOf.route(`https://${host}/v1/chat/completions`, {}), null, host);
+    for (const host of ["134744072", "0x08080808", "8.526344", "10.1.example"]) {
+      assert.notEqual(reflexerOf.route(`https://${host}/v1/chat/completions`, {}), null, host); // public, or a name
+    }
+  });
+
+  test("Broken: a host read as written, not as URL's parser reads it, would be taken", () => {
+    for (const host of OTHER_NOTATIONS.slice(0, -1)) assert.equal(reflexer.reachable({ protocol: "https:", hostname: host }), true, host);
+  });
 });
 
 describe("Construction", () => {

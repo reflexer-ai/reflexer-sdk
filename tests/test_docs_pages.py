@@ -96,10 +96,21 @@ class Pages(unittest.TestCase):
                 with self.subTest(os.path.basename(path)):
                     self.assertIn(f"\n{SECTION}\n", read(path))
 
+    def test_the_bedrock_page_says_what_a_signed_call_carries_to_reflexer(self):
+        self.assertEqual(signed_unsaid(read(os.path.join(DOCS, "bedrock.md"))), [])
+
     def test_every_link_and_anchor_leads_somewhere(self):
         for path in PAGES:
             with self.subTest(os.path.relpath(path, ROOT)):
                 self.assertEqual(link_problems(path, read(path)), [])
+
+
+SIGNED = ("signature", "access key's id", "session token", "AWS secret")  # what P21 says a signed call carries, and does not
+
+
+def signed_unsaid(page):
+    """What the Bedrock page's Behavior section does not name, of what a signed call carries to reflexer (P21)."""
+    return [each for each in SIGNED if each not in section(page)]
 
 
 class Broken(unittest.TestCase):
@@ -109,6 +120,10 @@ class Broken(unittest.TestCase):
         drifted = page.replace("for about a minute at most", "for about two minutes at most", 1)
         self.assertNotEqual(drifted, page)
         self.assertIsNotNone(behavior_problem("openai.md", drifted, source))
+
+    def test_a_signed_calls_carriage_unsaid_turns_it_red(self):
+        page = read(os.path.join(DOCS, "bedrock.md"))
+        self.assertEqual(signed_unsaid(page.replace("session token", "made-up")), ["session token"])
 
     def test_a_line_missing_or_added_turns_it_red(self):
         page, source = read(os.path.join(DOCS, "bedrock.md")), read(TEMPLATE)

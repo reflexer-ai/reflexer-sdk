@@ -35,6 +35,7 @@ WAYS = [(is_async, stream) for is_async in (False, True) for stream in (False, T
 GLOBALS = ("client_session", "aclient_session", "sync_transport")
 CALLBACK_LISTS = ("callbacks", "input_callback", "success_callback", "failure_callback", "_async_success_callback",
                   "_async_failure_callback")  # where LiteLLM files each callback, on its first call after it is set
+CALL_TIMEOUT = 1.5  # seconds, a call's own
 LOOPS, LOOP_OVERLAP = 6, 0.5  # event loops at once, each its thread's, and seconds reflexer holds each answer so they overlap
 LOGGED_WAIT, LOGGED_POLL = 5.0, 0.01  # seconds a callback is waited on, at most
 
@@ -177,8 +178,8 @@ class Line(World):
 
     def test_after_litellms_own_cleanup_async_calls_still_go_through(self):
         """`close_litellm_async_clients`, LiteLLM's own, closes the clients it keeps, the line's among them, in that event
-        loop: the next call makes the line's anew, as LiteLLM's handlers remake theirs. OpenAI's and Azure's, whose
-        cached SDK client it closes, fail in that loop as stock's do, and go through in the next."""
+        loop: the next call makes the line's anew, as LiteLLM's handlers remake theirs; OpenAI's and Azure's session, the
+        line's for the process, stays open; in that loop and the next."""
         reflexer.litellm.through(self.world.key)
         for provider in PROVIDERS:
             given = dict(messages=MESSAGES, num_retries=0, timeout=10) | PROVIDERS[provider]
@@ -186,9 +187,7 @@ class Line(World):
             async def twice():
                 first = (await litellm.acompletion(**given)).choices[0].message.content
                 await litellm.close_litellm_async_clients()
-                if provider in reflexer.litellm.HANDLED:
-                    return first, (await litellm.acompletion(**given)).choices[0].message.content
-                return first, standins.SERVED_TEXT
+                return first, (await litellm.acompletion(**given)).choices[0].message.content
             self.assertEqual(asyncio.run(twice()), (standins.SERVED_TEXT, standins.SERVED_TEXT), provider)
             self.assertEqual(self.ask(provider, True), standins.SERVED_TEXT, provider)  # a loop after it
 
@@ -330,6 +329,28 @@ class Line(World):
         self.assertEqual(asyncio.run(asked()), standins.STRAIGHT_TEXT)  # by the client's own session, as stock
         self.assertEqual(self.world.reflexer.seen, [])
 
+    def test_each_request_of_an_async_call_has_its_timeout(self):
+        """Gemini's context caching makes its own requests by the call's client, one with no timeout of LiteLLM's: each
+        carries the call's, as stock's do. And Bedrock's converse route, which hands a given client none either."""
+        import httpx
+        timeouts, real = [], httpx.AsyncClient.send
+
+        async def send(client, request, **options):
+            if "cachedContents" in request.url.path:
+                timeouts.append(request.extensions.get("timeout", {}).get("read"))
+                return httpx.Response(200, json={"cachedContents": []} if request.method == "GET" else {"name": "cachedContents/made-up"}, request=request)
+            return await real(client, request, **options)
+        cached = [{"role": "system", "content": [{"type": "text", "text": "made up context " * 3000, "cache_control": {"type": "ephemeral"}}]},
+                  {"role": "user", "content": "Hi"}]
+        reflexer.litellm.through(self.world.key)
+        with mock.patch.object(httpx.AsyncClient, "send", send):
+            self.assertEqual(self.ask("gemini", True, messages=cached, timeout=CALL_TIMEOUT), standins.SERVED_TEXT)
+        self.assertEqual(timeouts, [CALL_TIMEOUT, CALL_TIMEOUT])
+        self.world.reflexer.set("stall")
+        began = time.monotonic()
+        self.assertEqual(self.ask("bedrock", True, timeout=CALL_TIMEOUT), standins.STRAIGHT_TEXT)
+        self.assertLess(time.monotonic() - began, 2 * CALL_TIMEOUT + LOOP_OVERLAP)
+
     def test_a_call_given_its_own_client_keeps_it(self):
         reflexer.litellm.through(self.world.key)
         own = AsyncHTTPHandler()
@@ -377,8 +398,9 @@ class Broken(World):
 
         def unused(self, inner, **way):
             real(self, inner, **way)
-            if not callable(inner):  # a sync client: LiteLLM's own transport under it, as with no line
-                self.handle_request = inner._transport.handle_request
+            if not callable(inner):  # a sync client: LiteLLM's own transport under it, as with no line, the line's probe aside
+                ours = self.handle_request
+                self.handle_request = lambda request: ours(request) if request.url.scheme == "reflexer-probe" else inner._transport.handle_request(request)
         with mock.patch.object(reflexer.litellm.Wires, "__init__", unused):
             served = self.served_everywhere()
         self.assertEqual(sorted(way for way, ok in served.items() if not ok), sorted((provider, False, stream) for provider in PROVIDERS for stream in (False, True)))
@@ -420,7 +442,7 @@ class Broken(World):
     def test_our_handler_carried_to_another_providers_fallback_turns_it_red(self):
         async def kept(self, kwargs, call_type):  # ours given, never taken back
             if call_type == "acompletion" and kwargs.get("client") is None and reflexer.litellm.provider(kwargs) in reflexer.litellm.HANDLED:
-                kwargs["client"] = self.handler
+                kwargs["client"] = reflexer.litellm.Handler(transport=self.transport)
             return kwargs
         with mock.patch.object(reflexer.litellm.Hook, "async_pre_call_deployment_hook", kept):
             reflexer.litellm.through(self.world.key)

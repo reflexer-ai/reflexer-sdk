@@ -22,9 +22,8 @@ LiteLLM signs it before any hook of its own runs, and none signs it anew, so the
 Reflexer's leg is bounded, to its answer's head, by what is left of the signature's window, by this machine's clock, the
 one LiteLLM signs by: so the fallback reaches Bedrock while its signature holds.
 
-A call's timeout: LiteLLM's Bedrock converse handler, not streamed, posts by a given client with no `timeout`, where stock
-builds its client with it; so our handler takes it from the call's own parameters, which LiteLLM hands `post` with its
-`logging_obj`. A release that moves them fails the call, never drops its timeout.
+A call's timeout: LiteLLM posts by a given client with no `timeout` on some routes (Bedrock's converse, Gemini's context
+caching), where stock builds its client with it; so the handler the hook gives each call is made with the call's own.
 """
 import asyncio, contextvars, copy, datetime, functools, inspect, re, threading, time
 import httpx, litellm
@@ -150,6 +149,8 @@ class Wires:
         return next((line for line, host in lines if at(request.url.host, host) and re.search(line.reflexer.calls, request.url.path)), None)
 
     def handle_request(self, request):
+        if request.url.scheme == PROBE.partition(":")[0]:  # the line's own, as it runs: answered here
+            return httpx.Response(204)
         lines, send = self.now()
         line = self.line_of(request, lines)
         return line.handle_request(request) if line else send(straight(request, request.headers, None))
@@ -166,16 +167,9 @@ class Wires:
         pass
 
 
-class Kept(httpx.Client):
-    """The session the line gives LiteLLM for the openai SDK, when the client gave none: one for the process, as LiteLLM
-    takes it, so a close of an SDK client over it, LiteLLM's cleanup's, leaves it open, for the next."""
-
-    def close(self):
-        pass
-
-
-class AKept(httpx.AsyncClient):
-    """`Kept`, async."""
+class Kept(httpx.AsyncClient):
+    """The session the line gives LiteLLM for the openai SDK's async calls, when the client gave none: one for the process,
+    as LiteLLM takes it, so a close of an SDK client over it, LiteLLM's cleanup's, leaves it open, for the next."""
 
     async def aclose(self):
         pass
@@ -191,33 +185,24 @@ def split(own, way):
                      max_redirects=own.max_redirects, base_url=own.base_url)
 
 
-def asked(timeout, logging_obj):
-    """The call's own timeout: the one given to `post`, else the call's, as stock would have built its client with."""
-    if timeout is not None or logging_obj is None:
-        return timeout
-    given = logging_obj.model_call_details["litellm_params"]["timeout"]
-    return httpx.Timeout(given) if isinstance(given, (int, float)) else given
-
-
 class Handler(AsyncHTTPHandler):
-    """LiteLLM's own async handler, made with our transport."""
-
-    async def post(self, *args, timeout=None, logging_obj=None, **kwargs):
-        return await super().post(*args, timeout=asked(timeout, logging_obj), logging_obj=logging_obj, **kwargs)
+    """LiteLLM's own async handler, made with our transport, for one call: by its timeout, as stock makes its own."""
 
 
 class Hook(CustomLogger):
-    """Gives each async completion of a provider on LiteLLM's own handlers our handler, as its `client`, unless it has one."""
+    """Gives each async completion of a provider on LiteLLM's own handlers a handler of ours, as its `client`, unless it
+    has one: the only way into those calls."""
 
-    def __init__(self, handler):
+    def __init__(self, transport):
         super().__init__()
-        self.handler = handler
+        self.transport = transport
 
     async def async_pre_call_deployment_hook(self, kwargs, call_type):
         """Each call LiteLLM makes of `acompletion`, its own fallbacks to another provider included, which carry the first
         call's arguments: ours goes only where it is taken; a call given the client's own aiohttp session keeps it."""
-        if call_type == "acompletion" and kwargs.get("client") in (None, self.handler) and kwargs.get("shared_session") is None:
-            kwargs["client"] = self.handler if provider(kwargs) in HANDLED else None
+        if call_type == "acompletion" and isinstance(kwargs.get("client"), (type(None), Handler)) and kwargs.get("shared_session") is None:
+            timeout = kwargs.get("timeout") or kwargs.get("request_timeout") or litellm.request_timeout
+            kwargs["client"] = Handler(transport=self.transport, timeout=timeout) if provider(kwargs) in HANDLED else None
         return kwargs
 
 
@@ -237,9 +222,8 @@ PROBE = "reflexer-probe://line/"  # a scheme no HTTP transport or proxy takes: a
 
 def sends_by_it():
     """Whether an HTTP client LiteLLM's handlers make sends by `litellm.sync_transport`, which it reads but does not
-    document: tried as the line runs, on a probe answering here, so a release that drops it fails the line, never sends
+    document: tried as the line runs, on a probe ours answers here, so a release that drops it fails the line, never sends
     a call straight unseen."""
-    litellm.sync_transport = httpx.MockTransport(lambda request: httpx.Response(204))
     try:
         return HTTPHandler(client=httpx.Client()).create_client().get(PROBE).status_code == 204
     except httpx.HTTPError:
@@ -257,18 +241,17 @@ def through(reflexer_key, base=BASE, sample=1.0):
         sync = Wires(HTTPHandler(client=httpx.Client()).create_client(), **way)  # a handler holding none over the client's
         # own transport, whose finalizer would close it
         aio = Wires(lambda: AsyncHTTPHandler().create_client(None, None), **way)  # LiteLLM's own, one per event loop
-        sync.reflexer_own = own["sync_transport"]
+        sync.reflexer_own, litellm.sync_transport = own["sync_transport"], sync
         if not sends_by_it():
             raise RuntimeError("LiteLLM does not send its handlers' calls by `litellm.sync_transport`: a release that dropped it, or `force_ipv4`")
-        litellm.sync_transport = sync
     except BaseException:
         litellm.sync_transport = was
         raise
-    for name, kind, transport in (("client_session", Kept, sync), ("aclient_session", AKept, aio)):
+    for name, kind, transport in (("client_session", httpx.Client, sync), ("aclient_session", Kept, aio)):
         outer = kind(transport=transport, follow_redirects=True) if own[name] is None else split(own[name], way)  # as LiteLLM's own
         outer.reflexer_own = own[name]
         setattr(litellm, name, outer)
     litellm.input_callback[:] = [each for each in litellm.input_callback if not isinstance(each, Hook)]  # where LiteLLM filed the last
-    litellm.callbacks[:] = [each for each in litellm.callbacks if not isinstance(each, Hook)] + [Hook(Handler(transport=aio))]
+    litellm.callbacks[:] = [each for each in litellm.callbacks if not isinstance(each, Hook)] + [Hook(aio)]
     litellm.in_memory_llm_clients_cache.flush_cache()  # the clients LiteLLM made before, kept for reuse: made anew, by the line
     litellm.module_level_client = HTTPHandler(timeout=litellm.request_timeout)  # its one kept apart, made anew as LiteLLM makes it

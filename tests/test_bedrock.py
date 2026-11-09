@@ -961,18 +961,6 @@ class Promises(Case):
         with mock.patch.object(reflexer.aiobotocore, "get_referents", lambda held: []), self.assertRaises(TypeError):
             asyncio.run(made())
 
-    def test_litellm_a_timeout_moved_fails_the_call_never_drops_it(self):
-        """LiteLLM's converse route hands `post` no timeout: the line reads the call's own, and a release that moves it
-        fails the call loudly, never sends it with LiteLLM's default of minutes."""
-        given = types.SimpleNamespace(model_call_details={"litellm_params": {"timeout": 1.5}})
-        self.assertEqual(reflexer.litellm.asked(None, given).read, 1.5)
-        self.assertEqual(reflexer.litellm.asked(2.0, given), 2.0)
-        for moved in (types.SimpleNamespace(), types.SimpleNamespace(model_call_details={}),
-                      types.SimpleNamespace(model_call_details={"litellm_params": {}})):
-            with self.subTest(moved=moved), self.assertRaises((AttributeError, KeyError)):
-                reflexer.litellm.asked(None, moved)
-
-
 class Broken(Case):
     """Each check above, red with one fault planted in the SDK."""
 

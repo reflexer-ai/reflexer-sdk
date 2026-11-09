@@ -429,6 +429,13 @@ def signed_over_what_its_handlers_set(real):
     return taken
 
 
+class Untimed(reflexer.litellm.Handler):
+    """LiteLLM's handler, as the line gives one to an async call, made without the call's timeout."""
+
+    def __init__(self, *args, timeout=None, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
 async def passed_on(self, kwargs, call_type):
     """LiteLLM's callback, giving each call nothing: its async calls on LiteLLM's own handlers made as stock makes them."""
     return kwargs
@@ -437,7 +444,7 @@ async def passed_on(self, kwargs, call_type):
 def carrying_the_key(real):
     """LiteLLM's callback, carrying the key to our handler in the call's own metadata, which every callback is handed."""
     async def carried(self, kwargs, call_type):
-        key = self.handler.client._transport.reflexers[0][0].key
+        key = self.transport.reflexers[0][0].key
         return await real(self, kwargs | {"metadata": {"reflexer": key}}, call_type)
     return carried
 
@@ -531,7 +538,7 @@ FAULTS = {
                                      on_bedrock("aagain_if_refused", lambda send: send())()),
     "bedrock_skip_not_taken": on_bedrock("skip_taken", lambda event_name, kwargs, before: None),
     "bedrock_no_replay_guard": lambda: (setattr(bedrock, "is_replay", lambda body: False), setattr(transport, "is_replay", lambda body: False)),
-    "bedrock_timeout_not_read": setter(reflexer.litellm, "asked", lambda timeout, logging_obj: timeout),
+    "bedrock_timeout_not_read": setter(reflexer.litellm, "Handler", Untimed),
     "bedrock_handlers_answer_ignored": on_bedrock("answered", lambda responses: False),
     "bedrock_copy_is_stock": lambda: [setattr(cls, name, getattr(cls.__mro__[2], "copy")) for cls in
                                       (reflexer.anthropic_bedrock.AnthropicBedrock, reflexer.anthropic_bedrock.AnthropicBedrockMantle)

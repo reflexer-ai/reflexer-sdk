@@ -6,7 +6,8 @@ none is ours.
 
 Where can my key go? `Reflexer.route`, then `transport.Through`. What happens when reflexer fails? `transport.Through`.
 """
-import base64, hashlib, importlib.metadata, ipaddress, json, logging, random, re, time
+import base64, hashlib, ipaddress, json, logging, random, re, time
+from importlib.metadata import version as installed  # its one function the SDK reads: no other loads a module
 from urllib.parse import urlsplit
 
 BASE = "https://api.reflexer.ai"
@@ -189,6 +190,6 @@ def checksum(text):
 
 def supported(package, majors):
     """A provider file runs only on the majors of its SDK it was tested on: a new major raises at import, never misroutes."""
-    version = importlib.metadata.version(package)
+    version = installed(package)
     if int(version.split(".")[0]) not in majors:
         raise ImportError(f"reflexer is tested on {package} {majors}, not {version}")

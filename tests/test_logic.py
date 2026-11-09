@@ -9,6 +9,9 @@ from reflexer import ANSWER, ASKED, FAILED, GRACE
 secret = "rfx1_aaaaakq_" + "a" * 52
 KEY = f"{secret}_{reflexer.checksum(secret)}"
 WIRE = {"reflexer_path": "/openai", "provider": "https://api.openai.com", "calls": r"/v1/(chat/completions|responses)$"}
+ROUTED = WIRE | {"routers": {  # as reflexer/openai.py's: a router with a route of its own at reflexer, by its host
+    "openrouter.ai":        {"reflexer_path": "/openrouter", "provider": "https://openrouter.ai", "calls": r"/api/v1/chat/completions$"},
+    "ai-gateway.vercel.sh": {"reflexer_path": "/vercel", "provider": "https://ai-gateway.vercel.sh", "calls": r"/v1/chat/completions$"}}}
 CHAT = "https://api.openai.com/v1/chat/completions"
 OURS = {"reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "content-type": "application/json"}  # as the HTTP library gives them
 LONG = 10**6  # seconds: past every wait
@@ -42,8 +45,21 @@ class Route(unittest.TestCase):
         self.assertEqual(headers, {"authorization": "Bearer sk-made-up", "reflexer-key": KEY})
 
     def test_a_base_of_the_clients_own_is_named_as_the_upstream(self):
-        _, headers = self.reflexer.route("https://openrouter.ai/api/v1/chat/completions", {})
-        self.assertEqual(headers["reflexer-upstream"], "https://openrouter.ai/api")
+        _, headers = self.reflexer.route("https://api.groq.com/openai/v1/chat/completions", {})
+        self.assertEqual(headers["reflexer-upstream"], "https://api.groq.com/openai")
+
+    def test_a_router_with_a_route_of_its_own_takes_it_for_the_calls_it_serves(self):
+        """Reflexer reads a router's own body keys only on its route; its default base names no upstream."""
+        way = reflexer.Reflexer(KEY, ROUTED)
+        for url, to, upstream in (
+                ("https://openrouter.ai/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", None),
+                ("https://ai-gateway.vercel.sh/v1/chat/completions", "/vercel/v1/chat/completions", None),
+                ("https://openrouter.ai:8443/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", "https://openrouter.ai:8443"),
+                ("https://openrouter.ai/api/v1/responses", "/openai/v1/responses", "https://openrouter.ai/api"),  # not its route: as before
+                ("https://ai-gateway.vercel.sh/v1/responses", "/openai/v1/responses", "https://ai-gateway.vercel.sh")):
+            made, headers = way.route(url, {})
+            self.assertEqual((made, headers.get("reflexer-upstream")), (f"https://api.reflexer.ai{to}", upstream), url)
+        self.assertIsNone(way.route("https://openrouter.ai/api/v1/models", {}))
 
     def test_straight(self):
         self.assertIsNone(self.reflexer.route("https://api.openai.com/v1/models", {}))

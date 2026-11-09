@@ -12,9 +12,10 @@ export const OURS = "reflexer-"; // what starts each header of ours: none leaves
 export const NAMESPACE = "reflexer-namespace"; // the one header of ours a client may give reflexer
 
 /**
- * @typedef {{ reflexerPath: string, provider?: string, calls: RegExp }} Wire
+ * @typedef {{ reflexerPath: string, provider?: string, calls: RegExp, routers?: (Wire & { host: string })[] }} Wire
  * One wire format: `reflexerPath`, reflexer's path for it; `provider`, the provider's own address, to which no upstream
- * is named; `calls`, the path of the calls that return a model's message, the only ones that go to reflexer.
+ * is named; `calls`, the path of the calls that return a model's message, the only ones that go to reflexer; `routers`,
+ * optional, each router's wire, by its `host`, for a router with a route of its own at reflexer, taken for the calls it lists.
  */
 
 /** One client's way to reflexer, for one wire format. */
@@ -51,16 +52,18 @@ export class Reflexer {
     const turnedAway = Math.random() >= this.sample || this.breaker.isOpen(); // a share of calls, no secret
     if (Object.hasOwn(headers, PASS_THROUGH) || (turnedAway && !replay)) return null;
     const address = new URL(url);
-    const call = this.wire.calls.exec(address.pathname);
+    const router = this.wire.routers?.find((one) => one.host === address.hostname);
+    const wire = router?.calls.test(address.pathname) ? router : this.wire;
+    const call = wire.calls.exec(address.pathname);
     if (!call || !reachable(address)) return null;
     // `host` holds no user or password of the URL's: none goes to reflexer
     const upstream = `${address.protocol}//${address.host}${address.pathname.slice(0, call.index)}`; // its provider, a router, a runner
     /** @type {Record<string, string>} */
     const ours = { "reflexer-key": this.key };
-    if (upstream !== this.wire.provider) ours["reflexer-upstream"] = upstream;
+    if (upstream !== wire.provider) ours["reflexer-upstream"] = upstream;
     const theirs = Object.entries(headers).filter(([name]) =>
       name !== "host" && (name === NAMESPACE || !name.startsWith(OURS))); // no header of a client's steers us
-    const to = `${this.base}${this.wire.reflexerPath}${address.pathname.slice(call.index)}${address.search}`;
+    const to = `${this.base}${wire.reflexerPath}${address.pathname.slice(call.index)}${address.search}`;
     return [to, { ...Object.fromEntries(theirs), ...ours }];
   }
 

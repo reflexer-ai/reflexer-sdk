@@ -13,7 +13,11 @@ export * from "./logic.js";
 
 /** The wire formats: each provider's call paths, and reflexer's path for them. */
 export const WIRES = {
-  openai: { reflexerPath: "/openai", provider: "https://api.openai.com", calls: /\/v1\/(chat\/completions|responses)$/ },
+  openai: { reflexerPath: "/openai", provider: "https://api.openai.com", calls: /\/v1\/(chat\/completions|responses)$/,
+    routers: [ // a router's own body keys are served on its own route; its other calls go as any base's
+      { host: "openrouter.ai", reflexerPath: "/openrouter", provider: "https://openrouter.ai", calls: /\/api\/v1\/chat\/completions$/ },
+      { host: "ai-gateway.vercel.sh", reflexerPath: "/vercel", provider: "https://ai-gateway.vercel.sh", calls: /\/v1\/chat\/completions$/ },
+    ] },
   azure: { reflexerPath: "/azure", calls: /\/openai\/((deployments\/[^/]+|v1)\/(chat\/completions|responses)|responses)$/ }, // its own host, always named; the last, Azure's dated Responses
   anthropic: { reflexerPath: "/anthropic", provider: "https://api.anthropic.com", calls: /\/v1\/messages$/ },
   gemini: { reflexerPath: "/gemini", provider: "https://generativelanguage.googleapis.com",

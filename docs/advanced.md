@@ -107,7 +107,7 @@ LangChain.js on Bedrock: the same header, set by a middleware of yours on the AW
 
 ## A dry run: give reflexer your provider's answer
 
-A call whose body carries your provider's answer, in the field `replay_response` at its top, is a dry run: reflexer answers, or compares its answer with yours, as if your provider had answered with it, and your provider is never called. Calls carry no such field by default. A dry run always goes to reflexer, whatever the share of calls sent there; if reflexer cannot take it (down, busy, failing), the call raises `ReplayNotTaken` instead of going to your provider. The reply is reflexer's, as on any call it answers.
+A call whose body carries your provider's answer, in the field `replay_response` at its top, is a dry run: reflexer answers, or compares its answer with yours, as if your provider had answered with it, and your provider is never called. Calls carry no such field by default. A dry run goes to reflexer whatever the share of calls sent there. If reflexer cannot take it (down, busy, failing), or the call cannot go to reflexer (it carries the skip header, is no call for a model's message, or its address is one reflexer cannot reach: `http`, local, private), the call fails instead of going to your provider: with `ReplayNotTaken`, or with your SDK's connection error caused by it, as your SDK reports its HTTP client's failures. The reply is reflexer's, as on any call it answers.
 
 <!-- example: served python -->
 ```python

@@ -47,7 +47,7 @@ cd reflexer-sdk/typescript && npm ci --ignore-scripts && npm pack  # makes refle
 npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz  # in your project
 ```
 
-Then set `REFLEXER_KEY` to the key you got at onboarding.
+Then set `REFLEXER_KEY` to the key you got at onboarding. No key yet? Contact us at hello@reflexer.ai.
 
 ## Pick your library
 

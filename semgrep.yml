@@ -162,8 +162,8 @@ rules:
               - metavariable-regex:
                   metavariable: $TEXT
                   regex: (?is)^.*?(?:[-_]k(?:ey?)?(?![a-z])|\\(?:x[46]b|u00[46]b|u\{0*[46]b\}))
-      - pattern-not-inside: throw new $ERROR("...")  # an error's message, to the client
-      - pattern-not-inside: throw new $ERROR(`...${base}`)  # checkedBase's, which names the address refused
+      - pattern-not-inside: throw new Error("...")  # an error's message, to the client
+      - pattern-not-inside: throw new Error(`...${base}`)  # checkedBase's, which names the address refused
       - pattern-not-inside: |
           class Reflexer {
             ...

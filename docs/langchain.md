@@ -9,7 +9,7 @@ Reflexer in front of LangChain's OpenAI and Gemini chat models in Python, and it
 Not on PyPI or npm yet: install from a clone of this repository ([README](../README.md#install)).
 
 ```sh
-pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk
+pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk  # pip 26.1 or later
 ```
 
 ```sh

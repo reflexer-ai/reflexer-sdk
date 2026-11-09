@@ -4,7 +4,7 @@ For looking a name up. Every public name of the SDK takes the same few arguments
 
 ## The arguments
 
-**`reflexer_key`** (Python) · **`reflexerKey`** (TypeScript): `str`, required. Your reflexer key, `rfx1_...`, from onboarding. Read it from the environment; never commit it. A key not of that form raises `ValueError` (TypeScript: `Error`) when the client is made. The functions take it as their first argument; `through` as its second.
+**`reflexer_key`** (Python) · **`reflexerKey`** (TypeScript): `str`, required. Your reflexer key, `rfx1_...`, from onboarding; to get one, contact us at hello@reflexer.ai. Read it from the environment; never commit it. A key not of that form raises `ValueError` (TypeScript: `Error`) when the client is made. The functions take it as their first argument; `through` as its second.
 
 **`reflexer_base`** · **`reflexerBase`** · **`base`**: `str`, optional, default `"https://api.reflexer.ai"`. Reflexer's address. `https` only. `base` is the name on functions (Python's `http_client`, `client_args`, `through`, `litellm.client`; TypeScript's `fetch` functions and `bedrock.wrap`).
 

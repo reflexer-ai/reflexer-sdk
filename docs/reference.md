@@ -127,7 +127,8 @@ Hello! How can I help you today?
 ## What reflexer adds to a response
 
 - A reply from reflexer has a `model` ending in `-reflexer`, and `usage.cost` holds its price in USD, also in a stream's usage. Gemini's and Bedrock Converse's have no such fields: Gemini's `model_version` (TypeScript `modelVersion`) ends in `-reflexer`; Converse's names no model, so read the header below.
-- Headers, on every response from reflexer: `Reflexer-Answered-By`, `reflexer`, or `provider` when reflexer forwarded the call; `Reflexer-Cost`, the price in nano USD; `Reflexer-Request-Id`, the call's id. A call that went to your provider directly has none.
+- Headers, on every response from reflexer: `Reflexer-Request-Id`, the call's id; `Reflexer-Cost`, the price in nano USD, 0 unless reflexer answered. `Reflexer-Answered-By`: `reflexer` when reflexer answered, `provider` on what your provider sent through reflexer; absent on errors and refusals reflexer returns itself, a 502 when it cannot reach your provider included, and on a dry run's reply that is your own answer. A call that went to your provider directly has none of them.
+- `Reflexer-Reason`, off by default, for debugging; reflexer turns it on for some accounts: why reflexer answered or not, such as `served`, `not_seen_repeating` or `low_confidence`.
 
 ## Versions
 

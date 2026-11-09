@@ -135,6 +135,13 @@ describe("Construction", () => {
     new reflexer.Reflexer(KEY, WIRE, { base: "http://127.0.0.1:8000" }); // a stand-in on this machine
   });
 
+  test("a sample not a number from 0 to 1 throws", () => {
+    for (const sample of [-0.1, 1.5, NaN, "0.5", null, true]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { sample: /** @type {any} */ (sample) }), { message: "sample must be a number from 0 to 1: the share of calls sent to reflexer" });
+    }
+    for (const sample of [0, 0.5, 1]) new reflexer.Reflexer(KEY, WIRE, { sample });
+  });
+
   test("a typo in a wire throws when the client is made", () => {
     assert.throws(() => new reflexer.Reflexer(KEY, /** @type {any} */ ({ provider: "https://made-up.example" })), TypeError);
   });

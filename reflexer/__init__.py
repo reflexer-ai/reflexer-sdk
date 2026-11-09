@@ -26,6 +26,8 @@ class Reflexer:
 
     def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic):
         check(key)
+        if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
+            raise ValueError("sample must be a number from 0 to 1: the share of calls sent to reflexer")
         self.key, self.base, self.sample = key, checked_base(base), sample
         self.way = way(wire)  # a typo in a provider file raises here, as the client is made, never on a call
         self.routers = {host: way(router) for host, router in wire.get("routers", {}).items()}

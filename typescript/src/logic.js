@@ -30,6 +30,9 @@ export class Reflexer {
     if (typeof wire.reflexerPath !== "string" || !(wire.calls instanceof RegExp)) {
       throw new TypeError("a wire names its reflexerPath and its calls");
     }
+    if (typeof sample !== "number" || !(sample >= 0 && sample <= 1)) { // NaN is neither
+      throw new Error("sample must be a number from 0 to 1: the share of calls sent to reflexer");
+    }
     this.key = key;
     this.base = checkedBase(base);
     this.sample = sample;

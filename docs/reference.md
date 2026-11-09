@@ -117,6 +117,7 @@ Hello! How can I help you today?
 - A malformed key: `ValueError` (TypeScript `Error`), when the client is made. [When reflexer fails](when-reflexer-fails.md#your-reflexer-key-is-malformed).
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
 - A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
+- A `sample` that is not a number from 0 to 1: `ValueError` (TypeScript `Error`), when the client is made.
 - `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class, or on an aiohttp release reflexer's line cannot work with: `TypeError`.
 - TypeScript `GoogleGenAI`, when your headers replace both `User-Agent` and `x-goog-api-client`, so its calls name no `@google/genai` version: `Error`, at the call.
 - A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) reflexer cannot take: `reflexer.ReplayNotTaken` (TypeScript: `ReplayNotTaken`, from `@reflexer-ai/sdk`), or your SDK's connection error caused by it.

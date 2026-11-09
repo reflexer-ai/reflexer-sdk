@@ -25,6 +25,8 @@ class Reflexer:
 
     def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic):
         check(key)
+        if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
+            raise ValueError("sample must be a number from 0 to 1: the share of calls sent to reflexer")
         self.key, self.base, self.sample = key, checked_base(base), sample
         self.reflexer_path, self.provider, self.calls = wire["reflexer_path"], wire.get("provider"), wire["calls"]
         self.breaker = Breaker(clock)

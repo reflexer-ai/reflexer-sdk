@@ -331,6 +331,16 @@ class Line(World):
         self.assertEqual(asyncio.run(asked()), standins.STRAIGHT_TEXT)  # by the client's own session, as stock
         self.assertEqual(self.world.reflexer.seen, [])
 
+    def test_an_openai_call_given_its_own_aiohttp_session_goes_by_the_lines(self):
+        """LiteLLM takes `aclient_session`, the line's, before a call's `shared_session`: served, by ours (Known limits)."""
+        import aiohttp
+        reflexer.litellm.through(self.world.key)
+
+        async def asked():
+            async with aiohttp.ClientSession() as own:
+                return (await litellm.acompletion(messages=MESSAGES, num_retries=0, shared_session=own, **PROVIDERS["openai"])).choices[0].message.content
+        self.assertEqual(asyncio.run(asked()), standins.SERVED_TEXT)
+
     def test_each_request_of_an_async_call_has_its_timeout(self):
         """Gemini's context caching makes its own requests by the call's client, one with no timeout of LiteLLM's: each
         carries the call's, as stock's do. And Bedrock's converse route, which hands a given client none either."""

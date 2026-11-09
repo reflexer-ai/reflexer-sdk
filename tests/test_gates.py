@@ -252,7 +252,9 @@ def key_header_named(root):
     for path in sorted((root / "reflexer").glob("*.py")):
         tree = ast.parse(path.read_text())
         spared, own = set(), {each.id for each in ast.walk(tree) if isinstance(each, ast.Name) and not isinstance(each.ctx, ast.Load)} | {
-            each.name for each in ast.walk(tree) if isinstance(each, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))} | {
+            each.name for each in ast.walk(tree) if isinstance(each, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler))} | {
+            each.arg for each in ast.walk(tree) if isinstance(each, ast.arg)} | {
+            getattr(each, "name", None) or getattr(each, "rest", None) for each in ast.walk(tree) if isinstance(each, (ast.MatchAs, ast.MatchStar, ast.MatchMapping))} | {
             (each.asname or each.name).split(".")[0] for each in ast.walk(tree) if isinstance(each, ast.alias)}
         for node in ast.walk(tree):
             body = getattr(node, "body", None)
@@ -279,14 +281,17 @@ def key_header_named(root):
 
 INSTALLERS = ["README.md", "CONTRIBUTING.md", "docs/**/*.md", "tests/**/*.md", "typescript/*.md", "tools/*.sh", ".github/**/*.yml", ".github/**/*.yaml"]  # what a person or CI runs
 SETTINGS = [".npmrc", "typescript/.npmrc", ".yarnrc", ".yarnrc.yml", "uv.toml", "pip.conf", "pip.ini"]  # a package tool's settings, none of which the repo holds
-TOOL = re.compile(r"(?:^|[\s/])(?:pip[\d.]*|pipx|uvx?|hatch|pyproject-build|poetry|pdm|npm|npx|pnpm|yarn|bunx?|corepack)(?=\s|$)|(?:^|\s)-m\s+(?:pip|build)\b")
+TOOL = re.compile(r"(?:^|[\s/\"'`])(?:uv pip|pip[\d.]*|pipx|uvx?|hatch|hatchling|flit|pyproject-build|poetry|pdm|npm|npx|pnpm|yarn|bunx?|corepack)(?=[\s\"'`]|$)"
+                  r"|(?:^|[\s\"'`])-m\s+(?:pip|build|hatchling|flit)\b|\bsetup\.py\b")
+SETTING = re.compile(r"\b(?!UV_PROJECT_ENVIRONMENT\b)(?:UV|PIP|NPM_CONFIG|npm_config|YARN)_\w+")  # a package tool's setting, however set
 INSTALLS = [re.compile(form) for form in (  # the commands of a package tool the docs, scripts and workflows may run, whole, their variables read
     r"pip install --build-constraint \S*build-constraints\.txt [./~][\w./~-]*",  # the SDK, from a path, its build tools pinned and hashed
     r"uv build --build-constraint build-constraints\.txt --require-hashes( -o \S+)?",
     r"uv sync( --locked)?( --group \S+| --no-default-groups| --python \S+)*",  # the SDK never built (`package = false`)
     r"uv run( --locked)?( --group \S+| --no-default-groups)* (python|zizmor) .*",
     r"uv venv \S+", r"uv pip list .*", r'uv pip install --python \S+ --resolution "\$RESOLUTION"( --group \S+)*',  # drift's: no path, no build
-    r"npm ci --ignore-scripts", r"npm pack( --pack-destination \S+)?", r"npm run build", r"npm test", r"npm audit .*", r"npm view .*",
+    r"npm ci --ignore-scripts", r"npm pack( --pack-destination \S+)?", r"npm run build", r"npm test", r"npm audit --audit-level=\w+",
+    r"npm audit signatures", r'npm view "\$name(@\$major)?" version( --json)?',
     r"xargs npm install --no-save --ignore-scripts( < \S+)?", r"npm install /path/to/\S+\.tgz", r"npm publish \S+\.tgz .*")]
 
 
@@ -302,7 +307,7 @@ def lines_run(path):
                 break
             line = line[:-1] + " " + after
         if path.suffix == ".md":
-            if re.match(r"\s*(```|~~~)", line):
+            if re.match(r"\s*(```|~~~)", line) and (not fence or line.strip().startswith(fence)):
                 fence = None if fence else line.strip()[:3]
             elif fence or line.startswith("    "):
                 held.append((number, line))
@@ -342,7 +347,7 @@ def installs_unpinned(root):
     found += [f"{name}: a package tool's settings" for name in SETTINGS if (root / name).exists()]
     for path in sorted({path for pattern in INSTALLERS for path in root.glob(pattern)}):
         text = path.read_text()
-        found += [f"{path.relative_to(root)}: {name}, a package tool's setting" for name in re.findall(r"^\s*((?:UV|PIP|NPM_CONFIG|npm_config|YARN)_\w*)\s*:", text, re.M)]
+        found += [f"{path.relative_to(root)}: {name}, a package tool's setting" for name in SETTING.findall(text)]  # in an env:, an export, wherever
         values = {}
         for name, double, single, bare in re.findall(r"""(?:^|\s)([A-Za-z_]\w*)=(?:"([^"]*)"|'([^']*)'|(\S*))""", text, re.M):
             values[name] = " ".join(filter(None, [values.get(name), double or single or bare]))
@@ -351,7 +356,7 @@ def installs_unpinned(root):
             for command in re.split(r"&&|\|\||[;|()]", re.split(r"(?:^|\s)#", line)[0]):
                 command = " ".join(command.split())
                 whole = re.sub(r"^UV_PROJECT_ENVIRONMENT=\S+ ", "", " ".join(expanded(command, values).split()))  # where uv puts the environment: no other variable
-                if TOOL.search(command) and not any(form.fullmatch(whole) for form in INSTALLS):
+                if TOOL.search(command) and (not any(form.fullmatch(whole) for form in INSTALLS) or len(TOOL.findall(whole)) > 1):  # one tool, whole
                     found.append(f"{path.relative_to(root)}:{number}: {command}")
     return list(dict.fromkeys(found))
 
@@ -467,12 +472,13 @@ class Broken(unittest.TestCase):
                           'MADE_UP="--with ."\nuv run --locked $MADE_UP python made_up.py\n')
         (self.root / "typescript" / ".npmrc").write_text("ignore-scripts=false\n")
         (self.root / ".github" / "workflows" / "made_up.yaml").write_text(
-            "jobs:\n  made-up:\n    steps:\n      - run: >\n          pip install\n    env:\n      UV_NO_BUILD_ISOLATION: 1\n")
+            "jobs:\n  made-up:\n    steps:\n      - run: >\n          pip install\n    env:\n      UV_NO_BUILD_ISOLATION: 1\n"
+            "      - run: sh -c \"pip install ./reflexer-sdk\"\n      - run: npm audit fix\n      - run: uv run --locked python -m pip install .\n")
         path = self.root / "pyproject.toml"
         path.write_text(path.read_text().replace("package = false", "package = true"))
         self.assertEqual([each.split(": ")[0] for each in installs_unpinned(self.root)],
-                         ["pyproject.toml", "typescript/.npmrc", ".github/workflows/made_up.yaml", ".github/workflows/made_up.yaml:5"]
-                         + [f"docs/made_up.md:{line}" for line in (1, 4, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19)]
+                         ["pyproject.toml", "typescript/.npmrc", ".github/workflows/made_up.yaml", *(f".github/workflows/made_up.yaml:{line}" for line in (5, 8, 9, 10))]
+                         + ["docs/made_up.md"] + [f"docs/made_up.md:{line}" for line in (1, 4, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19)]
                          + [f"tools/ci.sh:{line}" for line in (lines, lines + 1, lines + 3)])
 
     def test_an_import_outside_the_allowlist_turns_it_red(self):
@@ -757,6 +763,7 @@ class Broken(unittest.TestCase):
                      'def made_up(headers, key):\n    raise ValueError(f"{headers.update({OURS + \'key\': key})}")',
                      'def made_up(headers, key):\n    headers[b"reflexer-key"] = key',
                      'def Put(name):\n    pass\ndef made_up():\n    raise Put("reflexer-key")',
+                     'def made_up(headers, key, ValueError=None):\n    raise ValueError("reflexer-key")',
                      'def made_up(headers, key):\n    raise headers.setdefault("reflexer-key", key)',
                      'def made_up():\n    class Reflexer:\n        def route(self, headers, key):\n            headers["reflexer-key"] = key'):
             with self.subTest(text):

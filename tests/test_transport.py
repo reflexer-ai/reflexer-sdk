@@ -56,6 +56,11 @@ class TheWire(unittest.TestCase):
         with client.stream("POST", CHAT, content=b"{}") as made:
             self.assertEqual(b"".join(made.iter_bytes()), self.STREAM)
 
+    def test_openais_wire_is_the_routed_one_the_logic_is_tested_on(self):
+        import reflexer.openai
+        from tests.test_logic import ROUTED
+        self.assertEqual(reflexer.openai.CHAT, ROUTED)
+
     def test_gemini_wraps_no_method_of_its_client(self):
         client = reflexer.gemini.Client(reflexer_key=KEY, api_key="made-up")
         self.assertNotIn("_generate_content", vars(client.models))

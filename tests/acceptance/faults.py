@@ -114,7 +114,7 @@ def calls_also(pattern):
 
     def init(self, *args, **kwargs):
         real(self, *args, **kwargs)
-        self.calls = pattern(self.calls)
+        self.way = (*self.way[:2], pattern(self.way[2]))
     return init
 
 

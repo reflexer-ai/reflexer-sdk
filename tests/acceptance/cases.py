@@ -211,12 +211,20 @@ def routing_other_calls_go_straight(t):
 ROUTER_BASE = {"openai": "https://openrouter.ai/api/v1", "anthropic": "https://openrouter.ai/api", "gemini": "https://openrouter.ai/api/"}
 
 
-@case("routing", sdks=MESSAGE_SDKS)
+@case("routing", sdks=("anthropic", "gemini"))
 def routing_a_router_is_named_as_the_upstream(t):
     t.served(t.ask(t.client(base_url=ROUTER_BASE[t.sdk])))
     upstream = t.reflexer.seen[0].headers.get("reflexer-upstream")
     t.check(upstream == "https://openrouter.ai/api", f"Reflexer-Upstream {upstream}")
     t.note(f"upstream {upstream}")
+
+
+@case("routing", sdks=("openai",))
+def routing_a_router_with_a_route_of_its_own_takes_it(t):
+    t.served(t.ask(t.client(base_url=ROUTER_BASE[t.sdk])))
+    arrival = t.reflexer.seen[0]
+    t.check(arrival.path == "/openrouter/api/v1/chat/completions", f"path {arrival.path}")
+    t.check("reflexer-upstream" not in arrival.headers, f"Reflexer-Upstream {arrival.headers.get('reflexer-upstream')}")
 
 
 @case("routing", sdks=("openai",))

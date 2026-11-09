@@ -10,6 +10,10 @@ CHAT = {
     "reflexer_path": "/openai",
     "provider":      "https://api.openai.com",
     "calls":         r"/v1/(chat/completions|responses)$",
+    "routers": {  # a router's own body keys are served on its own route; its other calls go as any base's
+        "openrouter.ai":        {"reflexer_path": "/openrouter", "provider": "https://openrouter.ai", "calls": r"/api/v1/chat/completions$"},
+        "ai-gateway.vercel.sh": {"reflexer_path": "/vercel", "provider": "https://ai-gateway.vercel.sh", "calls": r"/v1/chat/completions$"},
+    },
 }
 AZURE = {  # each client's resource is its own host, always named as the upstream
     "reflexer_path": "/azure",

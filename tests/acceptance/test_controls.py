@@ -31,7 +31,7 @@ CONTROLS = {
                                   ("skip_goes_straight_and_its_flag_stays_here", "openai"), ("async_skip_goes_straight", "openai")],
     "stock": [("routing_a_message_call_reaches_reflexer_with_both_keys", "*"), ("routing_openai_responses_reach_reflexer", "openai"), ("routing_azure_responses_reach_reflexer", "azure"),
               ("routing_a_stream_call_reaches_reflexer", "*"), ("routing_a_router_is_named_as_the_upstream", "*"),
-              ("routing_a_hosted_runner_is_named_as_the_upstream", "openai"), ("sampling_full_sends_all_to_reflexer", "*"),
+              ("routing_a_router_with_a_route_of_its_own_takes_it", "openai"), ("routing_a_hosted_runner_is_named_as_the_upstream", "openai"), ("sampling_full_sends_all_to_reflexer", "*"),
               ("stream_served_through_reflexer", "*"), ("stream_arrives_event_by_event", "*"), ("async_stream_served", "*"),
               ("gzip_a_served_answer_with_its_fields", "*"), ("gzip_a_pass_through", "*"), ("bad_key_raises_before_anything_is_sent", "*"),
               ("kept_with_options_stays_on_reflexer", "*"), ("kept_with_raw_response", "*"), ("kept_the_clients_http_settings_on_both_legs", "*"),

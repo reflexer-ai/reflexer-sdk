@@ -52,7 +52,7 @@ TypeScript: the same change.
 Hello! How can I help you today?
 ```
 
-`AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` change the same way, and so does any client of OpenAI's format pointed elsewhere by `base_url` (TypeScript: `baseURL`), such as a router. The Responses API goes through too.
+`AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` change the same way, and so does any client of OpenAI's format pointed elsewhere by `base_url` (TypeScript: `baseURL`), such as a router; chat completions to OpenRouter or Vercel AI Gateway go by reflexer's route for that router, which knows its own request fields. The Responses API goes through too.
 
 ## 3. Verify
 

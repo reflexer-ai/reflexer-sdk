@@ -37,8 +37,23 @@ describe("Route", () => {
   });
 
   test("a base of the client's own is named as the upstream", () => {
-    const [, headers] = way().route("https://openrouter.ai/api/v1/chat/completions", {}) ?? [];
-    assert.equal(headers?.["reflexer-upstream"], "https://openrouter.ai/api");
+    const [, headers] = way().route("https://api.groq.com/openai/v1/chat/completions", {}) ?? [];
+    assert.equal(headers?.["reflexer-upstream"], "https://api.groq.com/openai");
+  });
+
+  test("a router with a route of its own takes it for the calls it serves", () => {
+    // reflexer reads a router's own body keys only on its route; its default base names no upstream
+    for (const [url, to, upstream] of [
+      ["https://openrouter.ai/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", undefined],
+      ["https://ai-gateway.vercel.sh/v1/chat/completions", "/vercel/v1/chat/completions", undefined],
+      ["https://openrouter.ai:8443/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", "https://openrouter.ai:8443"],
+      ["https://openrouter.ai/api/v1/responses", "/openai/v1/responses", "https://openrouter.ai/api"], // not its route: as before
+      ["https://ai-gateway.vercel.sh/v1/responses", "/openai/v1/responses", "https://ai-gateway.vercel.sh"],
+    ]) {
+      const [made, headers] = way().route(url, {}) ?? [];
+      assert.deepEqual([made, headers?.["reflexer-upstream"]], [`https://api.reflexer.ai${to}`, upstream], url);
+    }
+    assert.equal(way().route("https://openrouter.ai/api/v1/models", {}), null);
   });
 
   test("straight", () => {

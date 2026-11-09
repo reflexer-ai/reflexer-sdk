@@ -21,12 +21,14 @@ log = logging.getLogger("reflexer")
 class Reflexer:
     """One client's way to reflexer, for one wire format, from a provider file's data: `reflexer_path`, reflexer's path
     for the format; `provider`, the provider's own address, to which no upstream is named; `calls`, the path
-    of the calls that return a model's message, the only ones that go to reflexer."""
+    of the calls that return a model's message, the only ones that go to reflexer; `routers`, optional, by host, the wire
+    of a router with a route of its own at reflexer, taken for the calls it lists."""
 
     def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic):
         check(key)
         self.key, self.base, self.sample = key, checked_base(base), sample
-        self.reflexer_path, self.provider, self.calls = wire["reflexer_path"], wire.get("provider"), wire["calls"]
+        self.way = way(wire)  # a typo in a provider file raises here, as the client is made, never on a call
+        self.routers = {host: way(router) for host, router in wire.get("routers", {}).items()}
         self.breaker = Breaker(clock)
 
     def route(self, url, headers, replay=False):
@@ -37,17 +39,19 @@ class Reflexer:
         if PASS_THROUGH in headers or (turned_away and not replay):
             return None
         address = urlsplit(url)
-        call = re.search(self.calls, address.path)
+        router = self.routers.get(address.hostname)
+        reflexer_path, provider, calls = router if router and re.search(router[2], address.path) else self.way
+        call = re.search(calls, address.path)
         if not call or not reachable(address):
             return None
         host = address.netloc.rpartition("@")[2]  # no user or password of the URL's goes to reflexer
         upstream = f"{address.scheme}://{host}{address.path[:call.start()]}"  # its provider, a router, a runner
         ours = {"reflexer-key": self.key}
-        if upstream != self.provider:
+        if upstream != provider:
             ours["reflexer-upstream"] = upstream
         theirs = {name: value for name, value in headers.items()
                   if name != "host" and (name == NAMESPACE or not name.startswith(OURS))}  # no header of a client's steers us
-        to = f"{self.base}{self.reflexer_path}{address.path[call.start():]}"
+        to = f"{self.base}{reflexer_path}{address.path[call.start():]}"
         if address.query:
             to += f"?{address.query}"
         return to, theirs | ours
@@ -65,6 +69,11 @@ class Reflexer:
         """The call to reflexer raised: it goes straight. Only the kind of failure is logged, never its text."""
         log.warning("the call to reflexer failed (%s); it goes straight to the provider", type(failure).__name__)
         self.breaker.note(FAILED, None)
+
+
+def way(wire):
+    """A wire's (reflexer_path, provider, calls)."""
+    return wire["reflexer_path"], wire.get("provider"), wire["calls"]
 
 
 REPLAY = "replay_response"  # a body's field: the caller's answer takes the provider's place

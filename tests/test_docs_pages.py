@@ -105,7 +105,7 @@ class Pages(unittest.TestCase):
                 self.assertEqual(link_problems(path, read(path)), [])
 
 
-SIGNED = ("signature", "access key's id", "session token", "AWS secret")  # what P21 says a signed call carries, and does not
+SIGNED = ("signature", "access key ID", "session token", "AWS secret")  # what P21 says a signed call carries, and does not
 
 
 def signed_unsaid(page):

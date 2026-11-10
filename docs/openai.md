@@ -52,7 +52,7 @@ TypeScript: the same change.
 Hello! How can I help you today?
 ```
 
-Change `AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` the same way. Change the same way any client of OpenAI's format whose `base_url` (TypeScript: `baseURL`) points to another address, such as a router. For chat completions to OpenRouter or Vercel AI Gateway, reflexer uses a route for that router, which knows the router's own request fields. Calls to the Responses API also go through reflexer.
+Change `AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` the same way. Change any other client of OpenAI's format the same way, for example a client whose `base_url` (TypeScript: `baseURL`) points to a router. For chat completions to OpenRouter or Vercel AI Gateway, reflexer uses a route made for that router, so it handles the router's own request fields. Calls to the Responses API also go through reflexer.
 
 ## 3. Verify
 
@@ -91,7 +91,7 @@ A reply from reflexer has a `model` that ends in `-reflexer`, and its `usage.cos
 
 - **Reflexer down, slow or busy:** the SDK sends the call directly to OpenAI, and your code gets OpenAI's answer. The SDK logs a warning (Python: on the `reflexer` logger; TypeScript: with `console.warn`). After a failure, the SDK sends the next calls directly to OpenAI too, for about a minute at most. Then the SDK tries reflexer again.
 - **Timeouts, Python:** your client's timeout applies to the call to reflexer. If that timeout expires, the SDK sends the call directly to OpenAI, with the same timeout. So one call can take up to two times your timeout. If reflexer had already forwarded the call, OpenAI may run the call twice and bill it twice.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the SDK sends the call directly to OpenAI. If your client's own timeout expires first, that attempt fails with a timeout error. If your provider SDK then retries the call, the SDK sends the retry directly to OpenAI. In both cases, if reflexer had already forwarded the call, OpenAI may run the call twice and bill it twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the SDK sends the call directly to OpenAI. If your client's own timeout expires first, that attempt fails with a timeout error. If your provider SDK then retries the call, the SDK sends the retry directly to OpenAI. In every case, if reflexer had already forwarded the call, OpenAI may run the call twice and bill it twice.
 - **Key refused:** if reflexer refuses your reflexer key, your provider SDK raises its authentication error, and the SDK does not send the call to OpenAI. If your reflexer key was revoked less than one day ago, the SDK still sends your calls directly to OpenAI, and logs a warning.
 - **Which calls:** the SDK sends to reflexer only the calls that return a model's message. The SDK sends all other calls, and all calls to `http`, `localhost` or a private IP, to the address your code gave them, as before.
 - **What leaves your machine:** the SDK sends the call to reflexer, with your OpenAI key. When reflexer does not answer the call itself, reflexer uses this key to forward the call to OpenAI. Only reflexer receives your reflexer key.

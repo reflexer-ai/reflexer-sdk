@@ -262,16 +262,17 @@ describe("Failures", () => {
   test("an SDK's own timeout on a hung reflexer still reaches the provider, on its retry", async (t) => {
     t.mock.method(console, "warn", () => {});
     const seen = /** @type {string[]} */ ([]);
-    const hung = (/** @type {any} */ input, /** @type {any} */ init) => {
+    const hung = async (/** @type {any} */ input, /** @type {any} */ init) => {
       const url = new URL(input);
       seen.push(url.host);
-      if (url.host !== check.REFLEXER) return Promise.resolve(check.providers(url));
-      return check.stalled(init.signal);
+      if (url.host === check.REFLEXER) return check.stalled(init.signal);
+      init.signal?.throwIfAborted(); // as a real fetch: the first try's own call, its signal already cut, gets no answer
+      return check.providers(url);
     };
     const client = new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, fetch: hung, timeout: 50, maxRetries: 1 });
     const answer = await client.chat.completions.create({ model: "m", messages: [] });
     assert.equal(/** @type {any} */ (answer).from, "provider");
-    assert.deepEqual(seen, [check.REFLEXER, "api.openai.com"]);
+    assert.deepEqual(seen, [check.REFLEXER, "api.openai.com", "api.openai.com"]); // the first try, then its retry, straight
   });
 });
 

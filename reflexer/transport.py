@@ -57,7 +57,7 @@ def stays_straight(request):
     """The client's own call, for its provider: no header of ours leaves, and its redirects and auth rounds, which keep the
     mark, stay with its provider. A replay never does: the one call that cannot fall back."""
     if is_replay(body_of(request) or b""):
-        raise ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider")
+        raise ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider")
     for name in dict(request.headers):
         if name.startswith(OURS):
             del request.headers[name]
@@ -223,7 +223,7 @@ async def closed_unless_its_loop_ended(client):
     except RuntimeError as failure:
         if str(failure) != "Event loop is closed":  # asyncio's, on any use of a loop that has ended
             raise
-        log.info("a client of a finished event loop was left unclosed")
+        log.info("the SDK did not close a client whose event loop has ended")
 
 
 def without_its_cookie(answer):
@@ -281,7 +281,7 @@ class Both:
             try:
                 await self.overdue.pop().aclose()
             except Exception as failure:  # nothing of a call's: a finished loop's connections, which none can use again
-                log.info("a retired client of a finished event loop did not close (%s)", type(failure).__name__)
+                log.info("closing an unused client whose event loop has ended failed (%s)", type(failure).__name__)
 
     def out(self, is_async):
         with self.lock:

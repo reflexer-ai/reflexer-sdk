@@ -56,7 +56,7 @@ class Again extends Error {}
  */
 function straight(send, input, init) {
   const body = textOf(init.body);
-  if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider");
+  if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider");
   const headers = new Headers(init.headers);
   if (!keyed(headers)) return send(input, init);
   for (const name of [...headers.keys()].filter((name) => name.startsWith(OURS))) headers.delete(name);
@@ -158,8 +158,8 @@ export async function anthropicMiddleware(/** @type {any} */ request, /** @type 
  * @param {string} key @param {any} options `{ handler, signer, base, sample, namespace, headersTimeout }`
  */
 export function requestHandler(key, { handler, signer, ...options }) {
-  if (HANDLERS.has(handler)) throw new Error("this handler already sends through reflexer"); // twice, a call would try reflexer twice
-  if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw new Error("reflexer's line takes AWS JS's Node HTTP handlers, which follow no redirect: this one could carry the key to a redirect's target");
+  if (HANDLERS.has(handler)) throw new Error("this handler already sends its calls through reflexer"); // twice, a call would try reflexer twice
+  if (!FOLLOWS_NO_REDIRECT.includes(handler?.metadata?.handlerProtocol)) throw new Error("reflexer works only with the Node HTTP handlers of the AWS SDK for JavaScript, which do not follow redirects: this handler could send the key to the target of a redirect");
   const ask = asking(new Reflexer(key, WIRE, options), handler, options.headersTimeout ?? HEADERS_TIMEOUT);
   const made = {
     /** @param {any} request @param {any} [given] */
@@ -277,7 +277,7 @@ function plain(headers) {
  */
 function smithyStaysStraight(request) {
   const body = textOf(request.body);
-  if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider");
+  if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider");
   const ours = keyed(new Headers(plain(request.headers))) ? OURS : PASS_THROUGH;
   request.headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => !name.toLowerCase().startsWith(ours)));
   return request;

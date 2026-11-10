@@ -43,7 +43,7 @@ def straight(request, headers, body):
     """The client's own call, for Bedrock: no header of ours leaves but one its signature covers, which a signed call keeps
     so that Bedrock still takes it. A replay never goes. `headers`, the request's own, changed in place."""
     if body is not None and is_replay(body):
-        raise ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider")
+        raise ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider")
     auth = headers.get("authorization") or ""
     signed = re.search(r"SignedHeaders=([^,\s]+)", auth.decode() if isinstance(auth, bytes) else auth)
     covered = set(signed[1].split(";")) if signed else set()

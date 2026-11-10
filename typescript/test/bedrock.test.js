@@ -451,7 +451,7 @@ describe("Bedrock", () => {
 
   test("aws-js: a client given the line twice throws, rather than try reflexer twice on each call", () => {
     const client = sdk.bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1", requestHandler: farEnds("served").handler }), sdk.key);
-    assert.throws(() => sdk.bedrock.wrap(client, sdk.key), /already sends through reflexer/);
+    assert.throws(() => sdk.bedrock.wrap(client, sdk.key), /already sends its calls through reflexer/);
   });
 
   test("aws-js: the client's own middleware never sees the key", async () => {
@@ -610,7 +610,7 @@ async function onTheFetchHandler(lines) {
     await client.send(new ConverseCommand({ modelId: MODEL, messages: HI })).catch(() => null);
     return { refused: false, keyed };
   } catch (failure) {
-    return { refused: /follow no redirect/.test(String(failure)), keyed };
+    return { refused: /do not follow redirects/.test(String(failure)), keyed };
   } finally {
     reflexer.close();
     elsewhere.close();

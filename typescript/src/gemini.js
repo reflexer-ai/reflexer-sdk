@@ -12,7 +12,7 @@ export class GoogleGenAI extends stock.GoogleGenAI {
     const routed = gemini.fetch(reflexerKey, { base: reflexerBase, sample, namespace: reflexerNamespace, fetch: httpOptions.fetch });
     /** @type {typeof routed} */
     const checked = (input, init) => {
-      if (!tested(new Headers(init?.headers)).includes("@google/genai")) throw new Error("reflexer cannot tell google-genai's version: its calls name none");
+      if (!tested(new Headers(init?.headers)).includes("@google/genai")) throw new Error("reflexer cannot find google-genai's version: its calls do not state it");
       return routed(input, init);
     };
     super({ ...config, httpOptions: { ...httpOptions, fetch: checked } });

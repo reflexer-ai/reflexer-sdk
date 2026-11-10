@@ -28,13 +28,13 @@ export class Reflexer {
   constructor(key, wire, { base = BASE, sample = 1, namespace, clock = () => performance.now() / 1000 } = {}) {
     check(key);
     if (namespace != null && !(typeof namespace === "string" && /^[!-~]+(?: [!-~]+)*$/.test(namespace))) {
-      throw new Error("a namespace is a string of letters, digits, signs and inner spaces: it goes as a header");
+      throw new Error("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header");
     }
     if (typeof wire.reflexerPath !== "string" || !(wire.calls instanceof RegExp)) {
-      throw new TypeError("a wire names its reflexerPath and its calls");
+      throw new TypeError("a wire must have a reflexerPath string and a calls RegExp");
     }
     if (typeof sample !== "number" || !(sample >= 0 && sample <= 1)) { // NaN is neither
-      throw new Error("sample must be a number from 0 to 1: the share of calls sent to reflexer");
+      throw new Error("sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer");
     }
     this.key = key;
     this.base = checkedBase(base);
@@ -82,7 +82,7 @@ export class Reflexer {
     const straightFor = whole(headers.get("reflexer-straight"));
     const meaning = read(status, headers.get("reflexer-status-origin"), straightFor);
     this.breaker.note(meaning, straightFor);
-    if (meaning === GRACE) console.warn("reflexer: the reflexer key is revoked; calls go straight to the provider until its grace ends");
+    if (meaning === GRACE) console.warn("reflexer: the reflexer key is revoked; the SDK sends calls directly to the provider until the key's grace period ends");
     return meaning !== ANSWER;
   }
 
@@ -91,7 +91,7 @@ export class Reflexer {
    * @param {unknown} failure
    */
   failed(failure) {
-    console.warn("reflexer: the call to reflexer failed (%s); it goes straight to the provider", failure instanceof Error ? failure.name : typeof failure);
+    console.warn("reflexer: the call to reflexer failed (%s); the SDK sends the call directly to the provider", failure instanceof Error ? failure.name : typeof failure);
     this.breaker.note(FAILED, null);
   }
 }
@@ -241,7 +241,7 @@ function isGlobal([value, width]) {
 export function checkedBase(base) {
   const address = new URL(base);
   if (address.protocol !== "https:" && !["127.0.0.1", "localhost"].includes(address.hostname)) {
-    throw new Error(`reflexer's address must be https, for the key's sake: ${base}`);
+    throw new Error(`reflexer's address must use https, to protect the key: ${base}`);
   }
   return String(base).replace(/\/+$/, "");
 }
@@ -253,7 +253,7 @@ export function checkedBase(base) {
 export function check(key) {
   const form = /^(rfx1_[a-z2-7]{7}_[a-z2-7]{52})_([a-z2-7]{7})$/.exec(typeof key === "string" ? key : "");
   if (!form || form[2] !== checksum(form[1])) {
-    throw new Error("not a reflexer key: expected rfx1_CLIENT_SECRET_CHECK, as given at onboarding");
+    throw new Error("this is not a reflexer key: a reflexer key has the form rfx1_CLIENT_SECRET_CHECK, as given at onboarding");
   }
 }
 

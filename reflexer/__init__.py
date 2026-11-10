@@ -27,9 +27,9 @@ class Reflexer:
     def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic, namespace=None):
         check(key)
         if namespace is not None and not (isinstance(namespace, str) and re.fullmatch(r"[!-~]+(?: [!-~]+)*", namespace)):
-            raise ValueError("a namespace is a string of letters, digits, signs and inner spaces: it goes as a header")
+            raise ValueError("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header")
         if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
-            raise ValueError("sample must be a number from 0 to 1: the share of calls sent to reflexer")
+            raise ValueError("sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer")
         self.key, self.base, self.sample, self.namespace = key, checked_base(base), sample, namespace
         self.way = way(wire)  # a typo in a provider file raises here, as the client is made, never on a call
         self.routers = {host: way(router) for host, router in wire.get("routers", {}).items()}
@@ -67,12 +67,12 @@ class Reflexer:
         meaning = read(status, headers.get("reflexer-status-origin"), straight_for)
         self.breaker.note(meaning, straight_for)
         if meaning == GRACE:
-            log.warning("the reflexer key is revoked; calls go straight to the provider until its grace ends")
+            log.warning("the reflexer key is revoked; the SDK sends calls directly to the provider until the key's grace period ends")
         return meaning != ANSWER
 
     def failed(self, failure):
         """The call to reflexer raised: it goes straight. Only the kind of failure is logged, never its text."""
-        log.warning("the call to reflexer failed (%s); it goes straight to the provider", type(failure).__name__)
+        log.warning("the call to reflexer failed (%s); the SDK sends the call directly to the provider", type(failure).__name__)
         self.breaker.note(FAILED, None)
 
 
@@ -187,7 +187,7 @@ def checked_base(base):
     """Reflexer's address, which gets the key: https, or plain http on this machine for a stand-in."""
     address = urlsplit(base)
     if address.scheme != "https" and address.hostname not in ("127.0.0.1", "localhost"):
-        raise ValueError(f"reflexer's address must be https, for the key's sake: {base}")
+        raise ValueError(f"reflexer's address must use https, to protect the key: {base}")
     return base.rstrip("/")
 
 
@@ -195,7 +195,7 @@ def check(key):
     """A key not of the form raises before anything is sent."""
     form = re.fullmatch(r"(rfx1_[a-z2-7]{7}_[a-z2-7]{52})_([a-z2-7]{7})", key or "")
     if not form or form[2] != checksum(form[1]):
-        raise ValueError("not a reflexer key: expected rfx1_CLIENT_SECRET_CHECK, as given at onboarding")
+        raise ValueError("this is not a reflexer key: a reflexer key has the form rfx1_CLIENT_SECRET_CHECK, as given at onboarding")
 
 
 def checksum(text):

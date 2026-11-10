@@ -128,12 +128,12 @@ Hello! How can I help you today?
 
 ## What reflexer adds to a response
 
-- In a reply from reflexer, `model` ends in `-reflexer`, and `usage.cost` holds the price in USD. A stream's usage holds the price too. Gemini replies and Bedrock Converse replies do not have these fields. In a Gemini reply, `model_version` (TypeScript `modelVersion`) ends in `-reflexer`. A Converse reply names no model: read the `Reflexer-Answered-By` header below.
-- Headers that reflexer adds to every response it sends: `Reflexer-Request-Id`, the call's id; `Reflexer-Cost`, the price in nano USD, which is 0 when reflexer did not answer. `Reflexer-Answered-By`: `reflexer` when reflexer answered; `provider` when reflexer passes on what your provider sent. `Reflexer-Answered-By` is absent on errors and refusals that reflexer itself returns, including a 502 when reflexer cannot reach your provider. It is also absent on a dry run's reply that is your own answer. A call that the SDK sent directly to your provider has none of these headers.
+- In a reply from reflexer, `model` ends in `-reflexer`, and `usage.cost` holds the price in USD. A stream's usage holds the price too. Gemini replies and Bedrock Converse replies do not have these fields. In a Gemini reply, `model_version` (TypeScript `modelVersion`) ends in `-reflexer`. A Converse reply names no model and has no cost: read the headers below, `Reflexer-Answered-By` and `Reflexer-Cost`.
+- Headers that reflexer adds to every response it sends: `Reflexer-Request-Id`, the call's id; `Reflexer-Cost`, the price in nano USD, which is 0 when reflexer did not answer. `Reflexer-Answered-By`: `reflexer` when reflexer answered; `provider` when reflexer forwards what your provider sent. `Reflexer-Answered-By` is absent on errors and refusals that reflexer itself returns, including a 502 when reflexer cannot reach your provider. It is also absent on a dry run's reply that is your own answer. A call that the SDK sent directly to your provider has none of these headers.
 - `Reflexer-Reason`: why reflexer answered or did not answer, such as `served`, `not_seen_repeating` or `low_confidence`. It is for debugging. It is off by default; reflexer enables it for some accounts.
 
 ## Versions
 
-For each provider SDK, the SDK runs only on the major versions that it is tested on. On a new major version, the SDK raises an error before any call. This stays so until a release of the SDK is tested on that major version. The SDK does not check the versions of the AI SDK's OpenAI, Anthropic and Google providers. Each library page lists the releases that the SDK supports. The package is at 0.1.0 and has no release yet.
+For each provider SDK, the SDK runs only on the major versions that it is tested on. On a new major version, the SDK raises an error before any call, until a release of the SDK is tested on that major version. The SDK does not check the versions of the AI SDK's OpenAI, Anthropic and Google providers. Each library page lists the releases that the SDK supports. The package is at 0.1.0 and has no release yet.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Known limits](limits.md)

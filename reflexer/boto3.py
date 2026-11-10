@@ -34,7 +34,7 @@ def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
     reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace)
     send, events = client._endpoint.http_session.send, client.meta.events
     if getattr(events, "reflexer_through", False):  # twice, each call would try reflexer twice
-        raise ValueError("this client already goes through reflexer")
+        raise ValueError("this client already sends its calls through reflexer")
     emit = events.emit
 
     def asked(request):
@@ -72,7 +72,7 @@ def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
                 anew[0].sign(anew[1], anew[2])
                 signed_anew(request, anew[2])
             except Exception as failure:  # the client's own signer failed anew: the call goes as it was first signed
-                log.warning("signing the call anew failed (%s); it goes as first signed", type(failure).__name__)
+                log.warning("signing the call again failed (%s); the SDK sends the call with its first signature", type(failure).__name__)
         return None  # botocore sends it, straight
 
     def emitted(event_name, **kwargs):

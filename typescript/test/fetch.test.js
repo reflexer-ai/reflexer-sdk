@@ -356,7 +356,7 @@ describe("Majors", () => {
     const own = check.mock(check.served);
     const client = new sdk.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: key,
       httpOptions: { fetch: own.fetch, headers: { "User-Agent": "made-up-app/1.0", "x-goog-api-client": "made-up-app/1.0" } } });
-    await assert.rejects(client.models.generateContent({ model: "m", contents: "x" }), /cannot tell/);
+    await assert.rejects(client.models.generateContent({ model: "m", contents: "x" }), /cannot find google-genai's version/);
     assert.deepEqual(own.seen, []);
   });
 

@@ -104,14 +104,14 @@ class Construction(unittest.TestCase):
 
     def test_a_sample_not_a_number_from_0_to_1_raises(self):
         for sample in (-0.1, 1.5, float("nan"), "0.5", None, True):
-            with self.assertRaisesRegex(ValueError, "^sample must be a number from 0 to 1: the share of calls sent to reflexer$"):
+            with self.assertRaisesRegex(ValueError, "^sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer$"):
                 reflexer.Reflexer(KEY, WIRE, sample=sample)
         for sample in (0, 0.5, 1):
             reflexer.Reflexer(KEY, WIRE, sample=sample)
 
     def test_a_namespace_that_cannot_go_as_a_header_raises(self):
         for namespace in ("", " team", "team\r\nx-made-up: 1", "équipe", 7):
-            with self.assertRaisesRegex(ValueError, "^a namespace is a string"):
+            with self.assertRaisesRegex(ValueError, "^a namespace may contain only"):
                 reflexer.Reflexer(KEY, WIRE, namespace=namespace)
         for namespace in (None, "team-a", "Team A/2026"):
             reflexer.Reflexer(KEY, WIRE, namespace=namespace)

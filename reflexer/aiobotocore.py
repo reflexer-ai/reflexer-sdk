@@ -27,11 +27,11 @@ def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
     reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace)
     own, events = client._endpoint.http_session, client.meta.events
     if type(own) is not aiobotocore.httpsession.AIOHTTPSession:
-        raise TypeError(f"reflexer's line takes aiobotocore's own aiohttp session, not {type(own).__name__}")
+        raise TypeError(f"reflexer works only with aiobotocore's own aiohttp session, not {type(own).__name__}")
     if not forgettable():
-        raise TypeError("this aiohttp keeps a request's headers where reflexer's line cannot forget them")
+        raise TypeError("this aiohttp version keeps a request's headers in a place where reflexer cannot remove them")
     if getattr(events, "reflexer_through", False):
-        raise ValueError("this client already goes through reflexer")
+        raise ValueError("this client already sends its calls through reflexer")
     session_for, proxy_url_for, proxy_headers_for = own._get_session, own._proxy_config.proxy_url_for, own._proxy_config.proxy_headers_for
     emit = events.emit
 
@@ -82,7 +82,7 @@ def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
                 await anew[0].sign(anew[1], anew[2])
                 signed_anew(request, anew[2])
             except Exception as failure:  # the client's own signer failed anew: the call goes as it was first signed
-                log.warning("signing the call anew failed (%s); it goes as first signed", type(failure).__name__)
+                log.warning("signing the call again failed (%s); the SDK sends the call with its first signature", type(failure).__name__)
         return None
 
     async def emitted(event_name, **kwargs):

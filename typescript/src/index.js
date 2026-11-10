@@ -110,7 +110,7 @@ function toReflexer(reflexer, input, init) {
  */
 function staysStraight(input, init) {
   const body = textOf(init.body);
-  if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider");
+  if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider");
   const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
   for (const name of [...headers.keys()].filter((name) => name.startsWith(OURS))) headers.delete(name);
   return [input, { ...init, headers }];

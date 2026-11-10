@@ -36,7 +36,7 @@ print(reply.choices[0].message.content)
 ```
 
 ```text
-the call to reflexer failed (ConnectError); it goes straight to the provider
+the call to reflexer failed (ConnectError); the SDK sends the call directly to the provider
 Hello! How can I help you today?
 ```
 
@@ -50,7 +50,7 @@ console.log(reply.choices[0].message.content);
 ```
 
 ```text
-reflexer: the call to reflexer failed (TypeError); it goes straight to the provider
+reflexer: the call to reflexer failed (TypeError); the SDK sends the call directly to the provider
 Hello! How can I help you today?
 ```
 
@@ -84,7 +84,7 @@ client = OpenAI(reflexer_key="rfx1_not-a-key")
 ```
 
 ```text
-ValueError: not a reflexer key: expected rfx1_CLIENT_SECRET_CHECK, as given at onboarding
+ValueError: this is not a reflexer key: a reflexer key has the form rfx1_CLIENT_SECRET_CHECK, as given at onboarding
 ```
 
 <!-- example: raises -->
@@ -95,14 +95,14 @@ const client = new OpenAI({ reflexerKey: "rfx1_not-a-key" });
 ```
 
 ```text
-Error: not a reflexer key: expected rfx1_CLIENT_SECRET_CHECK, as given at onboarding
+Error: this is not a reflexer key: a reflexer key has the form rfx1_CLIENT_SECRET_CHECK, as given at onboarding
 ```
 
 ## Reflexer refuses your key
 
 **Problem:** the key has the right form, but reflexer does not accept it.
 
-**What happens:** your provider SDK raises its own authentication error, the same error that a refusal from your provider gives. The SDK does not send the call to your provider. One exception: if the key was revoked less than a day ago, the SDK sends calls directly to your provider and logs the warning "the reflexer key is revoked; calls go straight to the provider until its grace ends".
+**What happens:** your provider SDK raises its own authentication error, the same error that a refusal from your provider gives. The SDK does not send the call to your provider. One exception: if the key was revoked less than a day ago, the SDK sends calls directly to your provider and logs the warning "the reflexer key is revoked; the SDK sends calls directly to the provider until the key's grace period ends".
 
 ## Your provider SDK is a release reflexer is not tested on
 

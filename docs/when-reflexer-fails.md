@@ -21,7 +21,7 @@ This page is for a call that did not work as you expected. In most cases you do 
 
 **Problem:** the SDK could not reach reflexer, or the reply did not come from reflexer. Examples: a refused connection, a TLS error, a reply that is not HTTP, an error from a proxy or a load balancer. This is normal during an outage, or on a network that blocks reflexer.
 
-**What happens:** the SDK sends the call directly to your provider, and your code gets your provider's answer. The SDK logs a warning that names the failure. The warning never contains the text of a message. Python logs it on the `reflexer` logger; TypeScript logs it with `console.warn`. After a failure, the SDK also sends the next calls directly to your provider, for one second. Each further failure in a row doubles this time, up to one minute. After this time, the SDK tries reflexer again.
+**What happens:** the SDK sends the call directly to your provider, and your code gets your provider's answer. The SDK logs a warning that names the failure. The warning never contains the text of a message. Python logs it on the `reflexer` logger; TypeScript logs it with `console.warn`. After a failure, the SDK also sends the next calls directly to your provider, for about one second. Each further failure in a row doubles this time, up to one minute. After this time, the SDK tries reflexer again.
 
 **Trigger it:** give the SDK an address where nothing listens. In the warning, "straight" means "directly to your provider, without reflexer".
 

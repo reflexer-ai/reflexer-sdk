@@ -36,17 +36,17 @@ This page is for cases where reflexer does less than the library pages say. Each
 | Case | What happens | What you can do |
 |---|---|---|
 | A signed call, when you did not grant a role to reflexer at onboarding | Reflexer cannot forward the call. If reflexer does not answer, your library sends the call to Bedrock: two round trips | Grant reflexer the role at onboarding, or use a Bedrock API key |
-| LiteLLM and the AI SDK, signed | They cannot sign a call again. If reflexer does not answer while the signature is valid (about five minutes), the call goes to Bedrock with its first signature. If your clock is far behind the AWS clock, Bedrock can refuse the call | Keep your machine's clock synchronized |
-| A Bedrock API key limited to your network (source IP, VPC endpoint) | Bedrock refuses the call that reflexer forwards. Then the call goes to Bedrock from your machine: one more round trip | Use a key without that limit, or a role |
+| LiteLLM and the AI SDK, signed | They cannot sign a call again. If reflexer does not answer while the signature is valid (about five minutes), the SDK sends the call to Bedrock with its first signature. If your clock is far behind the AWS clock, Bedrock can refuse the call | Keep your machine's clock synchronized |
+| A Bedrock API key limited to your network (source IP, VPC endpoint) | Bedrock refuses the call that reflexer forwards. Then the SDK sends the call to Bedrock from your machine: one more round trip | Use a key without that limit, or a role |
 | Anthropic's Bedrock and Mantle clients, signed | They sign every header, so Bedrock receives any reflexer header that you set. A signed call to Mantle goes directly to Bedrock | For a namespace, pass `reflexer_namespace` to the client |
-| boto3, aiobotocore and the AWS SDK for JavaScript, signed, when reflexer did not answer and signing the call again fails | The call goes to Bedrock with its first signature. Python logs the warning "signing the call anew failed" | Nothing |
+| boto3, aiobotocore and the AWS SDK for JavaScript, signed, when reflexer did not answer and signing the call again fails | The SDK sends the call to Bedrock with its first signature. Python logs the warning "signing the call anew failed" | Nothing |
 | langchain-aws, Strands, Pydantic AI | They make the boto3 call themselves, so no per-call argument reaches it | Skip reflexer with a hook on the client ([Advanced](advanced.md#skip-reflexer-for-one-call)) |
 | `ReflexerPassThrough=True` on a boto3 client without reflexer | botocore refuses it | Use it only on reflexer's client |
 | The AWS SDK for JavaScript, `reflexerPassThrough` | It is not in the AWS SDK's types | Cast the options to `any` in a `.ts` file |
 | The AWS SDK for JavaScript with its fetch handler (a browser or edge build) | `bedrock.wrap` refuses it, because fetch follows redirects and would send the key with them | Use the Node handlers (the default on Node) |
 | aiobotocore on another HTTP session class | The SDK refuses the client when you give the client to reflexer | Use aiobotocore's own session |
 | The AI SDK on Bedrock, streamed, when its timeout expires during the call to reflexer | The call fails with a timeout error | Set `headersTimeout` lower than your timeout |
-| The AI SDK on Bedrock, not streamed, and AnthropicBedrock (TypeScript), when the timeout expires during the call to reflexer | The call goes to Bedrock again with the same timeout. So the call can take up to twice your timeout | Set `headersTimeout` lower than your timeout |
-| The AI SDK on Bedrock | It needs Node 22, the minimum version of the AI SDK | Use Node 22 or later |
+| The AI SDK on Bedrock, not streamed, and AnthropicBedrock (TypeScript), when the timeout expires during the call to reflexer | Then the SDK sends the call to Bedrock, with your timeout again. So the call can take up to twice your timeout | Set `headersTimeout` lower than your timeout |
+| The AI SDK on Bedrock | The AI SDK itself needs Node 22 or later | Use Node 22 or later |
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Reference](reference.md)

@@ -1,12 +1,12 @@
 # reflexer with another library
 
-Your library is not listed, but it takes your provider SDK's client, an HTTP client or a `fetch`? Give it reflexer's.
+Your library has no page here, but it accepts your provider SDK's client, an HTTP client or a `fetch`? Then give your library reflexer's client, HTTP client or `fetch` instead.
 
-**Before you begin:** `REFLEXER_KEY` set to the key you got at onboarding.
+**Before you begin:** you need the environment variable `REFLEXER_KEY` set to the reflexer key you got at onboarding.
 
 ## It takes your provider SDK's client
 
-Give it reflexer's client: [OpenAI](openai.md), [Anthropic](anthropic.md), [Gemini](gemini.md), [Bedrock](bedrock.md). Pydantic AI is built this way: [Pydantic AI](pydantic-ai.md).
+Give it reflexer's client: [OpenAI](openai.md), [Anthropic](anthropic.md), [Gemini](gemini.md), [Bedrock](bedrock.md). Pydantic AI works this way: [Pydantic AI](pydantic-ai.md).
 
 ## It takes an HTTP client (Python)
 
@@ -28,7 +28,7 @@ Keep your library's own class, and give it reflexer's HTTP client.
 Hello! How can I help you today?
 ```
 
-The other HTTP clients reflexer makes:
+The HTTP clients of the SDK:
 
 | For | Sync | Async |
 |---|---|---|
@@ -36,7 +36,7 @@ The other HTTP clients reflexer makes:
 | Azure OpenAI | `reflexer.openai.azure_http_client` | `reflexer.openai.azure_async_http_client` |
 | Anthropic | `reflexer.anthropic.http_client` | `reflexer.anthropic.async_http_client` |
 
-Each takes your own HTTP client as `own=`, and keeps its proxy and TLS settings; its hooks see your calls to your provider, never reflexer's; its transport carries both, the reflexer key included. Gemini takes `client_args`: give the same dict as both `client_args` and `async_client_args`; without the async one, async calls skip reflexer.
+Each one accepts your own HTTP client as `own=`, and keeps that client's proxy and TLS settings. Your client's hooks see your calls to your provider, never the calls to reflexer. Your client's transport sends both kinds of calls, so it also carries the reflexer key. Gemini takes `client_args` instead: give the same dict as both `client_args` and `async_client_args`. Without `async_client_args`, async calls do not go through reflexer: they go directly to Gemini.
 
 <!-- example: served python -->
 ```diff
@@ -73,25 +73,25 @@ Give it reflexer's `fetch`.
 Hello! How can I help you today?
 ```
 
-Also `reflexer.azure.fetch`, `reflexer.anthropic.fetch` and `reflexer.gemini.fetch` (Gemini takes it in `httpOptions: { fetch }`). Each takes your own `fetch` as `{ fetch }`.
+The SDK also has `reflexer.azure.fetch`, `reflexer.anthropic.fetch` and `reflexer.gemini.fetch` (Gemini takes it in `httpOptions: { fetch }`). Each one accepts your own `fetch` as `{ fetch }`.
 
 ## It takes none of these
 
-Then its calls cannot go through reflexer yet. Open an issue on this repository naming it.
+Then the SDK cannot send its calls through reflexer yet. Open an issue on this repository, with the library's name.
 
 ## Verify
 
-The reply looks the same either way. The response's `Reflexer-Answered-By` header is `reflexer` when reflexer answered: read it however your library shows headers, as on [OpenAI](openai.md#3-verify).
+The reply looks the same whether reflexer or your provider answered. The response's `Reflexer-Answered-By` header is `reflexer` when reflexer answered. Read the header in the way your library shows headers, as on [OpenAI](openai.md#3-verify).
 
 ## Behavior
 
-- **Reflexer down, slow or busy:** the call goes to your provider, and your code gets your provider's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to your provider too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to your provider with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, your provider may run it, and bill it, twice.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to your provider. If your client's own timeout fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to your provider. Either way, if reflexer had already forwarded the call, your provider may run it, and bill it, twice.
-- **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to your provider. A key revoked less than a day ago still sends calls to your provider, with a warning.
-- **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
-- **What leaves your machine:** the call, with your provider key, goes to reflexer, which uses the key to forward the call to your provider when it does not answer. The reflexer key goes to reflexer only.
-- **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
+- **Reflexer down, slow or busy:** the SDK sends the call directly to your provider, and your code gets your provider's answer. The SDK logs a warning (Python: on the `reflexer` logger; TypeScript: with `console.warn`). After a failure, the SDK sends the next calls directly to your provider too, for about a minute at most. Then the SDK tries reflexer again.
+- **Timeouts, Python:** your client's timeout applies to the call to reflexer. If that timeout expires, the SDK sends the call directly to your provider, with the same timeout. So one call can take up to two times your timeout. If reflexer had already forwarded the call, your provider may run the call twice and bill it twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the SDK sends the call directly to your provider. If your client's own timeout expires first, that attempt fails with a timeout error. If your provider SDK then retries the call, the SDK sends the retry directly to your provider. In every case, if reflexer had already forwarded the call, your provider may run the call twice and bill it twice.
+- **Key refused:** if reflexer refuses your reflexer key, your provider SDK raises its authentication error, and the SDK does not send the call to your provider. If your reflexer key was revoked less than one day ago, the SDK still sends your calls directly to your provider, and logs a warning.
+- **Which calls:** the SDK sends to reflexer only the calls that return a model's message. The SDK sends all other calls, and all calls to `http`, `localhost` or a private IP, to the address your code gave them, as before.
+- **What leaves your machine:** the SDK sends the call to reflexer, with your provider key. When reflexer does not answer the call itself, reflexer uses this key to forward the call to your provider. Only reflexer receives your reflexer key.
+- **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the reflexer client, your code works as before.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 

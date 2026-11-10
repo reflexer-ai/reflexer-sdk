@@ -1,12 +1,12 @@
 # reflexer with Amazon Bedrock
 
-Reflexer in front of your Bedrock calls, from boto3, aiobotocore, LiteLLM, Anthropic's Bedrock clients, and what is built on them; or from the AWS SDK for JavaScript, AnthropicBedrock and the AI SDK.
+Send your Bedrock calls through reflexer. Python: from boto3, aiobotocore, LiteLLM, Anthropic's Bedrock clients, and the libraries built on them. TypeScript: from the AWS SDK for JavaScript, AnthropicBedrock and the AI SDK.
 
-**Before you begin:** your Bedrock library, and `REFLEXER_KEY` set to the key you got at onboarding. Your Bedrock credentials stay as they are: a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or your AWS credentials, which sign each call (SigV4). The same code works with either. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`: the examples are plain JavaScript.
+**Before you begin:** you need your Bedrock library, and the environment variable `REFLEXER_KEY` set to the reflexer key you got at onboarding. Keep your Bedrock credentials as they are: a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`), or your AWS credentials, which your library uses to sign each call (SigV4). The same code works with both kinds. The examples are plain JavaScript: in a `.ts` file, write the key as `process.env.REFLEXER_KEY!`.
 
 ## 1. Install
 
-Not on PyPI or npm yet: install from a clone of this repository ([README](../README.md#install)).
+The SDK is not on PyPI or npm yet. Install it from a clone of this repository ([README](../README.md#install)).
 
 ```sh
 pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk  # pip 26.1 or later
@@ -37,11 +37,11 @@ Python: [boto3](#boto3) · [aiobotocore](#aiobotocore) · [langchain-aws, Pydant
 Hello! How can I help you today?
 ```
 
-A client made elsewhere goes through reflexer too: `reflexer.boto3.through(client, os.environ["REFLEXER_KEY"])`.
+If your code creates the client elsewhere, send its calls through reflexer with `reflexer.boto3.through(client, os.environ["REFLEXER_KEY"])`.
 
 ### aiobotocore
 
-Give reflexer the client inside its `async with`.
+Inside the client's `async with` block, give the client to reflexer.
 
 <!-- example: served python bedrock -->
 ```diff
@@ -64,7 +64,7 @@ Hello! How can I help you today?
 
 ### langchain-aws, Pydantic AI, Strands
 
-They call Bedrock through a boto3 client: give them reflexer's.
+These libraries call Bedrock through a boto3 client. Give them reflexer's boto3 client.
 
 <!-- example: served python bedrock -->
 ```diff
@@ -134,11 +134,11 @@ Hello! How can I help you today?
 Hello! How can I help you today?
 ```
 
-`AsyncAnthropicBedrock`, `AnthropicBedrockMantle` and `AsyncAnthropicBedrockMantle` change the same way.
+Change `AsyncAnthropicBedrock`, `AnthropicBedrockMantle` and `AsyncAnthropicBedrockMantle` the same way.
 
 ### LiteLLM
 
-LiteLLM takes reflexer's HTTP client per call. Make it once, and give it to every call.
+LiteLLM takes reflexer's HTTP client as an argument of each call. Create the client once, and give it to every call.
 
 <!-- example: served python bedrock -->
 ```diff
@@ -156,7 +156,7 @@ LiteLLM takes reflexer's HTTP client per call. Make it once, and give it to ever
 Hello! How can I help you today?
 ```
 
-`reflexer.litellm.async_client` for `acompletion`.
+For `acompletion`, use `reflexer.litellm.async_client`.
 
 ### The AWS SDK for JavaScript, and LangChain.js on it
 
@@ -179,7 +179,7 @@ LangChain.js's `ChatBedrockConverse` takes the wrapped client: `new ChatBedrockC
 
 ### AnthropicBedrock (TypeScript)
 
-Add reflexer's `fetch`, and its middleware last of yours.
+Add reflexer's `fetch`. Add reflexer's middleware after all of your own middleware.
 
 <!-- example: served js bedrock -->
 ```diff
@@ -218,13 +218,13 @@ Add reflexer's `fetch` to the provider, and its middleware to the model.
 Hello! How can I help you today?
 ```
 
-Bedrock's OpenAI and Anthropic endpoints take the change on the [OpenAI](openai.md) and [Anthropic](anthropic.md) pages, with Bedrock's `base_url` and your Bedrock API key as `api_key`.
+For Bedrock's OpenAI and Anthropic endpoints, make the change on the [OpenAI](openai.md) or [Anthropic](anthropic.md) page. Use Bedrock's `base_url`, and your Bedrock API key as `api_key`.
 
 ## 3. Verify
 
-The reply looks the same either way. The `Reflexer-Answered-By` header says who answered: `reflexer`, or `provider` when reflexer forwarded the call to Bedrock; it is absent when the call went to Bedrock directly.
+The reply looks the same whether reflexer or Bedrock answered. The `Reflexer-Answered-By` header names who answered: `reflexer`, or `provider` when reflexer forwarded the call to Bedrock. The reply has no such header when the SDK sent the call directly to Bedrock.
 
-With boto3, and so with langchain-aws, Pydantic AI and Strands, which use its client:
+With boto3, and so also with langchain-aws, Pydantic AI and Strands, which use a boto3 client:
 
 <!-- example: served bedrock -->
 ```python
@@ -256,7 +256,7 @@ console.log(response.headers.get("reflexer-answered-by"));
 reflexer
 ```
 
-The AWS SDK for JavaScript returns no headers with the reply: read it by a middleware.
+The AWS SDK for JavaScript does not return the headers with the reply. Read the header with a middleware.
 
 <!-- example: served bedrock -->
 ```js
@@ -276,41 +276,41 @@ await client.send(new ConverseCommand({ modelId: "frontier-x", messages: [{ role
 reflexer
 ```
 
-Elsewhere: aiobotocore as boto3; Anthropic's Python clients by `with_raw_response`, as on [Anthropic](anthropic.md#3-verify); LiteLLM in `reply._hidden_params["additional_headers"]["llm_provider-reflexer-answered-by"]`; the AI SDK in `result.response.headers`.
+In the other libraries: aiobotocore, as with boto3; Anthropic's Python clients, with `with_raw_response`, as on [Anthropic](anthropic.md#3-verify); LiteLLM, in `reply._hidden_params["additional_headers"]["llm_provider-reflexer-answered-by"]`; the AI SDK, in `result.response.headers`.
 
 ## Behavior
 
-- **Reflexer down, slow or busy:** the call goes to Bedrock, and your code gets Bedrock's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to Bedrock too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to Bedrock with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, Bedrock may run it, and bill it, twice.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to Bedrock. If your client's own timeout fires first, AnthropicBedrock and the AI SDK (not streamed) send the call to Bedrock with the timeout again, so it can take up to twice it; the AI SDK, streamed, fails as a timeout. Either way, if reflexer had already forwarded the call, Bedrock may run it, and bill it, twice.
-- **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to Bedrock. A key revoked less than a day ago still sends calls to Bedrock, with a warning.
-- **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
-- **What leaves your machine:** the call, with your Bedrock key, goes to reflexer, which uses the key to forward the call to Bedrock when it does not answer. The reflexer key goes to reflexer only.
-- **A signed call:** it goes to reflexer as your library signed it: the call with its signature, your access key's id and, with temporary credentials, your session token; never your AWS secret, which only your library's signer reads. Reflexer never passes your signature on. If you granted reflexer a role in your AWS account at onboarding, reflexer can pass the call on to Bedrock itself; otherwise a call it does not answer goes from your machine to Bedrock, signed again by your library (LiteLLM and the AI SDK: as first signed, while the signature holds; [Known limits](limits.md)), as when reflexer is down.
-- **Mantle:** Python only; with a Bedrock API key, through reflexer; signed calls go to Bedrock directly.
-- **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
+- **Reflexer down, slow or busy:** the SDK sends the call directly to Bedrock, and your code gets Bedrock's answer. The SDK logs a warning (Python: on the `reflexer` logger; TypeScript: with `console.warn`). After a failure, the SDK sends the next calls directly to Bedrock too, for about a minute at most. Then the SDK tries reflexer again.
+- **Timeouts, Python:** your client's timeout applies to the call to reflexer. If that timeout expires, the SDK sends the call directly to Bedrock, with the same timeout. So one call can take up to two times your timeout. If reflexer had already forwarded the call, Bedrock may run the call twice and bill it twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the SDK sends the call directly to Bedrock. If your client's own timeout expires first, the result depends on the library. AnthropicBedrock and the AI SDK (not streamed) send the call to Bedrock again, with the same timeout, so one call can take up to two times your timeout. The AI SDK (streamed) fails with a timeout error. In every case, if reflexer had already forwarded the call, Bedrock may run the call twice and bill it twice.
+- **Key refused:** if reflexer refuses your reflexer key, your provider SDK raises its authentication error, and the SDK does not send the call to Bedrock. If your reflexer key was revoked less than one day ago, the SDK still sends your calls directly to Bedrock, and logs a warning.
+- **Which calls:** the SDK sends to reflexer only the calls that return a model's message. The SDK sends all other calls, and all calls to `http`, `localhost` or a private IP, to the address your code gave them, as before.
+- **What leaves your machine:** the SDK sends the call to reflexer, with your Bedrock key. When reflexer does not answer the call itself, reflexer uses this key to forward the call to Bedrock. Only reflexer receives your reflexer key.
+- **A signed call:** the SDK sends the call to reflexer exactly as your library signed it: the call, its signature, your access key ID and, with temporary credentials, your session token. The SDK never sends your AWS secret: only your library's signer reads it. Reflexer never forwards your signature. If you gave reflexer a role in your AWS account at onboarding, reflexer can forward the call to Bedrock itself. Otherwise, when reflexer does not answer a call, the SDK sends the call directly to Bedrock, as when reflexer is down, and your library signs the call again. LiteLLM and the AI SDK do not sign the call again: the SDK sends it with its first signature, while that signature is still valid ([Known limits](limits.md)).
+- **Mantle:** Python only. With a Bedrock API key, the SDK sends Mantle calls to reflexer. The SDK sends signed Mantle calls directly to Bedrock.
+- **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the line, your code works as before.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 
 ## Options
 
-- `sample=0.01` (TypeScript `{ sample: 0.01 }` in the options of `bedrock.wrap` or the `fetch`): send that share of the calls to reflexer, the rest to Bedrock.
-- Skip reflexer for one call, which then goes to Bedrock:
+- `sample=0.01` (TypeScript `{ sample: 0.01 }` in the options of `bedrock.wrap` or the `fetch`): the SDK sends that share of the calls to reflexer, and the other calls directly to Bedrock.
+- To skip reflexer for one call, so that the SDK sends it directly to Bedrock:
   - boto3, aiobotocore: `ReflexerPassThrough=True` on the call.
   - The AWS SDK for JavaScript: `client.send(command, { reflexerPassThrough: true })`; in a `.ts` file, cast the options to `any`.
-  - langchain-aws, Pydantic AI, Strands: a hook of yours on the boto3 client, [Advanced](advanced.md#skip-reflexer-for-one-call).
+  - langchain-aws, Pydantic AI, Strands: add your own hook on the boto3 client: [Advanced](advanced.md#skip-reflexer-for-one-call).
   - The AI SDK: `providerOptions: { reflexer: { passThrough: true } }`.
   - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Pass-Through": "1"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's second argument.
-- A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer), your Bedrock answer given, which never reaches Bedrock: `replay_response` at the top of an `InvokeModel` body; on Anthropic's clients, `extra_body={"replay_response": answer}` (AnthropicBedrock in TypeScript: `replay_response: answer` among the call's parameters, cast to `any` in a `.ts` file).
-- Reflexer's address, if you were given another: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
+- A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer): you give reflexer your Bedrock answer, and neither the SDK nor reflexer sends the call to Bedrock. Put `replay_response` at the top level of an `InvokeModel` body. On Anthropic's clients, use `extra_body={"replay_response": answer}` (AnthropicBedrock in TypeScript: `replay_response: answer` among the call's parameters, cast to `any` in a `.ts` file).
+- Reflexer's address, if reflexer gave you another one: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
 
-All of them: [Advanced](advanced.md).
+All options: [Advanced](advanced.md).
 
 ## Supported versions
 
 - Python 3.10+: boto3 1, aiobotocore 3, `anthropic` 2, LiteLLM 1, langchain-aws 1, Strands 1, Pydantic AI 2.
 - Node 20.3+: `@aws-sdk/client-bedrock-runtime` 3 from 3.1160.0, `@anthropic-ai/bedrock-sdk` on `@anthropic-ai/sdk` 1, `@ai-sdk/amazon-bedrock` 5 from 5.0.132 (Node 22+).
 
-Another major of boto3, aiobotocore, `anthropic`, LiteLLM or the TypeScript libraries raises before any call.
+With another major version of boto3, aiobotocore, `anthropic`, LiteLLM or the TypeScript libraries, the SDK raises an error before any call.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Advanced](advanced.md) · [Reference](reference.md)

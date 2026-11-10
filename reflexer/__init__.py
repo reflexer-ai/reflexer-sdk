@@ -27,7 +27,7 @@ class Reflexer:
     def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic, namespace=None):
         check(key)
         if namespace is not None and not (isinstance(namespace, str) and re.fullmatch(r"[!-~]+(?: [!-~]+)*", namespace)):
-            raise ValueError("a namespace may contain only letters, digits, signs and single spaces between them, because the SDK sends it in a header")
+            raise ValueError("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header")
         if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
             raise ValueError("sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer")
         self.key, self.base, self.sample, self.namespace = key, checked_base(base), sample, namespace

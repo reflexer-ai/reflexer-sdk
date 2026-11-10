@@ -28,7 +28,7 @@ export class Reflexer {
   constructor(key, wire, { base = BASE, sample = 1, namespace, clock = () => performance.now() / 1000 } = {}) {
     check(key);
     if (namespace != null && !(typeof namespace === "string" && /^[!-~]+(?: [!-~]+)*$/.test(namespace))) {
-      throw new Error("a namespace may contain only letters, digits, signs and single spaces between them, because the SDK sends it in a header");
+      throw new Error("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header");
     }
     if (typeof wire.reflexerPath !== "string" || !(wire.calls instanceof RegExp)) {
       throw new TypeError("a wire must have a reflexerPath string and a calls RegExp");

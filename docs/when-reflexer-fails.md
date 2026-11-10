@@ -66,7 +66,7 @@ Hello! How can I help you today?
 
 **What happens, Python:** your client's own timeout also applies to the call to reflexer. google-genai sets no timeout by default: set one in `http_options={"timeout": ...}`. When the timeout expires, the SDK sends the call directly to your provider, with the same timeout. So a call can take up to twice your timeout. If reflexer had already forwarded the call, your provider may run the call twice, and bill it twice.
 
-**What happens, TypeScript:** the SDK waits `headersTimeout` (300 seconds by default) for the start of reflexer's answer. Then the SDK sends the call directly to your provider. Your client's own timeout applies to both calls. If your timeout expires first, that try fails with a timeout error. If your provider SDK then retries, the retry goes directly to your provider. If reflexer had already forwarded the call, your provider may run the call twice, and bill it twice. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
+**What happens, TypeScript:** the SDK waits `headersTimeout` (300 seconds by default) for the start of reflexer's answer. Then the SDK sends the call directly to your provider. Your client's own timeout applies to both calls. If your timeout expires first, that try fails with a timeout error. After this failure, the SDK sends calls directly to your provider for a short time, so a retry by your provider SDK goes directly to your provider. On Bedrock, some clients behave differently: [Known limits](limits.md#amazon-bedrock). If reflexer had already forwarded the call, your provider may run the call twice, and bill it twice. To wait less: [Advanced](advanced.md#how-long-reflexer-may-take).
 
 ## Your reflexer key is malformed
 

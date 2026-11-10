@@ -1,28 +1,28 @@
 # Reference
 
-For looking a name up. Every public name of the SDK takes the same few arguments: they come first, then the names, grouped by how they are used. How to use each: its library page.
+Use this page to look up a name. Every public name of the SDK takes the same few arguments. This page lists these arguments first, then the names, in groups by use. Each library page shows how to use its names.
 
 ## The arguments
 
-**`reflexer_key`** (Python) · **`reflexerKey`** (TypeScript): `str`, required. Your reflexer key, `rfx1_...`, from onboarding; to get one, contact us at hello@reflexer.ai. Read it from the environment; never commit it. A key not of that form raises `ValueError` (TypeScript: `Error`) when the client is made. The functions take it as their first argument; `through` as its second.
+**`reflexer_key`** (Python) · **`reflexerKey`** (TypeScript): `str`, required. Your reflexer key, `rfx1_...`, which you receive at onboarding. To get one, write to hello@reflexer.ai. Read the key from the environment. Never commit it. If the key does not have this form, the SDK raises `ValueError` (TypeScript: `Error`) when you create the client. The functions take the key as their first argument; `through` takes it as its second argument.
 
-**`reflexer_base`** · **`reflexerBase`** · **`base`**: `str`, optional, default `"https://api.reflexer.ai"`. Reflexer's address. `https` only. `base` is the name on functions (Python's `http_client`, `client_args`, `through`, `litellm.client`; TypeScript's `fetch` functions and `bedrock.wrap`).
+**`reflexer_base`** · **`reflexerBase`** · **`base`**: `str`, optional, default `"https://api.reflexer.ai"`. The address of reflexer. It must use `https`. Functions name this argument `base` (Python's `http_client`, `client_args`, `through`, `litellm.client`; TypeScript's `fetch` functions and `bedrock.wrap`).
 
-**`sample`**: `float` from 0 to 1, optional, default 1. The share of calls that go to reflexer; the rest go to your provider. [Advanced](advanced.md#send-a-share-of-the-calls).
+**`sample`**: `float` from 0 to 1, optional, default 1. The share of calls that the SDK sends to reflexer. The SDK sends the other calls directly to your provider. [Advanced](advanced.md#send-a-share-of-the-calls).
 
-**`reflexer_namespace`** · **`reflexerNamespace`** · **`namespace`**: `str`, optional. A name for a set of your calls that reflexer keeps apart from your others, such as one per product or environment; with none, your calls share your default one. Letters, digits, signs and inner spaces; another value raises `ValueError` (TypeScript: `Error`) when the client is made. `namespace` is the name on functions, as `base` is. [Advanced](advanced.md#keep-calls-apart-a-namespace).
+**`reflexer_namespace`** · **`reflexerNamespace`** · **`namespace`**: `str`, optional. A name for a group of your calls. reflexer keeps each group separate from your other calls. For example, use one namespace per product or per environment. If you give no namespace, your calls are in your default namespace. Allowed characters: letters, digits, signs, and spaces that are not at the start or the end. For any other value, the SDK raises `ValueError` (TypeScript: `Error`) when you create the client. Functions name this argument `namespace`, as they do for `base`. [Advanced](advanced.md#keep-calls-apart-a-namespace).
 
-**`own`** (Python functions) · **`fetch`** (TypeScript options): optional, default your provider SDK's own. Your HTTP client or `fetch` (for `reflexer.gemini.client_args`, your `client_args` dict); reflexer's calls go by it too. [Advanced](advanced.md#your-own-http-client).
+**`own`** (Python functions) · **`fetch`** (TypeScript options): optional; the default is your provider SDK's own. Your HTTP client or `fetch` (for `reflexer.gemini.client_args`: your `client_args` dict). The SDK also sends its calls to reflexer through it. [Advanced](advanced.md#your-own-http-client).
 
-**`Reflexer-Pass-Through`** (a header) · **`ReflexerPassThrough`** (boto3's argument) · **`reflexerPassThrough`** (the AWS SDK's option): on one call, that call goes to your provider. [Advanced](advanced.md#skip-reflexer-for-one-call).
+**`Reflexer-Pass-Through`** (a header) · **`ReflexerPassThrough`** (boto3's argument) · **`reflexerPassThrough`** (the AWS SDK's option): set it on one call, and the SDK sends that call directly to your provider. [Advanced](advanced.md#skip-reflexer-for-one-call).
 
-**`headersTimeout`** (TypeScript `fetch` functions and `bedrock.wrap`): milliseconds, optional, default 300000. How long the call to reflexer waits for its answer to start, then the call goes to your provider. [Advanced](advanced.md#how-long-reflexer-may-take).
+**`headersTimeout`** (TypeScript `fetch` functions and `bedrock.wrap`): milliseconds, optional, default 300000. The time the SDK waits for reflexer's answer to start. After this time, the SDK sends the call directly to your provider. [Advanced](advanced.md#how-long-reflexer-may-take).
 
 ## Python
 
 ### Clients
 
-Each is the provider SDK's class, taking `reflexer_key`, `reflexer_base`, `sample` and `reflexer_namespace` beside its own arguments; everything else is the stock class's.
+Each class takes the arguments of the provider SDK's class (the stock class), and also `reflexer_key`, `reflexer_base`, `sample` and `reflexer_namespace`. Everything else is the same as in the stock class.
 
 | Name | Stock class | Page |
 |---|---|---|
@@ -61,7 +61,7 @@ Hello! How can I help you today?
 | `reflexer.gemini.http_client`, `async_http_client` | An HTTP client for google-genai's `httpx_client` and `httpx_async_client` | `key, own=None, base=…, sample=1.0, namespace=None` | [other libraries](other-libraries.md) |
 | `reflexer.gemini.client_args` | A dict for both `client_args` and `async_client_args` | `key, own=None, base=…, sample=1.0, namespace=None` | [other libraries](other-libraries.md) |
 | `reflexer.boto3.client` | A boto3 client | boto3's arguments, and `reflexer_key`, `reflexer_base`, `sample`, `reflexer_namespace` | [bedrock](bedrock.md#boto3) |
-| `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client given, now through reflexer | `client, reflexer_key, base=…, sample=1.0, namespace=None` | [bedrock](bedrock.md#aiobotocore) |
+| `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client you give, which now sends its calls through reflexer | `client, reflexer_key, base=…, sample=1.0, namespace=None` | [bedrock](bedrock.md#aiobotocore) |
 | `reflexer.litellm.client`, `async_client` | An HTTP handler for LiteLLM's `client=` | `reflexer_key, base=…, sample=1.0, namespace=None` | [bedrock](bedrock.md#litellm) |
 
 <!-- example: served python bedrock -->
@@ -81,7 +81,7 @@ Hello! How can I help you today?
 
 ### Classes
 
-Each is the provider SDK's class, taking `reflexerKey`, `reflexerBase`, `sample` and `reflexerNamespace` beside its own options.
+Each class takes the options of the provider SDK's class, and also `reflexerKey`, `reflexerBase`, `sample` and `reflexerNamespace`.
 
 | Name | From | Stock class | Page |
 |---|---|---|---|
@@ -94,10 +94,10 @@ Each is the provider SDK's class, taking `reflexerKey`, `reflexerBase`, `sample`
 | Name | From | Returns | Takes |
 |---|---|---|---|
 | `openai.fetch`, `azure.fetch`, `anthropic.fetch`, `gemini.fetch` | `@reflexer-ai/sdk` | A `fetch` for the provider SDK's `fetch` option | `key, { base, sample, namespace, fetch, headersTimeout }` |
-| `wrap` | `@reflexer-ai/sdk/bedrock` | The AWS SDK client given, now through reflexer | `client, key, { base, sample, namespace, headersTimeout }` |
+| `wrap` | `@reflexer-ai/sdk/bedrock` | The AWS SDK client you give, which now sends its calls through reflexer | `client, key, { base, sample, namespace, headersTimeout }` |
 | `fetch` | `@reflexer-ai/sdk/bedrock` | A `fetch` for AnthropicBedrock | `key, { base, sample, namespace, fetch, headersTimeout }` |
-| `anthropicMiddleware` | `@reflexer-ai/sdk/bedrock` | AnthropicBedrock's `middleware`, last of yours | (a value) |
-| `requestHandler` | `@reflexer-ai/sdk/bedrock` | An AWS SDK request handler around your own, for a client that sets its own `requestHandler` and so cannot use `wrap`; give it the client's `signer` too, or signed calls go to Bedrock directly | `key, { handler, signer, base, sample, namespace, headersTimeout }` |
+| `anthropicMiddleware` | `@reflexer-ai/sdk/bedrock` | AnthropicBedrock's `middleware`; put it after all your own middleware | (a value) |
+| `requestHandler` | `@reflexer-ai/sdk/bedrock` | An AWS SDK request handler that wraps your own handler. Use it for a client that sets its own `requestHandler`, because such a client cannot use `wrap`. Also give it the client's `signer`: without the signer, the SDK sends signed calls directly to Bedrock | `key, { handler, signer, base, sample, namespace, headersTimeout }` |
 | `fetch` | `@reflexer-ai/sdk/bedrock-ai` | A `fetch` for the AI SDK's Bedrock provider | `key, { base, sample, namespace, fetch, headersTimeout }` |
 | `middleware` | `@reflexer-ai/sdk/bedrock-ai` | For `wrapLanguageModel` | (a value) |
 
@@ -116,24 +116,24 @@ Hello! How can I help you today?
 
 ## Errors
 
-- A malformed key: `ValueError` (TypeScript `Error`), when the client is made. [When reflexer fails](when-reflexer-fails.md#your-reflexer-key-is-malformed).
+- A malformed key: `ValueError` (TypeScript `Error`), when you create the client. [When reflexer fails](when-reflexer-fails.md#your-reflexer-key-is-malformed).
 - An untested release of your provider SDK: `ImportError` at import (TypeScript: `Error`, at import or at the first call). [When reflexer fails](when-reflexer-fails.md#your-provider-sdk-is-a-release-reflexer-is-not-tested-on).
-- A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when the client is made.
-- A `sample` that is not a number from 0 to 1: `ValueError` (TypeScript `Error`), when the client is made.
-- `through` on a client already through reflexer: `ValueError`. aiobotocore on another HTTP session class, or on an aiohttp release reflexer's line cannot work with: `TypeError`.
-- TypeScript `GoogleGenAI`, when your headers replace both `User-Agent` and `x-goog-api-client`, so its calls name no `@google/genai` version: `Error`, at the call.
-- A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) reflexer cannot take: `reflexer.ReplayNotTaken` (TypeScript: `ReplayNotTaken`, from `@reflexer-ai/sdk`), or your SDK's connection error caused by it.
-- TypeScript, Bedrock: `bedrock.wrap` or `requestHandler` on a handler already wrapped, or on the AWS SDK's fetch handler: `Error`, when wrapped.
-- Anything else your code sees is your provider SDK's own error, as before.
+- A reflexer address that is not `https`: `ValueError` (TypeScript `Error`), when you create the client.
+- A `sample` that is not a number from 0 to 1: `ValueError` (TypeScript `Error`), when you create the client.
+- `through` on a client that already sends its calls through reflexer: `ValueError`. aiobotocore with another HTTP session class, or with an aiohttp release that the SDK cannot work with: `TypeError`.
+- TypeScript `GoogleGenAI`, when your headers replace both `User-Agent` and `x-goog-api-client`, so that its calls name no `@google/genai` version: `Error`, at the call.
+- A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) that reflexer cannot accept: `reflexer.ReplayNotTaken` (TypeScript: `ReplayNotTaken`, from `@reflexer-ai/sdk`), or the connection error of your provider SDK that it causes.
+- TypeScript, Bedrock: `bedrock.wrap` or `requestHandler` on a handler that is already wrapped, or on the AWS SDK's fetch handler: `Error`, when you wrap it.
+- Every other error that your code receives is your provider SDK's own error, as before.
 
 ## What reflexer adds to a response
 
-- A reply from reflexer has a `model` ending in `-reflexer`, and `usage.cost` holds its price in USD, also in a stream's usage. Gemini's and Bedrock Converse's have no such fields: Gemini's `model_version` (TypeScript `modelVersion`) ends in `-reflexer`; Converse's names no model, so read the header below.
-- Headers, on every response from reflexer: `Reflexer-Request-Id`, the call's id; `Reflexer-Cost`, the price in nano USD, 0 unless reflexer answered. `Reflexer-Answered-By`: `reflexer` when reflexer answered, `provider` on what your provider sent through reflexer; absent on errors and refusals reflexer returns itself, a 502 when it cannot reach your provider included, and on a dry run's reply that is your own answer. A call that went to your provider directly has none of them.
-- `Reflexer-Reason`, off by default, for debugging; reflexer turns it on for some accounts: why reflexer answered or not, such as `served`, `not_seen_repeating` or `low_confidence`.
+- In a reply from reflexer, `model` ends in `-reflexer`, and `usage.cost` holds the price in USD. A stream's usage holds the price too. Gemini replies and Bedrock Converse replies do not have these fields. In a Gemini reply, `model_version` (TypeScript `modelVersion`) ends in `-reflexer`. A Converse reply names no model and has no cost: read the headers below, `Reflexer-Answered-By` and `Reflexer-Cost`.
+- Headers that reflexer adds to every response it sends: `Reflexer-Request-Id`, the call's id; `Reflexer-Cost`, the price in nano USD, which is 0 when reflexer did not answer. `Reflexer-Answered-By`: `reflexer` when reflexer answered; `provider` when reflexer forwards what your provider sent. `Reflexer-Answered-By` is absent on errors and refusals that reflexer itself returns, including a 502 when reflexer cannot reach your provider. It is also absent on a dry run's reply that is your own answer. A call that the SDK sent directly to your provider has none of these headers.
+- `Reflexer-Reason`: why reflexer answered or did not answer, such as `served`, `not_seen_repeating` or `low_confidence`. It is for debugging. It is off by default; reflexer enables it for some accounts.
 
 ## Versions
 
-The SDK runs only on the majors of each provider SDK it is tested on: a new major raises before any call, until a release of the SDK is tested on it. The AI SDK's OpenAI, Anthropic and Google providers are not checked. The releases each supports are on its library page. The package is at 0.1.0 and has no release yet.
+For each provider SDK, the SDK runs only on the major versions that it is tested on. On a new major version, the SDK raises an error before any call, until a release of the SDK is tested on that major version. The SDK does not check the versions of the AI SDK's OpenAI, Anthropic and Google providers. Each library page lists the releases that the SDK supports. The package is at 0.1.0 and has no release yet.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Known limits](limits.md)

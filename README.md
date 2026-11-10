@@ -1,8 +1,8 @@
 # reflexer: Muscle memory for your LLM calls
 
-reflexer answers the LLM calls your app keeps repeating with the answer your provider would have given, for less. Every other call goes to your provider, as before.
+Your app makes some LLM calls again and again. reflexer answers these calls with the answer your provider would give, at a lower price. Your provider answers all other calls, as before.
 
-Change one import and one line, in the provider SDK you already use.
+To use reflexer, you change one import and one line. You keep the provider SDK you already use.
 
 <!-- example: served python -->
 ```diff
@@ -20,21 +20,21 @@ Change one import and one line, in the provider SDK you already use.
 Hello! How can I help you today?
 ```
 
-That's the whole change: the reply is OpenAI's format, as before, and removing the line puts your code back as it was.
+This is the whole change. The reply has OpenAI's format, as before. If you undo these two changed lines, your code is as it was before.
 
 What you get:
 
-- Your provider's types, fields and errors, as before.
-- Reflexer down, slow or busy: the call goes to your provider.
-- Your call, with your provider key, goes to reflexer, which forwards it to your provider when it does not answer; the reflexer key goes to reflexer only. [Security](SECURITY.md).
-- No dependencies: the SDK plugs into the provider SDK you have.
-- Every code example in these docs runs in the tests, with the output shown.
+- Your code gets your provider SDK's types, fields and errors, as before.
+- When reflexer is down, slow or busy, the SDK sends the call directly to your provider.
+- The SDK sends your call, with your provider key, to reflexer. When reflexer does not answer the call, reflexer forwards it to your provider. The SDK sends the reflexer key only to reflexer. [Security](SECURITY.md).
+- The SDK has no dependencies. It uses the provider SDK you already have.
+- The tests run every code example in these docs and check that it prints the output shown.
 
 Python 3.10+ · Node 20.3+ · [Apache-2.0](LICENSE)
 
 ## Install
 
-Not on PyPI or npm yet: install from a clone of this repository, built as a release is: Python's build tools only as `build-constraints.txt` pins them by hash (pip 26.1 or later), and npm runs no dependency's install script.
+The package is not on PyPI or npm yet. Install it from a clone of this repository. The commands below build it the same way as a release: pip uses only the Python build tools that `build-constraints.txt` pins by hash (this needs pip 26.1 or later), and npm runs no install script of any dependency.
 
 ```sh
 git clone https://github.com/reflexer-ai/reflexer-sdk
@@ -47,7 +47,7 @@ cd reflexer-sdk/typescript && npm ci --ignore-scripts && npm pack  # makes refle
 npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz  # in your project
 ```
 
-Then set `REFLEXER_KEY` to the key you got at onboarding. No key yet? Contact us at hello@reflexer.ai.
+Then set the environment variable `REFLEXER_KEY` to the key you received at onboarding. If you do not have a key, write to hello@reflexer.ai.
 
 ## Pick your library
 
@@ -61,6 +61,6 @@ Then set `REFLEXER_KEY` to the key you got at onboarding. No key yet? Contact us
 | [Pydantic AI](docs/pydantic-ai.md) | `pydantic-ai` | |
 | [The AI SDK](docs/ai-sdk.md) | | `ai` |
 
-Don't see yours? If it takes your provider SDK's client, an HTTP client or a `fetch`: [another library](docs/other-libraries.md).
+Is your library not in this table? If it accepts your provider SDK's client, an HTTP client or a `fetch`, see [another library](docs/other-libraries.md).
 
 Then: [When reflexer fails](docs/when-reflexer-fails.md) · [Advanced](docs/advanced.md) (skip one call, sampling, timeouts) · [Reference](docs/reference.md) · [Known limits](docs/limits.md) · [Contributing](CONTRIBUTING.md)

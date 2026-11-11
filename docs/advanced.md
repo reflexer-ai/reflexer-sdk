@@ -231,32 +231,6 @@ Your answer has the form of your provider's answer. For a call that is not strea
 
 The SDK does not read a body that you give as a stream. So the SDK does not detect a dry run sent in this way, and handles it as any other call. Give the whole body at once, as the provider SDKs do ([Known limits](limits.md#every-library)).
 
-## Ask reflexer not to answer
-
-When reflexer's server supports it, a call can ask reflexer not to answer. Then reflexer replies with an empty response: status 204, no body and no content type, with `Reflexer-Status-Origin: reflexer`, `Reflexer-Request-Id`, and `Reflexer-Cost: 0`. It does so for streamed calls too. The SDK takes this reply as reflexer's answer: it gives the reply to your provider SDK, and it does not send the call to your provider.
-
-Your provider SDK decides what you get from a reply with no body. The SDK does not change it. This is what each library gives:
-
-| Library | Not streamed | Streamed |
-|---|---|---|
-| OpenAI (Python) | the empty string `""` | a stream with no chunks |
-| Anthropic (Python), AnthropicBedrock (Python) | the empty string `""` | a stream with no events |
-| Gemini (Python), ChatGoogleGenerativeAI | raises `APIError` (204 No Content) | raises `APIError` (204 No Content) |
-| ChatOpenAI (Python) | raises `ValueError` | raises `ValueError` |
-| boto3, aiobotocore: Converse | a response with `ResponseMetadata` only (status 204), and no `output` | |
-| boto3, aiobotocore: InvokeModel | a `body` that reads as zero bytes | |
-| boto3: ConverseStream, InvokeModelWithResponseStream | | a stream with no events |
-| aiobotocore: ConverseStream, InvokeModelWithResponseStream | | sometimes never ends: aiobotocore's reader of the stream can loop on an empty body, also with no reflexer |
-| langchain-aws | raises `ValueError` | raises `ValueError` |
-| Strands | raises `KeyError` | no text |
-| Pydantic AI | raises `ModelAPIError` | asks again once (a second call to reflexer), then raises `UnexpectedModelBehavior` |
-| LiteLLM (Bedrock) | raises `BadRequestError` (Converse) or `APIConnectionError` (InvokeModel) | raises `APIConnectionError` |
-| OpenAI (TypeScript) | `null` (Responses: throws `TypeError`) | throws `OpenAIError` |
-| Anthropic (TypeScript) | `null` | throws `AnthropicError` |
-| Gemini (TypeScript) | throws `SyntaxError` | throws `Error` |
-| The AI SDK | throws `APICallError` | throws `NoOutputGeneratedError` |
-| The AWS SDK for JavaScript | Converse: `$metadata` only (status 204); InvokeModel: a `body` of `null` | a stream with no events |
-
 ## Send a share of the calls
 
 `sample` is the share of calls that the SDK sends to reflexer. The SDK sends the other calls directly to your provider. The default is 1: the SDK sends every call to reflexer. The SDK makes a separate random choice for each call.

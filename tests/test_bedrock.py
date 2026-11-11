@@ -959,6 +959,18 @@ class Promises(Case):
             with self.subTest(lib=lib, how=how):
                 self.assertEqual((uncovered, held), ([], True))
 
+    def test_a_signed_calls_option_headers_reach_reflexer_alone_never_signed(self):
+        given = {"reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "100"}
+        for lib in RUNTIME:
+            with self.subTest(lib=lib):
+                made, calls = world(lib)
+                SCENES["busy"](made)
+                calls.call(calls.client(keyed=False), headers={name.title(): value for name, value in given.items()})
+                calls.close()
+                to_reflexer, arrival = made.reflexer.seen[-1], made.provider.seen[-1]
+                self.assertEqual({name: to_reflexer.headers.get(name) for name in given}, given)
+                self.assertEqual(([name for name in arrival.headers if name in given], bedrock.signature_holds(arrival)), ([], True))
+
     def test_nothing_a_served_call_hands_the_client_holds_the_key(self):
         for lib, where in what_the_client_is_handed().items():
             with self.subTest(lib=lib):

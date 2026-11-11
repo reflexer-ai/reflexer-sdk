@@ -23,15 +23,17 @@ supported("boto3", [1])
 EVENT = "before-send."
 
 
-def client(*args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, **config):
+def client(*args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, reflexer_answer=True, reflexer_store=True,
+                 reflexer_pass_through=False, reflexer_timeout_ms=None, **config):
     """`boto3.client(*args, **config)`, through reflexer."""
-    return through(boto3.client(*args, **config), reflexer_key, reflexer_base, sample, reflexer_namespace)
+    return through(boto3.client(*args, **config), reflexer_key, reflexer_base, sample, reflexer_namespace, reflexer_answer, reflexer_store,
+                   reflexer_pass_through, reflexer_timeout_ms)
 
 
-def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
+def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
     """Ours after every `before-send` handler of the client's, on its own emitter; reflexer's leg by its own HTTP session:
     its pool, proxies, TLS and timeouts."""
-    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace)
+    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)
     send, events = client._endpoint.http_session.send, client.meta.events
     if getattr(events, "reflexer_through", False):  # twice, each call would try reflexer twice
         raise ValueError("this client already sends its calls through reflexer")

@@ -114,6 +114,22 @@ class Configurable(unittest.TestCase):
                 self.assertEqual({request.url.host for request in seen}, {REFLEXER})
                 self.assertTrue(all("0.25" in request.content.decode() for request in seen))
 
+    def test_a_model_built_again_keeps_the_options(self):
+        sent = {"reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500"}
+        options = dict(reflexer_answer=False, reflexer_store=False, reflexer_pass_through=True, reflexer_timeout_ms=2500)
+        makers = (("openai", lambda handler: ChatOpenAI(model="frontier-x", api_key="made-up", max_retries=0, reflexer_key=KEY, **options,
+                                                         http_client=openai.DefaultHttpxClient(transport=httpx2.MockTransport(handler)),
+                                                         http_async_client=openai.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(handler))),
+                   CHAT),
+                  ("gemini", lambda handler: ChatGoogleGenerativeAI(model="frontier-z", api_key="made-up", retries=1, reflexer_key=KEY, **options,
+                                                                    client_args={"transport": httpx.MockTransport(handler)}), GEMINI))
+        for name, make, body in makers:
+            with self.subTest(name):
+                handler, seen = world(body)
+                chat = make(handler).configurable_fields(temperature=ConfigurableField(id="temperature"))
+                chat.with_config(configurable={"temperature": 0.25}).invoke("Hi")
+                self.assertEqual([{header: request.headers.get(header) for header in sent} for request in seen], [sent])
+
     def test_a_model_built_again_and_dropped_leaves_the_defaults_clients_open(self):
         """LangChain closes a dropped model's clients; stock, each model built again has its own."""
         handler, _ = world(GEMINI)

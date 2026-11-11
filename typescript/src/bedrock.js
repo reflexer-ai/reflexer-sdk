@@ -9,7 +9,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { HEADERS_TIMEOUT, provider, textOf } from "./index.js";
-import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, isReplay, skips, skipsByOption } from "./logic.js";
+import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, checked, isReplay, skips, skipsByOption } from "./logic.js";
 
 export const WIRE = { reflexerPath: "/bedrock", calls: /\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/ };
 const STREAMED = /\/(invoke-with-response-stream|converse-stream)$/; // the wire's streamed calls
@@ -87,7 +87,7 @@ async function bounded(start, given, ms) {
  * AI SDK's every timeout, and `AbortSignal.timeout`'s), a call not streamed goes straight, given as long again: a
  * stream's caller has ended it already, above any line. AnthropicBedrock's timer cuts with no reason: its middleware
  * tells it from a cancel (`anthropicMiddleware`).
- * @param {string} key @param {any} [options] `{ base, sample, namespace, fetch, headersTimeout, signed }`
+ * @param {string} key @param {any} [options] `{ base, sample, namespace, answer, store, passThrough, timeoutMs, fetch, headersTimeout, signed }`
  */
 export function fetch(key, options = {}) {
   const own = (/** @type {any} */ input, /** @type {any} */ init) => (options.fetch ?? globalThis.fetch)(input, init);
@@ -109,7 +109,7 @@ export function fetch(key, options = {}) {
   return async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
     const store = call.getStore();
     const headers = tested(new Headers(init.headers));
-    skips(headers.get(SKIP)); // a wrong value throws here, before anything is sent
+    checked(headers); // a wrong value throws here, before anything is sent
     if (store?.skipped || !(keyed(headers) || (signed(headers) && (store?.again || options.signed)))) return straight(own, input, init);
     if (init.signal?.aborted) return routed(input, init); // the client's own signal ended before reflexer's leg: as shipped
     const seen = store?.seen ?? {};
@@ -154,7 +154,7 @@ export async function anthropicMiddleware(/** @type {any} */ request, /** @type 
  * copy of the request, keyed or signed, bounded to its answer's head as the `fetch` line is; the client's own request
  * never holds the key. A signed call goes to reflexer only given `signer`, the client's own, which signs its straight leg
  * anew after reflexer's (`wrap` gives it). The skip as `send`'s option: `client.send(command, { reflexerSkip: true })`.
- * @param {string} key @param {any} options `{ handler, signer, base, sample, namespace, headersTimeout }`
+ * @param {string} key @param {any} options `{ handler, signer, base, sample, namespace, answer, store, passThrough, timeoutMs, headersTimeout }`
  */
 export function requestHandler(key, { handler, signer, ...options }) {
   if (HANDLERS.has(handler)) throw new Error("this handler already sends its calls through reflexer"); // twice, a call would try reflexer twice
@@ -164,7 +164,7 @@ export function requestHandler(key, { handler, signer, ...options }) {
     /** @param {any} request @param {any} [given] */
     async handle(request, { reflexerSkip, ...given } = {}) {
       const headers = tested(new Headers(plain(request.headers)));
-      skips(headers.get(SKIP)); // a wrong value throws here, before anything is sent
+      checked(headers); // a wrong value throws here, before anything is sent
       skipsByOption(reflexerSkip, NOT_A_SKIP_OPTION); // as does a wrong option
       if (!keyed(headers) && !(signer && signed(headers))) return handler.handle(smithyStaysStraight(request), given);
       const { response, sent } = reflexerSkip ? { response: null, sent: false } : await ask(request, given);

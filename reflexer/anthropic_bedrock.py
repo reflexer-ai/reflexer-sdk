@@ -10,7 +10,7 @@ a signed one, to Mantle as stock: reflexer takes signed calls on Bedrock's runti
 """
 import contextvars, inspect
 import anthropic
-from . import BASE, OURS, SKIP, skips, supported
+from . import BASE, OPTION_HEADERS, OURS, SKIP, checked, skips, supported
 from .anthropic import MESSAGES
 from .bedrock import BEDROCK, Keyed, setup_http_client, straight
 from .transport import STRAIGHT, Through, setup_client
@@ -45,10 +45,10 @@ class Again(Keyed):
         self.send = aleg if inspect.iscoroutinefunction(inner.send) else leg
 
     def handle_request(self, request):
-        return self.straight(request) if (CALL.get() or {}).get("skipped") else super().handle_request(request)
+        return self.straight(request) if given_back(request) else super().handle_request(request)
 
     async def handle_async_request(self, request):
-        return await (self.straight(request) if (CALL.get() or {}).get("skipped") else super().handle_async_request(request))
+        return await (self.straight(request) if given_back(request) else super().handle_async_request(request))
 
     def signed_call(self, request):
         return Through.handle_request(self, request) if self.first(request) else self.straight(request)
@@ -67,6 +67,14 @@ class Again(Keyed):
         straight(None, kept, None)  # takes off those of ours its signature does not cover, as the call's straight leg does
         call["first"], call["ours"] = True, {name: value for name, value in kept.items() if name.lower().startswith(OURS)}
         return True
+
+
+def given_back(request):
+    """Whether our middleware skipped the call. The call's own headers for reflexer it took off before the SDK signed go
+    back on, unsigned: reflexer's leg carries them, and the straight leg takes them off, as any header of ours."""
+    call = CALL.get() or {}
+    request.headers.update(call.get("given", {}))
+    return call.get("skipped", False)
 
 
 def withheld(request):
@@ -98,13 +106,17 @@ class Middleware(anthropic.Middleware):
     @staticmethod
     def attempt(request):
         """(the attempt, its call's own state), the skip's header taken off: it never leaves. "true", the call goes straight;
-        "false", as with no header; any other value raises, before anything is sent."""
+        "false", as with no header; any other value raises, before anything is sent. The call's own headers for reflexer
+        (`OPTION_HEADERS`), checked and taken off too, kept for reflexer's leg, so the SDK never signs them."""
         headers = dict(request.headers)
         given = [value for name, value in headers.items() if name.lower() == SKIP]
-        if not given:
+        ours = {name.lower(): value for name, value in headers.items() if name.lower() in OPTION_HEADERS}
+        checked(ours)  # a wrong value raises
+        if not given and not ours:
             return request, {}
         skipped = any([skips(value) for value in given])  # each value read: a wrong one raises
-        return request.copy(headers={name: value for name, value in headers.items() if name.lower() != SKIP}), {"skipped": True} if skipped else {}
+        left = {name: value for name, value in headers.items() if name.lower() != SKIP and name.lower() not in OPTION_HEADERS}
+        return request.copy(headers=left), {"skipped": True, "given": ours} if skipped else {"given": ours}
 
     def handle(self, request, call_next):
         request, call = self.attempt(request)
@@ -136,9 +148,11 @@ def bedrock_client(cls, make_http_client, ours=()):
     copy of a Bedrock client drops it, and would make one with no key)."""
 
     class Client(setup_client(cls, make_http_client)):
-        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, http_client=None, middleware=(), **config):
+        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, reflexer_answer=True, reflexer_store=True,
+                 reflexer_pass_through=False, reflexer_timeout_ms=None, http_client=None, middleware=(), **config):
             if not hasattr(http_client, "reflexer_through"):
-                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample, namespace=reflexer_namespace)
+                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample, namespace=reflexer_namespace, answer=reflexer_answer,
+                 store=reflexer_store, pass_through=reflexer_pass_through, timeout_ms=reflexer_timeout_ms)
             self.reflexer_http_client = http_client
             middleware = (*[each for each in middleware or () if not isinstance(each, Middleware)], *[made() for made in ours])
             super().__init__(*args, http_client=http_client, **({"middleware": middleware} if middleware else {}), **config)

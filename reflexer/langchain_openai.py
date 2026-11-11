@@ -9,10 +9,12 @@ supported("langchain-openai", [1])
 
 
 class ChatOpenAI(langchain_openai.ChatOpenAI):
-    def __init__(self, *, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, **config):
+    def __init__(self, *, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, reflexer_answer=True, reflexer_store=True,
+                 reflexer_pass_through=False, reflexer_timeout_ms=None, **config):
         if reflexer_key is None and all(hasattr(config.get(name), "reflexer_through") for name in ("http_client", "http_async_client")):
             return super().__init__(**config)  # LangChain building it again from its fields (`configurable_fields`): ours as they are
-        way = dict(base=reflexer_base, sample=sample, namespace=reflexer_namespace)
+        way = dict(base=reflexer_base, sample=sample, namespace=reflexer_namespace, answer=reflexer_answer,
+                 store=reflexer_store, pass_through=reflexer_pass_through, timeout_ms=reflexer_timeout_ms)
         # given an HTTP client, LangChain stops asking a stream for its usage: the stock class's choice is kept. Without
         # model_kwargs, which its choice does not read and LangChain changes in place
         stock = langchain_openai.ChatOpenAI(**{name: value for name, value in config.items() if name != "model_kwargs"})

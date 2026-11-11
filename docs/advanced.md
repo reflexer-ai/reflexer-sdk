@@ -297,6 +297,46 @@ Hello! How can I help you today?
 
 The SDK sends the namespace only to reflexer, never to your provider. To use another namespace on one call, set the `Reflexer-Namespace` header on that call. This header has priority over the client's namespace. Set it in the same way as for [skipping reflexer for one call](#skip-reflexer-for-one-call), with `Reflexer-Namespace` and your namespace in place of `Reflexer-Skip` and `true`. On Bedrock's signed calls, give the namespace on the client instead ([Known limits](limits.md#amazon-bedrock)). The functions that take the key take `namespace`, as they take `base`.
 
+## Tell reflexer what to do with your calls
+
+Four options tell reflexer what to do with your calls. You give them next to your key. If you do not give an option, the SDK sends nothing for it, and reflexer uses its default.
+
+- `reflexer_answer` (TypeScript: `reflexerAnswer`), default `True`. With `False`, reflexer does not answer: it asks no model and no provider, and it returns an empty reply (HTTP 204). Details on what your code receives will follow.
+- `reflexer_store` (`reflexerStore`), default `True`. With `False`, reflexer keeps no copy of the call.
+- `reflexer_pass_through` (`reflexerPassThrough`), default `False`. With `True`, reflexer never answers itself: it forwards the call to your provider (for a replay, it returns the replay's answer).
+- `reflexer_timeout_ms` (`reflexerTimeoutMs`), default none. A whole number of milliseconds, from 1. reflexer waits at most this long for its own answer, then it forwards the call to your provider. This option can only make reflexer's own limit shorter: for a value above that limit, reflexer returns an error (HTTP 400).
+
+<!-- example: served -->
+```python
+import os
+from reflexer.openai import OpenAI
+
+client = OpenAI(reflexer_key=os.environ["REFLEXER_KEY"], reflexer_store=False, reflexer_timeout_ms=2000)
+reply = client.chat.completions.create(model="frontier-x", messages=[{"role": "user", "content": "Hi"}])
+print(reply.choices[0].message.content)
+```
+
+```text
+Hello! How can I help you today?
+```
+
+<!-- example: served -->
+```js
+import { OpenAI } from "@reflexer-ai/sdk/openai";
+
+const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY, reflexerStore: false, reflexerTimeoutMs: 2000 });
+const reply = await client.chat.completions.create({ model: "frontier-x", messages: [{ role: "user", content: "Hi" }] });
+console.log(reply.choices[0].message.content);
+```
+
+```text
+Hello! How can I help you today?
+```
+
+The SDK checks each option when you create the client. `reflexer_answer`, `reflexer_store` and `reflexer_pass_through` must be `True` or `False` (a number or a string is refused). `reflexer_timeout_ms` must be a whole number from 1. For any other value, the SDK raises `ValueError` (TypeScript: `Error`). The SDK sends the options only to reflexer, never to your provider.
+
+To change an option for one call, set its header on that call: `Reflexer-Answer`, `Reflexer-Store` or `Reflexer-Pass-Through` with `true` or `false`, or `Reflexer-Timeout-Ms` with a number of milliseconds. The header has priority over the client's option. Set it in the same way as for [skipping reflexer for one call](#skip-reflexer-for-one-call). On Bedrock's signed calls, give the option on the client instead ([Known limits](limits.md#amazon-bedrock)). The SDK checks the header's value before it sends anything; for a wrong value, it raises `ValueError` (TypeScript: `Error`). The functions that take the key take `answer`, `store`, `pass_through` and `timeout_ms` (TypeScript options: `answer`, `store`, `passThrough`, `timeoutMs`), as they take `base`.
+
 ## How long reflexer may take
 
 Python: your client's own timeout applies to the call to reflexer. When this timeout expires, the SDK sends the call directly to your provider, with the same timeout. So a call can take up to twice your timeout. If reflexer had already forwarded the call to your provider, your provider may run the call twice and bill it twice. Set the timeout as you would without reflexer. google-genai sets no timeout by default, so set one: `http_options={"timeout": 60_000}` (milliseconds).

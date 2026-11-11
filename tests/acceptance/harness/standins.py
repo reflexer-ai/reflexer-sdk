@@ -49,9 +49,9 @@ SERVED_TEXT, STRAIGHT_TEXT = "served by reflexer", "from the provider"
 SERVED_ID = "rfx-" + REQUEST_ID.replace("-", "")  # a served answer's id: the request id's hex
 SERVED_MODEL = {"chat": "frontier-x-reflexer", "responses": "frontier-x-reflexer", "messages": "frontier-y-reflexer",
                 "gemini": "frontier-z-reflexer"}
-OURS = {"Reflexer-Request-Id": REQUEST_ID, "Reflexer-Answered-By": "reflexer", "Reflexer-Cost": SERVED_COST,
+OURS = {"Reflexer-Request-Id": REQUEST_ID, "Reflexer-Answered-By": "reflexer", "Reflexer-Cost-Nano-Usd": SERVED_COST,
         "Reflexer-Status-Origin": "reflexer"}
-PROVIDERS_THROUGH_US = {"Reflexer-Request-Id": REQUEST_ID, "Reflexer-Answered-By": "provider", "Reflexer-Cost": "0",
+PROVIDERS_THROUGH_US = {"Reflexer-Request-Id": REQUEST_ID, "Reflexer-Answered-By": "provider", "Reflexer-Cost-Nano-Usd": "0",
                         "Reflexer-Status-Origin": "provider"}
 JSON = "application/json"
 SSE = "text/event-stream"

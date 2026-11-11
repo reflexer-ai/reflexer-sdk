@@ -8,14 +8,14 @@ import check
 
 class Judge(unittest.TestCase):
     def test_a_sound_served_answer_passes(self):
-        self.assertEqual(check.judge({"reflexer-answered-by": "reflexer", "reflexer-cost": "12000", "reflexer-request-id": "x"},
+        self.assertEqual(check.judge({"reflexer-answered-by": "reflexer", "reflexer-cost-nano-usd": "12000", "reflexer-request-id": "x"},
                                      "frontier-x-reflexer", 1.2e-05), [])
 
     def test_a_served_answer_without_its_model_or_price_fails(self):
         self.assertEqual(len(check.judge({"reflexer-answered-by": "reflexer"}, "frontier-x", None)), 3)
 
     def test_a_pass_through_priced_by_reflexer_fails(self):
-        self.assertTrue(check.judge({"reflexer-answered-by": "provider", "reflexer-cost": "5"}, "frontier-x", 0.5))
+        self.assertTrue(check.judge({"reflexer-answered-by": "provider", "reflexer-cost-nano-usd": "5"}, "frontier-x", 0.5))
 
     def test_a_straight_call_passes(self):
         self.assertEqual(check.judge({}, "frontier-x", None), [])

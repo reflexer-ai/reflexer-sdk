@@ -178,7 +178,7 @@ def fields(sdk, answer):
     or None. On gemini, whose objects hold no price: the headers its object keeps."""
     if sdk == "gemini":
         headers = getattr(getattr(answer, "sdk_http_response", None), "headers", None) or {}
-        return {"request_id": headers["reflexer-request-id"], "answered_by": "reflexer", "cost": int(headers["reflexer-cost"])} \
+        return {"request_id": headers["reflexer-request-id"], "answered_by": "reflexer", "cost": int(headers["reflexer-cost-nano-usd"])} \
             if headers.get("reflexer-answered-by") == "reflexer" else None
     cost = usage_cost(sdk, answer)
     served = str(getattr(answer, "id", "")).startswith("rfx-") or (sdk == "acme" and cost is not None)

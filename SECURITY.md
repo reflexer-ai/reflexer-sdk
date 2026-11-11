@@ -72,7 +72,7 @@ A release (`.github/workflows/release.yml`) ships a tag on a commit of `main` on
 - LangChain: `ChatAnthropic` takes no HTTP client, so its calls cannot go through reflexer. On reflexer's LangChain classes, LangChain's TCP keepalive (`http_socket_options`) does not apply: LangChain sets it only on the HTTP clients it makes. LangChain's serialization (`dumpd`, then `loads`) gives back LangChain's own class, without reflexer. LangChain's own classes, given an HTTP client, stop asking a stream for its usage and price: `stream_usage=True` keeps them.
 - TypeScript, LangChain.js: `@langchain/anthropic`'s `ChatAnthropic` bundles a major of `@anthropic-ai/sdk` this SDK is not tested on, so its calls given reflexer's `fetch` throw; `@langchain/google-genai` takes no `fetch`.
 - Pydantic AI on Python 3.10: its last release for 3.10 fails Anthropic's calls, with the stock client too.
-- Gemini: google-genai's automatic function calling, and `@google/genai`'s given a `CallableTool`, can make several HTTP calls for one call of the SDK's: the answer shows only the last one's price (`Reflexer-Cost`), and the bill counts them all.
+- Gemini: google-genai's automatic function calling, and `@google/genai`'s given a `CallableTool`, can make several HTTP calls for one call of the SDK's: the answer shows only the last one's price (`Reflexer-Cost-Nano-Usd`), and the bill counts them all.
 - TypeScript, the AI SDK on Gemini names the model asked for, not the answer's: `result.response.headers["reflexer-answered-by"]` says who answered.
 - Amazon Bedrock: on Mantle, a signed call goes to Mantle as stock sends it, not through reflexer.
 - LiteLLM: only its Bedrock calls go through reflexer; its calls to other providers go as stock.

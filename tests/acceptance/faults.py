@@ -471,7 +471,7 @@ FAULTS = {
     "counts_each_in_flight": setter(reflexer.Breaker, "note", note_counting_each),
     "never_resets": setter(reflexer.Breaker, "note", note_never_resetting),
     # the answer
-    "strips_the_price": lambda: on_every_answer(edited_json(without_the_price, drop=("reflexer-cost", "reflexer-answered-by")), from_reflexer),
+    "strips_the_price": lambda: on_every_answer(edited_json(without_the_price, drop=("reflexer-cost-nano-usd", "reflexer-answered-by")), from_reflexer),
     "straight_dressed_as_served": lambda: on_every_answer(edited_json(dressed_as_served, more=standins.OURS), lambda a: not from_reflexer(a)),
     "prices_a_pass_through": lambda: on_every_answer(edited_json(priced), from_reflexer),
     "reads_answers_whole": lambda: on_reflexers_answer(read_whole),

@@ -775,7 +775,7 @@ def fields_in_the_objects_dump(t):
     outcome = t.ask(t.client())
     t.served(outcome)
     dump = outcome.answer.model_dump()
-    price = dump["sdk_http_response"]["headers"]["reflexer-cost"] if t.sdk == "gemini" else dump["usage"]["cost"]
+    price = dump["sdk_http_response"]["headers"]["reflexer-cost-nano-usd"] if t.sdk == "gemini" else dump["usage"]["cost"]
     t.check(price in (standins.SERVED_COST, EXPECTED_COST), f"its dump holds {price}")
 
 
@@ -839,7 +839,7 @@ def fields_leave_a_responses_bytes_untouched(t):
     sent = json.dumps(standins.as_served(path, standins.body_for(path, SERVED_TEXT))).encode()
     got = raw.http_response.content
     t.check(got == sent, f"the bytes changed: {got[:120]!r}")
-    t.check(raw.headers.get("reflexer-cost") == standins.SERVED_COST, "our header is not in the raw view")
+    t.check(raw.headers.get("reflexer-cost-nano-usd") == standins.SERVED_COST, "our header is not in the raw view")
 
 
 @case("fields", sdks=("openai", "azure"))

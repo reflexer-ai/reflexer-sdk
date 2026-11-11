@@ -66,7 +66,7 @@ function far(url, headers, sent) {
   if (!ours && !/(^|\.)(openai\.com|anthropic\.com|googleapis\.com|azure\.com|amazonaws\.com)$/.test(url.hostname)) throw new TypeError(`offline: ${url.host}`); // reaches no one
   world.seen.push({ url, headers, body: text, message: Boolean(body) });
   if (!body) return { status: 404, headers: {}, body: "" };
-  const reflexers = ours ? { "reflexer-status-origin": "reflexer", "reflexer-answered-by": "reflexer", "reflexer-cost": "12000" } : {};
+  const reflexers = ours ? { "reflexer-status-origin": "reflexer", "reflexer-answered-by": "reflexer", "reflexer-cost-nano-usd": "12000" } : {};
   return { status: 200, headers: { "content-type": "application/json", ...reflexers }, body: JSON.stringify(body) };
 }
 

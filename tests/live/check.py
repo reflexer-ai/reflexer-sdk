@@ -75,10 +75,10 @@ def judge(headers, model, cost):
     if answered == "reflexer":
         return [problem for problem, broken in (
             (f"a served answer's model is {model}, not ending in -reflexer", not str(model).endswith("-reflexer")),
-            ("a served answer with no Reflexer-Cost", headers.get("reflexer-cost") is None),
+            ("a served answer with no Reflexer-Cost-Nano-Usd", headers.get("reflexer-cost-nano-usd") is None),
             ("a served answer with no request id", headers.get("reflexer-request-id") is None)) if broken]
     if answered == "provider":
-        return ["a pass through with a price written by reflexer"] if cost is not None and headers.get("reflexer-cost") not in (None, "0") else []
+        return ["a pass through with a price written by reflexer"] if cost is not None and headers.get("reflexer-cost-nano-usd") not in (None, "0") else []
     return []  # no header of reflexer's: the call went straight, which the SDK allows
 
 
@@ -103,7 +103,7 @@ def main(sdks):
         for way, replay in (("replay", replayed), ("replay, streamed", replayed_stream)):
             headers, text = replay(key, base)
             print(f"{way}: answered by {headers.get('reflexer-answered-by', 'its field')}, text {text!r}, "
-                  f"Reflexer-Cost {headers.get('reflexer-cost')}, id {headers.get('reflexer-request-id')}")
+                  f"Reflexer-Cost-Nano-Usd {headers.get('reflexer-cost-nano-usd')}, id {headers.get('reflexer-request-id')}")
             if replay_broken(headers, text):
                 print("  broken: a replay answered by someone else than reflexer or its field", file=sys.stderr)
                 failed = True
@@ -113,7 +113,7 @@ def main(sdks):
         except Exception as error:  # a made-up provider key: the provider's own refusal is a sound pass through
             headers, model, cost = provider_refusal(error)
         print(f"{sdk}: answered by {headers.get('reflexer-answered-by', 'the provider, straight')}, model {model}, "
-              f"Reflexer-Cost {headers.get('reflexer-cost')}, usage.cost {cost}, id {headers.get('reflexer-request-id')}")
+              f"Reflexer-Cost-Nano-Usd {headers.get('reflexer-cost-nano-usd')}, usage.cost {cost}, id {headers.get('reflexer-request-id')}")
         for problem in judge(headers, model, cost):
             print(f"  broken: {problem}", file=sys.stderr)
             failed = True

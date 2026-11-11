@@ -139,6 +139,9 @@ class Read(unittest.TestCase):
             (503, told, ASKED),
             (529, told, ASKED),
             (502, OURS | {"reflexer-status-origin": "connection"}, ASKED),
+            (502, OURS | {"reflexer-status-origin": "relay"}, ASKED),  # the same meaning under its new name
+            (200, OURS | {"reflexer-status-origin": "relay"}, ASKED),
+            (204, {"reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "reflexer-cost": "0"}, ANSWER),  # reflexer asked not to answer: its empty answer, never the provider's
             (401, told, GRACE),
             (400, told, GRACE),  # gemini's key error
             (500, OURS | {"reflexer-status-origin": "provider"}, ANSWER),  # a provider's status never trips it

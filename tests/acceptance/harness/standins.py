@@ -7,6 +7,7 @@
     reply     any status, headers and body: `set("reply", status=503, headers={...}, body=...)`
     balancer  a load balancer's own answer: a 401 with none of our headers (`status=` for another)
     busy      reflexer's 503, marked its own, with `Retry-After` (`status=529` for Anthropic's)
+    empty     reflexer's answer when asked not to answer: a 204 with our headers, cost 0, no body and no content-type
     redirect  a 307 elsewhere, as relayed from a provider
     dead      nothing listens: connections are refused; the port stays its own, for no other case to take
     reset     accepts, records an arrival with no path, and resets: a dead stand-in whose attempts can be counted
@@ -55,6 +56,7 @@ PROVIDERS_THROUGH_US = {"Reflexer-Request-Id": REQUEST_ID, "Reflexer-Answered-By
 JSON = "application/json"
 SSE = "text/event-stream"
 REDIRECT_TARGET = "https://elsewhere.example/moved"
+EMPTY = {"Reflexer-Request-Id": REQUEST_ID, "Reflexer-Cost": "0", "Reflexer-Status-Origin": "reflexer"}
 PRESETS = {"busy": {"status": 503, "headers": {"Reflexer-Status-Origin": "reflexer", "Retry-After": "0"}},
            "redirect": {"status": 307, "headers": PROVIDERS_THROUGH_US | {"location": REDIRECT_TARGET}, "body": b""}}
 
@@ -283,6 +285,8 @@ class Standin:
         if mode == "drop":
             handler.close_connection = True
             return None
+        if mode == "empty":
+            return handler.empty(EMPTY)
         if mode == "garbage":
             handler.wfile.write(b"this is not http\r\n\r\n")
             handler.close_connection = True
@@ -393,6 +397,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.arrival.handed_first = params["handshake"].wait(HANDSHAKE_WAIT)
             elif params.get("gap"):
                 time.sleep(params["gap"])
+
+    def empty(self, headers):
+        """A 204: its head only, as HTTP has it, with no content-type and no content-length."""
+        self.send_response(204)
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.flush()
 
     def cut(self, status, headers, data):
         self._head(status, dict(headers), JSON, len(data))

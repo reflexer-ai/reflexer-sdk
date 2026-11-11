@@ -2,7 +2,7 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, types, unittest
+import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, traceback, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -316,6 +316,14 @@ def reached_bedrock_after(scene, extra=None):
 
 
 REPLAYING = ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle")  # those whose calls take a field at the body's top
+
+
+def empty_answer_calls():
+    """(lib, keyed, op): each line's every message call, carrying a key, and signed where its signed calls go to reflexer. Not
+    aiobotocore's streamed ones: on an empty 204 its own event-stream reader can loop without end, as stock, with no
+    reflexer in the way."""
+    return [(lib, keyed, op) for lib in LINES for keyed in ((True, False) if lib in RUNTIME else (True,))
+            for op in bedrock.LIBS[lib].ops if op != "count_tokens" and not (lib == "aiobotocore" and op in bedrock.STREAMED_OPS)]
 
 
 def signed_replays_reaching_bedrock():
@@ -872,6 +880,21 @@ class Promises(Case):
             for lib, (text, reached) in reached_bedrock_after(SCENES[scene]).items():
                 with self.subTest(lib=lib, scene=scene):
                     self.assertEqual((text, reached), (harness.STRAIGHT_TEXT, True))
+
+    def test_through_each_bedrock_line_reflexers_empty_answer_is_the_clients_never_bedrocks(self):
+        """Reflexer asked not to answer: its empty 204 goes to the client's library as reflexer's answer, a body of zero
+        bytes read fine, never a call to Bedrock; whatever the library makes of it raises from no frame of the SDK's."""
+        package = os.path.join(os.path.abspath(ROOT), "reflexer") + os.sep
+        for lib, keyed, op in empty_answer_calls():
+            with self.subTest(lib=lib, keyed=keyed, op=op):
+                made, calls = world(lib)
+                made.reflexer.set("empty")
+                outcome = calls.call(calls.client(keyed=keyed), op)
+                calls.close()
+                frames = [] if outcome.error is None else traceback.extract_tb(outcome.error.__traceback__)
+                # Pydantic AI asks again, on its own, for an output it did not get: reflexer, never Bedrock
+                self.assertEqual((bool(made.reflexer.message_arrivals()), len(made.provider.seen)), (True, 0))
+                self.assertFalse([f"{frame.filename}:{frame.lineno}" for frame in frames if os.path.abspath(frame.filename).startswith(package)])
 
     def test_through_each_bedrock_line_a_replay_never_reaches_bedrock(self):
         found = reached_bedrock_after(SCENES["busy"], extra={"replay_response": {"id": "made-up"}})

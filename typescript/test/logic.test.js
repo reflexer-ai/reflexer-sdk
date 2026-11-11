@@ -64,13 +64,13 @@ describe("Route", () => {
   });
 
   test("the skip header is read by its value, in any case", () => {
-    for (const value of ["true", "TRUE", "True"]) assert.equal(way().route(CHAT, { [reflexer.SKIP]: value }), null, value);
-    for (const value of ["false", "FALSE", "False"]) {
+    for (const value of ["true", "TRUE", "True", " true ", "\ttrue"]) assert.equal(way().route(CHAT, { [reflexer.SKIP]: value }), null, value);
+    for (const value of ["false", "FALSE", "False", " false\t"]) { // whitespace around a value is not part of it (RFC 9110 5.5)
       const made = way().route(CHAT, { [reflexer.SKIP]: value });
       assert.notEqual(made, null, value);
       assert.ok(!Object.hasOwn(made?.[1] ?? {}, reflexer.SKIP), value);
     }
-    for (const value of ["1", "", "yes", "true, true", " true"]) {
+    for (const value of ["1", "", " ", "yes", "true, true", "t rue"]) {
       assert.throws(() => way().route(CHAT, { [reflexer.SKIP]: value }), { name: "Error", message: reflexer.NOT_A_SKIP }, value);
     }
   });

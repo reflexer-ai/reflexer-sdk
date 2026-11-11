@@ -25,6 +25,7 @@ SKIPPED_HERE = "reflexer_skip"  # in a botocore call's context: this call goes s
 SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
 UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its URL, body and headers as they came to `before-sign`, before the client's handlers
 ARGUMENT = "ReflexerSkip"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerSkip=True)`
+NOT_A_SKIP_ARGUMENT = f"the {ARGUMENT} argument must be True or False: True sends the call directly to the provider, False lets the call go through reflexer"
 
 
 def keyed(headers):
@@ -60,18 +61,21 @@ def skip_taken(event_name, kwargs, before):
     """The botocore family's per-call skip, taken off where botocore would carry it to Bedrock, and kept in the call's
     context: the argument, from the call's parameters before botocore validates them (`provide-client-params`, before the
     client's own handlers); the header, from the request after the client's own `before-sign` handlers, before it is signed."""
-    if before and event_name.startswith("provide-client-params.") and kwargs["params"].pop(ARGUMENT, None):
-        kwargs["context"][SKIPPED_HERE] = True
+    if before and event_name.startswith("provide-client-params.") and ARGUMENT in kwargs["params"]:
+        given = kwargs["params"].pop(ARGUMENT)
+        if not isinstance(given, bool):  # "false" too: a wrong value raises, before anything is sent
+            raise ValueError(NOT_A_SKIP_ARGUMENT)
+        kwargs["context"][SKIPPED_HERE] = given
     if before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[UNSIGNED] = (request.url, request.data, lower(request.headers))
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
-        for name in [name for name in request.headers if name.lower() == SKIP]:
-            if skips(request.headers[name]):  # a wrong value raises, before anything is sent
-                request.context[SKIPPED_HERE] = True
-            del request.headers[name]
+        given = request.headers.get_all(SKIP)  # every value, as a header held twice: read together, as httpx joins them
+        if given and skips(", ".join(value.decode() if isinstance(value, bytes) else value for value in given)):  # a wrong value raises, before anything is sent
+            request.context[SKIPPED_HERE] = True
+        del request.headers[SKIP]
 
 
 def botocore_route(reflexer, request):

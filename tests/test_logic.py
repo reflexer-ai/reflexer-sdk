@@ -76,13 +76,13 @@ class Route(unittest.TestCase):
             self.assertIsNone(self.reflexer.route(private, {}), private)
 
     def test_the_skip_header_is_read_by_its_value_in_any_case(self):
-        for value in ("true", "TRUE", "True"):
+        for value in ("true", "TRUE", "True", " true ", "\ttrue"):  # whitespace around a value is not part of it (RFC 9110 5.5)
             self.assertIsNone(self.reflexer.route(CHAT, {reflexer.SKIP: value}), value)
-        for value in ("false", "FALSE", "False"):
+        for value in ("false", "FALSE", "False", " false\t"):
             made = self.reflexer.route(CHAT, {reflexer.SKIP: value})
             self.assertIsNotNone(made, value)
             self.assertNotIn(reflexer.SKIP, made[1])
-        for value in ("1", "", "yes", "true, true", " true"):
+        for value in ("1", "", " ", "yes", "true, true", "t rue"):
             with self.assertRaises(ValueError, msg=value) as raised:
                 self.reflexer.route(CHAT, {reflexer.SKIP: value})
             self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)

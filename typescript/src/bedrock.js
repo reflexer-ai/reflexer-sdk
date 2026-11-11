@@ -9,7 +9,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { HEADERS_TIMEOUT, provider, textOf } from "./index.js";
-import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, isReplay, skips } from "./logic.js";
+import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, isReplay, skips, skipsByOption } from "./logic.js";
 
 export const WIRE = { reflexerPath: "/bedrock", calls: /\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/ };
 const STREAMED = /\/(invoke-with-response-stream|converse-stream)$/; // the wire's streamed calls
@@ -165,6 +165,7 @@ export function requestHandler(key, { handler, signer, ...options }) {
     async handle(request, { reflexerSkip, ...given } = {}) {
       const headers = tested(new Headers(plain(request.headers)));
       skips(headers.get(SKIP)); // a wrong value throws here, before anything is sent
+      skipsByOption(reflexerSkip, NOT_A_SKIP_OPTION); // as does a wrong option
       if (!keyed(headers) && !(signer && signed(headers))) return handler.handle(smithyStaysStraight(request), given);
       const { response, sent } = reflexerSkip ? { response: null, sent: false } : await ask(request, given);
       if (response) return { response };
@@ -202,6 +203,7 @@ function asking(reflexer, handler, bound) {
 }
 const HANDLERS = new WeakMap(); // each handler made here
 const FOLLOWS_NO_REDIRECT = ["http/1.1", "h2"]; // Smithy's Node handlers' protocols, by their metadata; its fetch handler names none
+const NOT_A_SKIP_OPTION = "the reflexerSkip option must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 const SIGNATURE = ["authorization", "x-amz-date", "x-amz-security-token"]; // what AWS JS's signer sets anew
 
 /**

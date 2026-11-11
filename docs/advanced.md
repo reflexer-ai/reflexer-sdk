@@ -35,7 +35,7 @@ console.log(reply.choices[0].message.content);
 Hello! How can I help you today?
 ```
 
-On Bedrock, you skip reflexer with an argument of the call:
+On Bedrock, you skip reflexer with an argument of the call. Its value is a boolean: `false` does not skip reflexer, and any other value, the string `"false"` included, is an error, as for the header:
 
 <!-- example: straight bedrock -->
 ```python

@@ -78,11 +78,12 @@ class Reflexer:
 
 
 def skips(value):
-    """Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case: "true" does,
-    "false" does not, and no header does not. Any other value raises, before anything is sent (fail loud)."""
+    """Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case and without the
+    whitespace around it, which is not part of a header's value (RFC 9110 5.5): "true" does, "false" does not, and no
+    header does not. Any other value raises, before anything is sent (fail loud)."""
     if value is None:
         return False
-    value = (value.decode() if isinstance(value, bytes) else value).lower()
+    value = (value.decode() if isinstance(value, bytes) else value).strip(" \t").lower()
     if value not in ("true", "false"):
         raise ValueError(NOT_A_SKIP)
     return value == "true"

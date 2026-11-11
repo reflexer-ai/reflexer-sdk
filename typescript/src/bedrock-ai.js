@@ -7,7 +7,9 @@
  * (this machine's, uncorrected), so the fallback reaches Bedrock while its signature holds.
  */
 import { fetch as bedrockFetch, skipped } from "./bedrock.js";
-import { BASE, OURS, SKIP, skips } from "./logic.js";
+import { BASE, OURS, SKIP, skips, skipsByOption } from "./logic.js";
+
+const NOT_A_SKIP_OPTION = "the providerOptions.reflexer.skip option must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 
 export const WINDOW = { header: "x-amz-date", ms: 300_000, margin: 30_000 }; // a signature's: AWS's five minutes; the margin provisional
 
@@ -52,7 +54,8 @@ export function fetch(key, options = {}) {
 /**
  * The AI SDK's language model middleware (`wrapLanguageModel`): the skip, as the call's header or as its argument
  * (`providerOptions: { reflexer: { skip: true } }`), taken off before the provider signs; the call then goes straight. The
- * header's value "false" skips nothing; any other value but "true" throws, before anything is sent.
+ * header's value "false" skips nothing; any other value but "true" throws, before anything is sent, as does an argument
+ * that is not a boolean.
  */
 export const middleware = {
   /** @param {any} options */
@@ -60,9 +63,10 @@ export const middleware = {
     const headers = Object.entries(params.headers ?? {});
     const given = headers.filter(([name]) => name.toLowerCase() === SKIP).map(([, value]) => skips(value)); // a wrong value throws
     const { reflexer, ...theirs } = params.providerOptions ?? {};
-    if (!given.length && !reflexer?.skip) return params;
+    const option = skipsByOption(reflexer?.skip, NOT_A_SKIP_OPTION); // a wrong value throws
+    if (!given.length && !option) return params;
     const left = { ...params, headers: Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== SKIP)) };
-    return given.includes(true) || reflexer?.skip ? { ...left, providerOptions: theirs, reflexerSkipped: true } : left;
+    return given.includes(true) || option ? { ...left, providerOptions: theirs, reflexerSkipped: true } : left;
   },
   /** @param {any} options */
   wrapGenerate: async ({ doGenerate, params }) => (params.reflexerSkipped ? skipped(doGenerate) : doGenerate()),

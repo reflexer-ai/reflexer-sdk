@@ -829,6 +829,37 @@ class Promises(Case):
                     self.assertEqual(bool(made.reflexer.seen), to_reflexer)
                     self.assertEqual([arrival for arrival in everything if reflexer.SKIP in {name.lower() for name in arrival.headers}], [])
 
+    def test_the_skip_header_repeated_on_botocore_raises_as_its_values_joined_do_and_none_leaves(self):
+        """A header botocore holds twice, set by the client's own `before-sign` handler: its values are read together, as
+        httpx joins them ("true, maybe"), so two values raise, before anything is sent."""
+        for lib in ("boto3", "aiobotocore"):
+            for values in (("true", "maybe"), ("true", "true")):
+                with self.subTest(lib=lib, values=values):
+                    made, calls = world(lib)
+                    client = calls.client()
+                    client.meta.events.register("before-sign.bedrock-runtime.*", lambda request, values=values, **_: [
+                        request.headers.__setitem__("Reflexer-Skip", value) for value in values])
+                    outcome = calls.call(client)
+                    raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                    self.assertEqual([str(each) for each in raised][-1:], [reflexer.NOT_A_SKIP], repr(outcome.error))
+                    self.assertEqual(made.reflexer.seen + made.provider.seen, [])
+
+    def test_the_skip_argument_true_skips_false_does_not_another_value_raises_and_none_leaves(self):
+        """`ReflexerSkip` on a keyed call through the botocore family: True goes straight, False goes to reflexer, anything
+        but a boolean ("false" included) raises before anything is sent."""
+        for lib in ("boto3", "aiobotocore"):
+            for value, to_reflexer in ((True, False), (False, True), ("false", None), (1, None), (None, None)):
+                with self.subTest(lib=lib, value=value):
+                    made, calls = world(lib)
+                    outcome = calls.call(calls.client(), args={reflexer.bedrock.ARGUMENT: value})
+                    if to_reflexer is None:
+                        raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                        self.assertEqual([str(each) for each in raised][-1:], [reflexer.bedrock.NOT_A_SKIP_ARGUMENT], repr(outcome.error))
+                        self.assertEqual(made.reflexer.seen + made.provider.seen, [])
+                        continue
+                    self.assertIsNone(outcome.error)
+                    self.assertEqual(bool(made.reflexer.seen), to_reflexer)
+
     def test_a_signed_call_goes_to_reflexer_and_falls_back_as_stock(self):
         for lib, held in signed_as_stock().items():
             with self.subTest(lib=lib):

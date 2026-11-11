@@ -98,14 +98,25 @@ export class Reflexer {
 }
 
 /**
- * Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case: "true" does,
- * "false" does not, and no header does not. Any other value throws, before anything is sent (fail loud).
+ * Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case and without the
+ * whitespace around it, which is not part of a header's value (RFC 9110 5.5): "true" does, "false" does not, and no
+ * header does not. Any other value throws, before anything is sent (fail loud).
  * @param {string | null | undefined} value
  */
 export function skips(value) {
-  const lowered = String(value ?? false).toLowerCase();
+  const lowered = String(value ?? false).replace(/^[ \t]+|[ \t]+$/g, "").toLowerCase();
   if (lowered !== "true" && lowered !== "false") throw new Error(NOT_A_SKIP);
   return lowered === "true";
+}
+
+/**
+ * Whether the skip given as a call's option skips reflexer: true does, false or none does not. Anything but a boolean
+ * ("false" included) throws `message`, before anything is sent (fail loud).
+ * @param {unknown} value @param {string} message
+ */
+export function skipsByOption(value, message) {
+  if (value !== undefined && typeof value !== "boolean") throw new Error(message);
+  return value === true;
 }
 
 export const REPLAY = "replay_response"; // a body's field: the caller's answer takes the provider's place

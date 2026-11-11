@@ -119,7 +119,7 @@ const LATE = 1100; // ms a "late" reflexer takes to answer busy: past x-amz-date
 
 /**
  * How the far ends answer, by host: (status, headers, body) or a failure. `reflexer`: "served", "busy", "down",
- * "redirect" or "stall" (its answer never starts, until the call is cut).
+ * "redirect", "stall" (its answer never starts, until the call is cut) or "empty" (asked not to answer: a 204, no body).
  * @param {string} reflexer @param {URL} url @param {AbortSignal | null | undefined} signal
  */
 async function far(reflexer, url, signal, bedrock = "ok", headers = new Headers(), sent = "", raw = undefined) {
@@ -133,6 +133,7 @@ async function far(reflexer, url, signal, bedrock = "ok", headers = new Headers(
     await check.stalled(signal);
   }
   if (mode === "busy" || mode === "late") return { status: 503, headers: { "reflexer-status-origin": "reflexer", "content-type": "application/json" }, body: "{}" };
+  if (mode === "empty") return { status: 204, headers: { "reflexer-status-origin": "reflexer", "reflexer-request-id": "made-up", "reflexer-cost": "0" }, body: "" };
   if (mode === "redirect") return { status: 307, headers: { location: `https://${ELSEWHERE}/moved`, "reflexer-status-origin": "reflexer" }, body: "" };
   const [type, body] = answer(url.pathname, ours ? FROM.reflexer : FROM.bedrock);
   return { status: 200, headers: { "content-type": type, ...(ours ? OURS : {}) }, body };
@@ -152,7 +153,7 @@ function fetchOn(reflexer, bedrock = "ok") {
     seen.push({ url, headers: new Headers(init.headers), body: bodyText(init.body), init });
     const { status, headers, body } = await far(reflexer, url, init.signal, bedrock, new Headers(init.headers), bodyText(init.body));
     if (headers.location && init.redirect !== "manual") return fetch(headers.location, init);
-    return new Response(status === 307 || status === 503 ? null : body, { status, headers });
+    return new Response(status === 204 || status === 307 || status === 503 ? null : body, { status, headers });
   };
   return { fetch, seen };
 }
@@ -424,6 +425,15 @@ describe("Bedrock", () => {
         assert.equal(result, FROM.bedrock, `keyed ${keyed}`);
         assert.deepEqual(hosts(seen), [BEDROCK]);
         assert.ok(!seen.some(({ headers }) => headers.has("reflexer-pass-through")));
+      }
+    });
+
+    test(`${name}: reflexer's empty answer (asked not to answer) is the client's, never a call to Bedrock`, async () => {
+      for (const op of ops) {
+        for (const keyed of [true, false]) {
+          const { seen } = await called(make, keyed, op, "empty"); // what the library makes of no body is its own
+          assert.deepEqual(hosts(seen), [check.REFLEXER], `${op}, keyed ${keyed}`);
+        }
       }
     });
 

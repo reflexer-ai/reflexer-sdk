@@ -131,6 +131,47 @@ class Replay(unittest.TestCase):
         self.assertEqual(self.hosts(seen), ["api.reflexer.ai", "api.openai.com"])
 
 
+class EmptyAnswer(unittest.TestCase):
+    """Reflexer asked not to answer: its empty 204, origin reflexer, is reflexer's answer, handed to the client's SDK as it
+    came, never a call to the provider, streamed or not, sync or async."""
+    EMPTY = {"reflexer-request-id": "made-up", "reflexer-cost": "0", "reflexer-status-origin": "reflexer"}  # no content-type
+
+    def answer(self, request):
+        if request.url.host == "api.reflexer.ai":
+            return httpx2.Response(204, headers=self.EMPTY)
+        return httpx2.Response(200, json={"from": "provider"})
+
+    def test_it_reaches_the_client_as_it_came(self):
+        client, seen, _ = wrapped(self.answer)
+        made = client.post(CHAT, content=b"{}")
+        self.assertEqual((made.status_code, made.content, made.headers.get("reflexer-cost")), (204, b"", "0"))
+        self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai"])
+
+    def test_through_the_real_sdk_never_a_call_to_the_provider(self):
+        import openai
+        for stream in (False, True):
+            client, seen, _ = wrapped(self.answer)
+            sdk = openai.OpenAI(api_key="made-up", http_client=client, max_retries=0)
+            made = sdk.chat.completions.create(model="frontier-x", messages=[], stream=stream)
+            list(made) if stream else None
+            self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai"], f"stream {stream}")
+
+    def test_async_through_the_real_sdk_never_a_call_to_the_provider(self):
+        import openai
+        for stream in (False, True):
+            seen = []
+            own = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: (seen.append(request), self.answer(request))[1]))
+            client = setup_http_client(None, WIRE)(KEY, own=own)
+
+            async def call():
+                sdk = openai.AsyncOpenAI(api_key="made-up", http_client=client, max_retries=0)
+                made = await sdk.chat.completions.create(model="frontier-x", messages=[], stream=stream)
+                if stream:
+                    [chunk async for chunk in made]
+            asyncio.run(call())
+            self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai"], f"stream {stream}")
+
+
 class Copies(unittest.TestCase):
     """The SDK's own copy, `with_options(http_client=...)`, keeps working and keeps going through reflexer."""
 

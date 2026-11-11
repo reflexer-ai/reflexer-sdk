@@ -41,6 +41,20 @@ describe("The wire", () => {
   });
 });
 
+describe("Asked not to answer", () => {
+  test("reflexer's empty answer reaches each SDK as it came, never a call to the provider", async () => {
+    const empty = (/** @type {URL} */ url) => url.host === check.REFLEXER
+      ? new Response(null, { status: 204, headers: { "reflexer-status-origin": "reflexer", "reflexer-request-id": "made-up", "reflexer-cost": "0" } })
+      : check.providers(url);
+    const raw = await index.openai.fetch(key, { fetch: check.mock(empty).fetch })(check.CHAT, { method: "POST", body: "{}" });
+    assert.deepEqual([raw.status, await raw.text(), raw.headers.get("reflexer-cost")], [204, "", "0"]);
+    for (const stream of [false, true]) {
+      const found = await check.throughEachSdk(sdk, stream ? { stream: true } : {}, empty);
+      for (const [name, reached] of Object.entries(found)) assert.deepEqual(reached, [`${check.REFLEXER} keyed`], `${name}, stream ${stream}`);
+    }
+  });
+});
+
 describe("Azure", () => {
   test("each message call's path reaches reflexer, the dated Responses one too", async () => {
     for (const path of ["/openai/deployments/made-up/chat/completions", "/openai/deployments/made-up/responses", "/openai/v1/responses", "/openai/responses"]) {

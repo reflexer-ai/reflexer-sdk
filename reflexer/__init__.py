@@ -111,7 +111,7 @@ def read(status, origin, straight_for):
     overloaded = status == 429 or status >= 500
     if origin is None:  # none of our headers: the load balancer's own
         return FAILED
-    if origin == "connection" or 300 <= status < 400:  # reflexer could not reach the provider, or a redirect to follow
+    if origin in ("relay", "connection") or 300 <= status < 400:  # reflexer sent it back to go straight (`connection`: the old name), or a redirect
         return ASKED
     if origin != "reflexer" or status < 400:  # served, passed through, or the provider's own error
         return ANSWER

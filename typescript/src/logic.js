@@ -132,7 +132,7 @@ export const GRACE = "grace"; // straight, not counted, with a warning
 export function read(status, origin, straightFor) {
   const overloaded = status === 429 || status >= 500;
   if (origin == null) return FAILED; // none of our headers: the load balancer's own
-  if (origin === "connection" || (status >= 300 && status < 400)) return ASKED; // reflexer could not reach the provider, or a redirect
+  if (origin === "relay" || origin === "connection" || (status >= 300 && status < 400)) return ASKED; // reflexer sent it back to go straight (`connection`: the old name), or a redirect
   if (origin !== "reflexer" || status < 400) return ANSWER; // served, passed through, or the provider's own error
   if (straightFor === null) return overloaded ? FAILED : ANSWER; // reflexer's "not now", or an error the client's SDK raises, naming our key
   return overloaded ? ASKED : GRACE; // reflexer's "not now, for this long", or a key revoked less than a day ago

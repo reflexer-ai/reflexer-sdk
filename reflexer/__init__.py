@@ -11,7 +11,8 @@ from importlib.metadata import version as installed  # its one function the SDK 
 from urllib.parse import urlsplit
 
 BASE = "https://api.reflexer.ai"
-PASS_THROUGH = "reflexer-pass-through"  # noqa: S105 a header the client sets on one call to skip reflexer; it never leaves
+SKIP = "reflexer-skip"  # a header the client sets on one call: "true" skips reflexer, "false" does not; it never leaves
+NOT_A_SKIP = "the Reflexer-Skip header must be true or false: true sends the call directly to the provider, false lets the call go through reflexer"
 OURS = "reflexer-"  # what starts each header of ours: none leaves for a provider
 NAMESPACE = "reflexer-namespace"  # the one header of ours a client may give reflexer
 
@@ -40,7 +41,7 @@ class Reflexer:
         It carries all the client's headers, its provider's key among them, and its query: reflexer passes them on,
         and stores no key. A replay has nowhere else to go, so neither sampling nor the breaker turns it away."""
         turned_away = random.random() >= self.sample or self.breaker.is_open()  # noqa: S311 a share of calls, no secret
-        if PASS_THROUGH in headers or (turned_away and not replay):
+        if skips(headers.get(SKIP)) or (turned_away and not replay):
             return None
         address = urlsplit(url)
         router = self.routers.get(address.hostname)
@@ -74,6 +75,18 @@ class Reflexer:
         """The call to reflexer raised: it goes straight. Only the kind of failure is logged, never its text."""
         log.warning("the call to reflexer failed (%s); the SDK sends the call directly to the provider", type(failure).__name__)
         self.breaker.note(FAILED, None)
+
+
+def skips(value):
+    """Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case and without the
+    whitespace around it, which is not part of a header's value (RFC 9110 5.5): "true" does, "false" does not, and no
+    header does not. Any other value raises, before anything is sent (fail loud)."""
+    if value is None:
+        return False
+    value = (value.decode() if isinstance(value, bytes) else value).strip(" \t").lower()
+    if value not in ("true", "false"):
+        raise ValueError(NOT_A_SKIP)
+    return value == "true"
 
 
 def way(wire):
@@ -111,7 +124,7 @@ def read(status, origin, straight_for):
     overloaded = status == 429 or status >= 500
     if origin is None:  # none of our headers: the load balancer's own
         return FAILED
-    if origin == "connection" or 300 <= status < 400:  # reflexer could not reach the provider, or a redirect to follow
+    if origin in ("relay", "connection") or 300 <= status < 400:  # reflexer sent it back to go straight (`connection`: the old name), or a redirect
         return ASKED
     if origin != "reflexer" or status < 400:  # served, passed through, or the provider's own error
         return ANSWER

@@ -92,7 +92,7 @@ def hop_losing_its_mark(reflexer_, request):
 
 
 def skip_sticks(self, url, headers, replay=False):
-    if reflexer.PASS_THROUGH in headers:
+    if reflexer.SKIP in headers:
         self.sample = 0.0
     return real_route(self, url, headers, replay)
 
@@ -436,7 +436,7 @@ FAULTS = {
     # where the key goes, what is routed
     "key_on_every_request": lambda: (setattr(transport, "to_reflexer", key_on_the_clients_own_request),
                                      setattr(transport, "OURS", "not-ours-")),  # and the straight leg strips none of it
-    "flag_not_read": setter(reflexer, "PASS_THROUGH", "x-nothing"),
+    "flag_not_read": setter(reflexer, "SKIP", "x-nothing"),
     "skip_sticks": setter(reflexer.Reflexer, "route", skip_sticks),
     "hop_loses_its_mark": setter(transport, "to_reflexer", hop_losing_its_mark),
     "routes_everything": setter(reflexer.Reflexer, "__init__", calls_also(lambda calls: "/v1/.*$|/v1beta/.*$|/openai/.*$")),

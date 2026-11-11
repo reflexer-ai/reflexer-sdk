@@ -100,7 +100,7 @@ def spam_until(condition, seconds, call, pause=0.005):
     return None
 
 
-# ---- skip: pass through per call; the flag never leaves the machine
+# ---- skip: reflexer skipped per call; the flag never leaves the machine
 
 @case("skip")
 def skip_goes_straight_and_its_flag_stays_here(t):

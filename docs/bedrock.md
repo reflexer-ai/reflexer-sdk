@@ -296,11 +296,11 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 
 - `sample=0.01` (TypeScript `{ sample: 0.01 }` in the options of `bedrock.wrap` or the `fetch`): the SDK sends that share of the calls to reflexer, and the other calls directly to Bedrock.
 - To skip reflexer for one call, so that the SDK sends it directly to Bedrock:
-  - boto3, aiobotocore: `ReflexerPassThrough=True` on the call.
-  - The AWS SDK for JavaScript: `client.send(command, { reflexerPassThrough: true })`; in a `.ts` file, cast the options to `any`.
+  - boto3, aiobotocore: `ReflexerSkip=True` on the call.
+  - The AWS SDK for JavaScript: `client.send(command, { reflexerSkip: true })`; in a `.ts` file, cast the options to `any`.
   - langchain-aws, Pydantic AI, Strands: add your own hook on the boto3 client: [Advanced](advanced.md#skip-reflexer-for-one-call).
-  - The AI SDK: `providerOptions: { reflexer: { passThrough: true } }`.
-  - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Pass-Through": "1"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's second argument.
+  - The AI SDK: `providerOptions: { reflexer: { skip: true } }`.
+  - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Skip": "true"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Skip": "true" } }` as the call's second argument.
 - A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer): you give reflexer your Bedrock answer, and neither the SDK nor reflexer sends the call to Bedrock. Put `replay_response` at the top level of an `InvokeModel` body. On Anthropic's clients, use `extra_body={"replay_response": answer}` (AnthropicBedrock in TypeScript: `replay_response: answer` among the call's parameters, cast to `any` in a `.ts` file).
 - Reflexer's address, if reflexer gave you another one: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
 

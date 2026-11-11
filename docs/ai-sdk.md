@@ -65,7 +65,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 ## Options
 
 - `reflexer.openai.fetch(key, { sample: 0.01 })`: the SDK sends that share of the calls to reflexer, and the other calls directly to your provider.
-- `generateText({ ..., headers: { "Reflexer-Pass-Through": "1" } })`: the SDK sends that call directly to your provider.
+- `generateText({ ..., headers: { "Reflexer-Skip": "true" } })`: the SDK sends that call directly to your provider.
 - `{ headersTimeout: 10_000 }` in the `fetch`'s options: how long reflexer may take to start its answer, in ms.
 
 All options: [Advanced](advanced.md).

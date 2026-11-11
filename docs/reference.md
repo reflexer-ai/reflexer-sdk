@@ -14,7 +14,7 @@ Use this page to look up a name. Every public name of the SDK takes the same few
 
 **`own`** (Python functions) · **`fetch`** (TypeScript options): optional; the default is your provider SDK's own. Your HTTP client or `fetch` (for `reflexer.gemini.client_args`: your `client_args` dict). The SDK also sends its calls to reflexer through it. [Advanced](advanced.md#your-own-http-client).
 
-**`Reflexer-Pass-Through`** (a header) · **`ReflexerPassThrough`** (boto3's argument) · **`reflexerPassThrough`** (the AWS SDK's option): set it on one call, and the SDK sends that call directly to your provider. [Advanced](advanced.md#skip-reflexer-for-one-call).
+**`Reflexer-Skip: true`** (a header) · **`ReflexerSkip=True`** (boto3's argument) · **`reflexerSkip: true`** (the AWS SDK's option): set it on one call, and the SDK sends that call directly to your provider. With the value `false` (the header's) or `False`/`false` (the argument's, a boolean), the SDK does not skip reflexer. With any other value, the SDK raises an error and sends nothing. [Advanced](advanced.md#skip-reflexer-for-one-call).
 
 **`headersTimeout`** (TypeScript `fetch` functions and `bedrock.wrap`): milliseconds, optional, default 300000. The time the SDK waits for reflexer's answer to start. After this time, the SDK sends the call directly to your provider. [Advanced](advanced.md#how-long-reflexer-may-take).
 

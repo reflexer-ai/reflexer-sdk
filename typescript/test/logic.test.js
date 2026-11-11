@@ -63,9 +63,27 @@ describe("Route", () => {
     assert.equal(way().route("https://openrouter.ai/api/v1/models", {}), null);
   });
 
+  test("the skip header is read by its value, in any case", () => {
+    for (const value of ["true", "TRUE", "True", " true ", "\ttrue"]) assert.equal(way().route(CHAT, { [reflexer.SKIP]: value }), null, value);
+    for (const value of ["false", "FALSE", "False", " false\t"]) { // whitespace around a value is not part of it (RFC 9110 5.5)
+      const made = way().route(CHAT, { [reflexer.SKIP]: value });
+      assert.notEqual(made, null, value);
+      assert.ok(!Object.hasOwn(made?.[1] ?? {}, reflexer.SKIP), value);
+    }
+    for (const value of ["1", "", " ", "yes", "true, true", "t rue"]) {
+      assert.throws(() => way().route(CHAT, { [reflexer.SKIP]: value }), { name: "Error", message: reflexer.NOT_A_SKIP }, value);
+    }
+  });
+
+  test("the old skip header is dropped as any header of ours", () => {
+    const made = way().route(CHAT, { "reflexer-pass-through": "1" });
+    assert.notEqual(made, null);
+    assert.ok(!Object.hasOwn(made?.[1] ?? {}, "reflexer-pass-through"));
+  });
+
   test("straight", () => {
     assert.equal(way().route("https://api.openai.com/v1/models", {}), null);
-    assert.equal(way().route(CHAT, { [reflexer.PASS_THROUGH]: "1" }), null);
+    assert.equal(way().route(CHAT, { [reflexer.SKIP]: "true" }), null);
     assert.equal(way().route("http://localhost:11434/v1/chat/completions", {}), null);
     assert.equal(new reflexer.Reflexer(KEY, WIRE, { sample: 0 }).route(CHAT, {}), null);
     for (const host of ["localhost.", "10.0.0.5", "[::1]", "[::ffff:10.0.0.1]"]) {
@@ -180,6 +198,9 @@ describe("Read", () => {
       [503, told, ASKED],
       [529, told, ASKED],
       [502, { ...OURS, "reflexer-status-origin": "connection" }, ASKED],
+      [502, { ...OURS, "reflexer-status-origin": "relay" }, ASKED], // the same meaning under its new name
+      [200, { ...OURS, "reflexer-status-origin": "relay" }, ASKED],
+      [204, { "reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "reflexer-cost": "0" }, ANSWER], // reflexer asked not to answer: its empty answer, never the provider's
       [401, told, GRACE],
       [400, told, GRACE], // gemini's key error
       [500, { ...OURS, "reflexer-status-origin": "provider" }, ANSWER], // a provider's status never trips it
@@ -347,6 +368,6 @@ describe("Replay", () => {
     assert.notEqual(way.route(CHAT, {}, true), null);
     way.breaker.openFor(LONG);
     assert.notEqual(way.route(CHAT, {}, true), null);
-    assert.equal(way.route(CHAT, { [reflexer.PASS_THROUGH]: "1" }, true), null);
+    assert.equal(way.route(CHAT, { [reflexer.SKIP]: "true" }, true), null);
   });
 });

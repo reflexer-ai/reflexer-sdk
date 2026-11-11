@@ -9,7 +9,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { HEADERS_TIMEOUT, provider, textOf } from "./index.js";
-import { BASE, OURS, PASS_THROUGH, Reflexer, ReplayNotTaken, isReplay } from "./logic.js";
+import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, isReplay, skips, skipsByOption } from "./logic.js";
 
 export const WIRE = { reflexerPath: "/bedrock", calls: /\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/ };
 const STREAMED = /\/(invoke-with-response-stream|converse-stream)$/; // the wire's streamed calls
@@ -109,6 +109,7 @@ export function fetch(key, options = {}) {
   return async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
     const store = call.getStore();
     const headers = tested(new Headers(init.headers));
+    skips(headers.get(SKIP)); // a wrong value throws here, before anything is sent
     if (store?.skipped || !(keyed(headers) || (signed(headers) && (store?.again || options.signed)))) return straight(own, input, init);
     if (init.signal?.aborted) return routed(input, init); // the client's own signal ended before reflexer's leg: as shipped
     const seen = store?.seen ?? {};
@@ -132,11 +133,9 @@ export function fetch(key, options = {}) {
  * so `next` again, straight, with the client's timeout afresh and its cancel kept.
  */
 export async function anthropicMiddleware(/** @type {any} */ request, /** @type {any} */ next, /** @type {any} */ ctx) {
-  const headers = new Headers(request.headers);
-  if (headers.has(PASS_THROUGH)) {
-    headers.delete(PASS_THROUGH);
-    return skipped(() => next({ ...request, headers }));
-  }
+  const headers = new Headers(request.headers), skip = skips(headers.get(SKIP)); // "false", as with no header; any other value but "true" throws, before anything is sent
+  if (headers.has(SKIP)) headers.delete(SKIP), request = { ...request, headers };
+  if (skip) return skipped(() => next(request));
   const seen = { cut: undefined }, again = { straight: false, sent: false, init: {} };
   try {
     return await call.run({ seen, again }, () => next(request));
@@ -154,7 +153,7 @@ export async function anthropicMiddleware(/** @type {any} */ request, /** @type 
  * AWS JS's `requestHandler` option: ours around the client's own handler, which carries both legs. Reflexer's leg is a
  * copy of the request, keyed or signed, bounded to its answer's head as the `fetch` line is; the client's own request
  * never holds the key. A signed call goes to reflexer only given `signer`, the client's own, which signs its straight leg
- * anew after reflexer's (`wrap` gives it). The skip as `send`'s option: `client.send(command, { reflexerPassThrough: true })`.
+ * anew after reflexer's (`wrap` gives it). The skip as `send`'s option: `client.send(command, { reflexerSkip: true })`.
  * @param {string} key @param {any} options `{ handler, signer, base, sample, namespace, headersTimeout }`
  */
 export function requestHandler(key, { handler, signer, ...options }) {
@@ -163,10 +162,12 @@ export function requestHandler(key, { handler, signer, ...options }) {
   const ask = asking(new Reflexer(key, WIRE, options), handler, options.headersTimeout ?? HEADERS_TIMEOUT);
   const made = {
     /** @param {any} request @param {any} [given] */
-    async handle(request, { reflexerPassThrough, ...given } = {}) {
+    async handle(request, { reflexerSkip, ...given } = {}) {
       const headers = tested(new Headers(plain(request.headers)));
+      skips(headers.get(SKIP)); // a wrong value throws here, before anything is sent
+      skipsByOption(reflexerSkip, NOT_A_SKIP_OPTION); // as does a wrong option
       if (!keyed(headers) && !(signer && signed(headers))) return handler.handle(smithyStaysStraight(request), given);
-      const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);
+      const { response, sent } = reflexerSkip ? { response: null, sent: false } : await ask(request, given);
       if (response) return { response };
       return handler.handle(sent && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request)) : smithyStaysStraight(request), given);
     },
@@ -202,6 +203,7 @@ function asking(reflexer, handler, bound) {
 }
 const HANDLERS = new WeakMap(); // each handler made here
 const FOLLOWS_NO_REDIRECT = ["http/1.1", "h2"]; // Smithy's Node handlers' protocols, by their metadata; its fetch handler names none
+const NOT_A_SKIP_OPTION = "the reflexerSkip option must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 const SIGNATURE = ["authorization", "x-amz-date", "x-amz-security-token"]; // what AWS JS's signer sets anew
 
 /**
@@ -231,18 +233,17 @@ export function wrap(client, key, options = {}) {
     return (await config.signer()).sign(request, { signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000 }); // seconds, as Smithy reads a number
   };
   config.requestHandler = requestHandler(key, { ...options, handler: config.requestHandler, signer });
-  const skips = new WeakMap(); // each skipped call's context, Smithy's own per call
+  const skippedCalls = new WeakMap(); // each skipped call's context, Smithy's own per call
   const stack = /** @type {any} */ (client).middlewareStack;
   stack.addRelativeTo((/** @type {any} */ next, /** @type {any} */ context) => (/** @type {any} */ args) => {
     const headers = Object.entries(args.request?.headers ?? {});
-    if (headers.some(([name]) => name.toLowerCase() === PASS_THROUGH)) {
-      args.request.headers = Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== PASS_THROUGH));
-      skips.set(context, true);
-    }
+    const given = headers.filter(([name]) => name.toLowerCase() === SKIP).map(([, value]) => skips(value)); // a wrong value throws, before anything is sent
+    if (given.length) args.request.headers = Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== SKIP));
+    if (given.includes(true)) skippedCalls.set(context, true);
     return next(args);
   }, { relation: "before", toMiddleware: "httpSigningMiddleware", name: "reflexerSkipBeforeSigning" });
   stack.add((/** @type {any} */ next, /** @type {any} */ context) => (/** @type {any} */ args) => {
-    if (skips.has(context)) args.request.headers = { ...args.request.headers, [PASS_THROUGH]: "1" };
+    if (skippedCalls.has(context)) args.request.headers = { ...args.request.headers, [SKIP]: "true" };
     return next(args);
   }, { step: "deserialize", priority: "low", name: "reflexerSkipAfterSigning" });
   return client;
@@ -278,7 +279,7 @@ function plain(headers) {
 function smithyStaysStraight(request) {
   const body = textOf(request.body);
   if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider");
-  const ours = keyed(new Headers(plain(request.headers))) ? OURS : PASS_THROUGH;
+  const ours = keyed(new Headers(plain(request.headers))) ? OURS : SKIP;
   request.headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => !name.toLowerCase().startsWith(ours)));
   return request;
 }

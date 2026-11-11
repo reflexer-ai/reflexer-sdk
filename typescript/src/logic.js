@@ -7,7 +7,8 @@
 import { createHash } from "node:crypto";
 
 export const BASE = "https://api.reflexer.ai";
-export const PASS_THROUGH = "reflexer-pass-through"; // a header the client sets on one call to skip reflexer; it never leaves
+export const SKIP = "reflexer-skip"; // a header the client sets on one call: "true" skips reflexer, "false" does not; it never leaves
+export const NOT_A_SKIP = "the Reflexer-Skip header must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 export const OURS = "reflexer-"; // what starts each header of ours: none leaves for a provider
 export const NAMESPACE = "reflexer-namespace"; // the one header of ours a client may give reflexer
 
@@ -54,7 +55,7 @@ export class Reflexer {
    */
   route(url, headers, replay = false) {
     const turnedAway = Math.random() >= this.sample || this.breaker.isOpen(); // a share of calls, no secret
-    if (Object.hasOwn(headers, PASS_THROUGH) || (turnedAway && !replay)) return null;
+    if (skips(Object.entries(headers).find(([name]) => name === SKIP)?.[1]) || (turnedAway && !replay)) return null;
     const address = new URL(url);
     const router = this.wire.routers?.find((one) => one.host === address.hostname);
     const wire = router?.calls.test(address.pathname) ? router : this.wire;
@@ -96,6 +97,28 @@ export class Reflexer {
   }
 }
 
+/**
+ * Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case and without the
+ * whitespace around it, which is not part of a header's value (RFC 9110 5.5): "true" does, "false" does not, and no
+ * header does not. Any other value throws, before anything is sent (fail loud).
+ * @param {string | null | undefined} value
+ */
+export function skips(value) {
+  const lowered = String(value ?? false).replace(/^[ \t]+|[ \t]+$/g, "").toLowerCase();
+  if (lowered !== "true" && lowered !== "false") throw new Error(NOT_A_SKIP);
+  return lowered === "true";
+}
+
+/**
+ * Whether the skip given as a call's option skips reflexer: true does, false or none does not. Anything but a boolean
+ * ("false" included) throws `message`, before anything is sent (fail loud).
+ * @param {unknown} value @param {string} message
+ */
+export function skipsByOption(value, message) {
+  if (value !== undefined && typeof value !== "boolean") throw new Error(message);
+  return value === true;
+}
+
 export const REPLAY = "replay_response"; // a body's field: the caller's answer takes the provider's place
 
 /** A replay bypasses the provider: when reflexer cannot take it, it fails, and goes nowhere else. */
@@ -132,7 +155,7 @@ export const GRACE = "grace"; // straight, not counted, with a warning
 export function read(status, origin, straightFor) {
   const overloaded = status === 429 || status >= 500;
   if (origin == null) return FAILED; // none of our headers: the load balancer's own
-  if (origin === "connection" || (status >= 300 && status < 400)) return ASKED; // reflexer could not reach the provider, or a redirect
+  if (origin === "relay" || origin === "connection" || (status >= 300 && status < 400)) return ASKED; // reflexer sent it back to go straight (`connection`: the old name), or a redirect
   if (origin !== "reflexer" || status < 400) return ANSWER; // served, passed through, or the provider's own error
   if (straightFor === null) return overloaded ? FAILED : ANSWER; // reflexer's "not now", or an error the client's SDK raises, naming our key
   return overloaded ? ASKED : GRACE; // reflexer's "not now, for this long", or a key revoked less than a day ago

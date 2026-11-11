@@ -2,7 +2,7 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, types, unittest
+import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, traceback, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -316,6 +316,14 @@ def reached_bedrock_after(scene, extra=None):
 
 
 REPLAYING = ("boto3", "aiobotocore", "anthropic-bedrock", "anthropic-mantle")  # those whose calls take a field at the body's top
+
+
+def empty_answer_calls():
+    """(lib, keyed, op): each line's every message call, carrying a key, and signed where its signed calls go to reflexer. Not
+    aiobotocore's streamed ones: on an empty 204 its own event-stream reader can loop without end, as stock, with no
+    reflexer in the way."""
+    return [(lib, keyed, op) for lib in LINES for keyed in ((True, False) if lib in RUNTIME else (True,))
+            for op in bedrock.LIBS[lib].ops if op != "count_tokens" and not (lib == "aiobotocore" and op in bedrock.STREAMED_OPS)]
 
 
 def signed_replays_reaching_bedrock():
@@ -811,6 +819,55 @@ class Promises(Case):
                 self.assertEqual(holding(signed, "AWS4-HMAC-SHA256")[lib], ["bedrock", "reflexer"] if lib in RUNTIME else ["bedrock"])
                 self.assertEqual(holding(signed, bedrock.BEARER)[lib] + holding(keyed, bedrock.SECRET)[lib] + holding(signed, bedrock.SECRET)[lib], [])
 
+    def test_the_skip_header_true_skips_false_does_not_another_value_raises_and_none_leaves(self):
+        """`Reflexer-Skip`, in any case, on a keyed call through each line: true goes straight, false goes to reflexer, any
+        other value raises before anything is sent; the header reaches neither reflexer nor Bedrock."""
+        for lib in LINES:
+            for value, to_reflexer in (("TRUE", False), ("False", True), ("yes", None)):
+                with self.subTest(lib=lib, value=value):
+                    made, calls = world(lib)
+                    outcome = calls.call(calls.client(), headers={"Reflexer-Skip": value})
+                    everything = made.reflexer.seen + made.provider.seen
+                    if to_reflexer is None:  # the ValueError, or the library's connection error that it causes
+                        raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                        self.assertEqual([str(each) for each in raised][-1:], [reflexer.NOT_A_SKIP], repr(outcome.error))
+                        self.assertEqual(everything, [])
+                        continue
+                    self.assertIsNone(outcome.error)
+                    self.assertEqual(bool(made.reflexer.seen), to_reflexer)
+                    self.assertEqual([arrival for arrival in everything if reflexer.SKIP in {name.lower() for name in arrival.headers}], [])
+
+    def test_the_skip_header_repeated_on_botocore_raises_as_its_values_joined_do_and_none_leaves(self):
+        """A header botocore holds twice, set by the client's own `before-sign` handler: its values are read together, as
+        httpx joins them ("true, maybe"), so two values raise, before anything is sent."""
+        for lib in ("boto3", "aiobotocore"):
+            for values in (("true", "maybe"), ("true", "true")):
+                with self.subTest(lib=lib, values=values):
+                    made, calls = world(lib)
+                    client = calls.client()
+                    client.meta.events.register("before-sign.bedrock-runtime.*", lambda request, values=values, **_: [
+                        request.headers.__setitem__("Reflexer-Skip", value) for value in values])
+                    outcome = calls.call(client)
+                    raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                    self.assertEqual([str(each) for each in raised][-1:], [reflexer.NOT_A_SKIP], repr(outcome.error))
+                    self.assertEqual(made.reflexer.seen + made.provider.seen, [])
+
+    def test_the_skip_argument_true_skips_false_does_not_another_value_raises_and_none_leaves(self):
+        """`ReflexerSkip` on a keyed call through the botocore family: True goes straight, False goes to reflexer, anything
+        but a boolean ("false" included) raises before anything is sent."""
+        for lib in ("boto3", "aiobotocore"):
+            for value, to_reflexer in ((True, False), (False, True), ("false", None), (1, None), (None, None)):
+                with self.subTest(lib=lib, value=value):
+                    made, calls = world(lib)
+                    outcome = calls.call(calls.client(), args={reflexer.bedrock.ARGUMENT: value})
+                    if to_reflexer is None:
+                        raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                        self.assertEqual([str(each) for each in raised][-1:], [reflexer.bedrock.NOT_A_SKIP_ARGUMENT], repr(outcome.error))
+                        self.assertEqual(made.reflexer.seen + made.provider.seen, [])
+                        continue
+                    self.assertIsNone(outcome.error)
+                    self.assertEqual(bool(made.reflexer.seen), to_reflexer)
+
     def test_a_signed_call_goes_to_reflexer_and_falls_back_as_stock(self):
         for lib, held in signed_as_stock().items():
             with self.subTest(lib=lib):
@@ -872,6 +929,21 @@ class Promises(Case):
             for lib, (text, reached) in reached_bedrock_after(SCENES[scene]).items():
                 with self.subTest(lib=lib, scene=scene):
                     self.assertEqual((text, reached), (harness.STRAIGHT_TEXT, True))
+
+    def test_through_each_bedrock_line_reflexers_empty_answer_is_the_clients_never_bedrocks(self):
+        """Reflexer asked not to answer: its empty 204 goes to the client's library as reflexer's answer, a body of zero
+        bytes read fine, never a call to Bedrock; whatever the library makes of it raises from no frame of the SDK's."""
+        package = os.path.join(os.path.abspath(ROOT), "reflexer") + os.sep
+        for lib, keyed, op in empty_answer_calls():
+            with self.subTest(lib=lib, keyed=keyed, op=op):
+                made, calls = world(lib)
+                made.reflexer.set("empty")
+                outcome = calls.call(calls.client(keyed=keyed), op)
+                calls.close()
+                frames = [] if outcome.error is None else traceback.extract_tb(outcome.error.__traceback__)
+                # Pydantic AI asks again, on its own, for an output it did not get: reflexer, never Bedrock
+                self.assertEqual((bool(made.reflexer.message_arrivals()), len(made.provider.seen)), (True, 0))
+                self.assertFalse([f"{frame.filename}:{frame.lineno}" for frame in frames if os.path.abspath(frame.filename).startswith(package)])
 
     def test_through_each_bedrock_line_a_replay_never_reaches_bedrock(self):
         found = reached_bedrock_after(SCENES["busy"], extra={"replay_response": {"id": "made-up"}})

@@ -102,7 +102,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 ## Options
 
 - `sample=0.01` (TypeScript `sample: 0.01`): the SDK sends that share of the calls to reflexer, and the other calls directly to OpenAI.
-- `extra_headers={"Reflexer-Pass-Through": "1"}` on a call (TypeScript: `{ headers: { "Reflexer-Pass-Through": "1" } }` as its second argument): the SDK sends that call directly to OpenAI.
+- `extra_headers={"Reflexer-Skip": "true"}` on a call (TypeScript: `{ headers: { "Reflexer-Skip": "true" } }` as its second argument): the SDK sends that call directly to OpenAI.
 - `extra_body={"replay_response": answer}` on a call (TypeScript: `replay_response: answer` among its parameters): a [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer). You give reflexer your OpenAI answer, and neither the SDK nor reflexer sends the call to OpenAI.
 - `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if reflexer gave you another one.
 - Your own HTTP client, as `http_client=` (TypeScript `fetch`): the SDK also sends the calls to reflexer through it.

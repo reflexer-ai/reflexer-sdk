@@ -41,6 +41,20 @@ describe("The wire", () => {
   });
 });
 
+describe("Asked not to answer", () => {
+  test("reflexer's empty answer reaches each SDK as it came, never a call to the provider", async () => {
+    const empty = (/** @type {URL} */ url) => url.host === check.REFLEXER
+      ? new Response(null, { status: 204, headers: { "reflexer-status-origin": "reflexer", "reflexer-request-id": "made-up", "reflexer-cost": "0" } })
+      : check.providers(url);
+    const raw = await index.openai.fetch(key, { fetch: check.mock(empty).fetch })(check.CHAT, { method: "POST", body: "{}" });
+    assert.deepEqual([raw.status, await raw.text(), raw.headers.get("reflexer-cost")], [204, "", "0"]);
+    for (const stream of [false, true]) {
+      const found = await check.throughEachSdk(sdk, stream ? { stream: true } : {}, empty);
+      for (const [name, reached] of Object.entries(found)) assert.deepEqual(reached, [`${check.REFLEXER} keyed`], `${name}, stream ${stream}`);
+    }
+  });
+});
+
 describe("Azure", () => {
   test("each message call's path reaches reflexer, the dated Responses one too", async () => {
     for (const path of ["/openai/deployments/made-up/chat/completions", "/openai/deployments/made-up/responses", "/openai/v1/responses", "/openai/responses"]) {
@@ -61,20 +75,33 @@ describe("Azure", () => {
 });
 
 describe("Headers", () => {
-  test("no header of ours leaves for the provider, and the pass-through header leaves for no one", async () => {
+  test("no header of ours leaves for the provider, and the skip header leaves for no one", async () => {
     const { fetch, seen } = made(check.served);
-    const headers = { "reflexer-pass-through": "1", "reflexer-namespace": "made-up", "reflexer-made-up": "1", authorization: "Bearer sk-made-up" };
+    const headers = { "reflexer-skip": "true", "reflexer-pass-through": "1", "reflexer-namespace": "made-up", "reflexer-made-up": "1", authorization: "Bearer sk-made-up" };
     await fetch(check.CHAT, { method: "POST", body: "{}", headers });
     assert.deepEqual(hosts(seen), ["api.openai.com"]);
     assert.deepEqual([...seen[0].headers.keys()], ["authorization"]);
   });
 
-  test("the pass-through header, on one SDK call, sends it straight and leaves for no one", async () => {
+  test("the skip header true, on one SDK call, sends it straight and leaves for no one", async () => {
     const own = check.mock(check.served);
     const client = new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, fetch: own.fetch });
-    await client.chat.completions.create({ model: "m", messages: [] }, { headers: { "Reflexer-Pass-Through": "1" } }).catch(() => {});
+    await client.chat.completions.create({ model: "m", messages: [] }, { headers: { "Reflexer-Skip": "TRUE" } }).catch(() => {});
     assert.deepEqual(hosts(own.seen), ["api.openai.com"]);
     assert.ok(![...own.seen[0].headers.keys()].some((name) => name.startsWith("reflexer-")));
+  });
+
+  test("the skip header false sends the call to reflexer and leaves for no one, nor does the old skip header", async () => {
+    const { fetch, seen } = made(check.busy);
+    await fetch(check.CHAT, { method: "POST", body: "{}", headers: { "Reflexer-Skip": "False", "Reflexer-Pass-Through": "1" } });
+    assert.deepEqual(hosts(seen), [check.REFLEXER, "api.openai.com"]);
+    for (const { headers } of seen) assert.ok(!headers.has("reflexer-skip") && !headers.has("reflexer-pass-through"));
+  });
+
+  test("the skip header with another value throws, and nothing is sent", async () => {
+    const { fetch, seen } = made(check.served);
+    await assert.rejects(fetch(check.CHAT, { method: "POST", body: "{}", headers: { "Reflexer-Skip": "1" } }), { name: "Error", message: index.NOT_A_SKIP });
+    assert.deepEqual(seen, []);
   });
 
   test("the line's namespace reaches reflexer alone, and a copy keeps it", async () => {
@@ -122,9 +149,9 @@ describe("Straight", () => {
     assert.deepEqual(hosts(seen), ["api.openai.com"]);
   });
 
-  test("a replay with the pass-through header throws, and nothing is sent", async () => {
+  test("a replay with the skip header throws, and nothing is sent", async () => {
     const { fetch, seen } = made(check.served);
-    await assert.rejects(fetch(check.CHAT, { method: "POST", body: check.REPLAY, headers: { "reflexer-pass-through": "1" } }), index.ReplayNotTaken);
+    await assert.rejects(fetch(check.CHAT, { method: "POST", body: check.REPLAY, headers: { "reflexer-skip": "true" } }), index.ReplayNotTaken);
     assert.deepEqual(seen, []);
   });
 

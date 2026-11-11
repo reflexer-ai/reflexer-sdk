@@ -20,11 +20,11 @@ supported("aiobotocore", [3])
 EVENT = "before-send."
 
 
-def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None):
+def through(client, reflexer_key, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
     """Ours after every `before-send` handler of the client's, on its own emitter; reflexer's leg by its own aiohttp
     session. A client on another HTTP session class (`AioConfig(http_session_cls=...)`) raises here: its session takes
     no aiohttp request, and every call would go straight."""
-    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace)
+    reflexer = Reflexer(reflexer_key, BEDROCK, base, sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)
     own, events = client._endpoint.http_session, client.meta.events
     if type(own) is not aiobotocore.httpsession.AIOHTTPSession:
         raise TypeError(f"reflexer works only with aiobotocore's own aiohttp session, not {type(own).__name__}")

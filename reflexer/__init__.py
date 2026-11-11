@@ -14,7 +14,16 @@ BASE = "https://api.reflexer.ai"
 SKIP = "reflexer-skip"  # a header the client sets on one call: "true" skips reflexer, "false" does not; it never leaves
 NOT_A_SKIP = "the Reflexer-Skip header must be true or false: true sends the call directly to the provider, false lets the call go through reflexer"
 OURS = "reflexer-"  # what starts each header of ours: none leaves for a provider
-NAMESPACE = "reflexer-namespace"  # the one header of ours a client may give reflexer
+NAMESPACE = "reflexer-namespace"  # a header of ours a client may give reflexer, as the option or on a call
+ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER = "reflexer-answer", "reflexer-store", "reflexer-pass-through", "reflexer-timeout-ms"
+OPTION_HEADERS = (ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER)  # an option's, given by the client or on a call
+PASSED = (NAMESPACE, *OPTION_HEADERS)  # the headers of ours a client may give reflexer; none leaves for a provider
+SWITCHES = {  # a client's boolean option: its header, its default (nothing sent), and why it must be true or false
+    "answer":       (ANSWER_HEADER,       True,  "false asks reflexer not to answer: reflexer replies with an empty response"),
+    "store":        (STORE_HEADER,        True,  "false asks reflexer to keep no copy of the call"),
+    "pass_through": (PASS_THROUGH_HEADER, False, "true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true"),  # the old `Reflexer-Pass-Through: 1` skipped reflexer
+}
+TIMEOUT_WHY = "the longest reflexer waits for its own answer before it forwards the call to the provider"
 
 log = logging.getLogger("reflexer")
 
@@ -25,13 +34,15 @@ class Reflexer:
     of the calls that return a model's message, the only ones that go to reflexer; `routers`, optional, by host, the wire
     of a router with a route of its own at reflexer, taken for the calls it lists."""
 
-    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic, namespace=None):
+    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic, namespace=None, answer=True, store=True,
+                 pass_through=False, timeout_ms=None):
         check(key)
         if namespace is not None and not (isinstance(namespace, str) and re.fullmatch(r"[!-~]+(?: [!-~]+)*", namespace)):
             raise ValueError("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header")
         if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
             raise ValueError("sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer")
         self.key, self.base, self.sample, self.namespace = key, checked_base(base), sample, namespace
+        self.given = given(namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)
         self.way = way(wire)  # a typo in a provider file raises here, as the client is made, never on a call
         self.routers = {host: way(router) for host, router in wire.get("routers", {}).items()}
         self.breaker = Breaker(clock)
@@ -55,12 +66,11 @@ class Reflexer:
         if upstream != provider:
             ours["reflexer-upstream"] = upstream
         theirs = {name: value for name, value in headers.items()
-                  if name != "host" and (name == NAMESPACE or not name.startswith(OURS))}  # no header of a client's steers us
+                  if name != "host" and (name in PASSED or not name.startswith(OURS))}  # no other header of a client's steers us
         to = f"{self.base}{reflexer_path}{address.path[call.start():]}"
         if address.query:
             to += f"?{address.query}"
-        given = {NAMESPACE: self.namespace} if self.namespace else {}  # a call's own namespace header wins
-        return to, given | theirs | ours
+        return to, self.given | theirs | ours  # a call's own header wins over the client's option
 
     def goes_straight(self, status, headers):
         """Whether the call goes straight to the provider, given reflexer's response."""
@@ -87,6 +97,41 @@ def skips(value):
     if value not in ("true", "false"):
         raise ValueError(NOT_A_SKIP)
     return value == "true"
+
+
+def given(namespace, **options):
+    """The headers the client's options give reflexer: each only when it differs from its default, which reflexer takes
+    when nothing is sent. A wrong option raises as the client is made, before anything is sent."""
+    headers = {NAMESPACE: namespace} if namespace else {}
+    for option, (header, default, why) in SWITCHES.items():
+        if not isinstance(options[option], bool):  # 0 and 1 too: only True or False
+            raise ValueError(f"reflexer_{option} must be true or false: {why}")
+        if options[option] != default:
+            headers[header] = str(options[option]).lower()
+    timeout = options["timeout_ms"]
+    if timeout is not None:
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
+            raise ValueError(f"reflexer_timeout_ms must be a whole number of milliseconds from 1: {TIMEOUT_WHY}")
+        headers[TIMEOUT_HEADER] = str(timeout)
+    return headers
+
+
+def checked(headers):
+    """A call's own headers of ours, read before anything is sent: whether its `Reflexer-Skip` skips reflexer (`skips`),
+    and a wrong value of any raises (fail loud). A switch's header is true or false, as the skip's is read; the timeout's,
+    a whole number from 1. `headers`, a mapping by lower-case name, as httpx's and `lower`'s are."""
+    for option, (header, _, why) in SWITCHES.items():
+        value = headers.get(header)
+        if value is not None and text(value).strip(" \t").lower() not in ("true", "false"):
+            raise ValueError(f"the {header.title()} header must be true or false: {why}")
+    value = headers.get(TIMEOUT_HEADER)
+    if value is not None and not re.fullmatch("[1-9][0-9]*", text(value).strip(" \t")):
+        raise ValueError(f"the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: {TIMEOUT_WHY}")
+    return skips(headers.get(SKIP))
+
+
+def text(value):
+    return value.decode() if isinstance(value, bytes) else value
 
 
 def way(wire):

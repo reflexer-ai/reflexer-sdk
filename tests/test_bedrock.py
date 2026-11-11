@@ -852,6 +852,20 @@ class Promises(Case):
                     self.assertEqual([str(each) for each in raised][-1:], [reflexer.NOT_A_SKIP], repr(outcome.error))
                     self.assertEqual(made.reflexer.seen + made.provider.seen, [])
 
+    def test_an_option_header_repeated_on_botocore_raises_as_its_values_joined_do_and_none_leaves(self):
+        """An option's header botocore holds twice, as the skip's above: every value read, so two raise, as httpx's do."""
+        for lib in ("boto3", "aiobotocore"):
+            for header, values in (("Reflexer-Answer", ("true", "false")), ("Reflexer-Timeout-Ms", ("100", "200"))):
+                with self.subTest(lib=lib, header=header):
+                    made, calls = world(lib)
+                    client = calls.client()
+                    client.meta.events.register("before-sign.bedrock-runtime.*", lambda request, header=header, values=values, **_: [
+                        request.headers.__setitem__(header, value) for value in values])
+                    outcome = calls.call(client)
+                    raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                    self.assertRegex(" ".join(str(each) for each in raised), f"the {header} header must be", repr(outcome.error))
+                    self.assertEqual(made.reflexer.seen + made.provider.seen, [])
+
     def test_the_skip_argument_true_skips_false_does_not_another_value_raises_and_none_leaves(self):
         """`ReflexerSkip` on a keyed call through the botocore family: True goes straight, False goes to reflexer, anything
         but a boolean ("false" included) raises before anything is sent."""
@@ -958,6 +972,18 @@ class Promises(Case):
         for (lib, how), (uncovered, held) in ours_on_signed_calls().items():
             with self.subTest(lib=lib, how=how):
                 self.assertEqual((uncovered, held), ([], True))
+
+    def test_a_signed_calls_option_headers_reach_reflexer_alone_never_signed(self):
+        given = {"reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "100"}
+        for lib in RUNTIME:
+            with self.subTest(lib=lib):
+                made, calls = world(lib)
+                SCENES["busy"](made)
+                calls.call(calls.client(keyed=False), headers={name.title(): value for name, value in given.items()})
+                calls.close()
+                to_reflexer, arrival = made.reflexer.seen[-1], made.provider.seen[-1]
+                self.assertEqual({name: to_reflexer.headers.get(name) for name in given}, given)
+                self.assertEqual(([name for name in arrival.headers if name in given], bedrock.signature_holds(arrival)), ([], True))
 
     def test_nothing_a_served_call_hands_the_client_holds_the_key(self):
         for lib, where in what_the_client_is_handed().items():

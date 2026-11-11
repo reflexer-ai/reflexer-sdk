@@ -428,6 +428,20 @@ describe("Bedrock", () => {
       }
     });
 
+    if (name !== "ai-sdk") test(`${name}: a call's option headers reach reflexer alone, never signed`, async () => {
+      const given = { "reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "100" };
+      for (const keyed of [false, true]) {
+        const { result, seen } = await called(make, keyed, ops[0], "busy", { headers: given });
+        assert.equal(result, FROM.bedrock, `keyed ${keyed}: ${result}`);
+        const [toReflexer] = seen.filter(({ url }) => url.host === check.REFLEXER);
+        assert.deepEqual(Object.fromEntries(Object.keys(given).map((header) => [header, toReflexer?.headers.get(header)])), given, `keyed ${keyed}`);
+        const straight = seen.filter(({ url }) => url.host === BEDROCK);
+        assert.equal(straight.length, 1, `keyed ${keyed}`);
+        assert.deepEqual([...straight[0].headers.keys()].filter((header) => header in given), [], `keyed ${keyed}`);
+        assert.ok(!/SignedHeaders=[^,]*reflexer-/.test(straight[0].headers.get("authorization") ?? ""), `keyed ${keyed}`);
+      }
+    });
+
     test(`${name}: the skip's header false sends a keyed call to reflexer, and leaves for no one`, async () => {
       const { result, seen } = await called(make, true, ops[0], "served", { headers: { "Reflexer-Skip": "False" } });
       assert.equal(result, FROM.reflexer, String(result));
@@ -954,7 +968,7 @@ describe("Broken", () => {
   });
 
   test("a signed call's own headers taken off turns it red", async () => {
-    await check.planted("bedrock.js", "const ours = keyed(new Headers(plain(request.headers))) ? OURS : SKIP;", "const ours = OURS;", async (faulty) => {
+    await check.planted("bedrock.js", "const ours = keyed(new Headers(plain(request.headers))) ? [OURS] : [SKIP, ...OPTION_HEADERS];", "const ours = [OURS];", async (faulty) => {
       const found = await signedAsMade(faulty, NAMESPACE);
       assert.notDeepEqual(found["aws-js"].line, found["aws-js"].stock);
     });

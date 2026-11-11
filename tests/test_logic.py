@@ -87,10 +87,54 @@ class Route(unittest.TestCase):
                 self.reflexer.route(CHAT, {reflexer.SKIP: value})
             self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)
 
-    def test_the_old_skip_header_is_dropped_as_any_header_of_ours(self):
-        made = self.reflexer.route(CHAT, {"reflexer-pass-through": "1"})
+    def test_another_header_of_ours_is_dropped(self):
+        made = self.reflexer.route(CHAT, {"reflexer-made-up": "1", "reflexer-upstream": "https://made-up.example"})
         self.assertIsNotNone(made)
-        self.assertNotIn("reflexer-pass-through", made[1])
+        self.assertNotIn("reflexer-made-up", made[1])
+        self.assertNotIn("reflexer-upstream", made[1])
+
+    def test_the_options_go_as_headers_only_when_they_differ_from_reflexers_default(self):
+        self.assertEqual({name for name in self.reflexer.route(CHAT, {})[1] if name != "reflexer-key"}, set())
+        alike = reflexer.Reflexer(KEY, WIRE, answer=True, store=True, pass_through=False, timeout_ms=None)
+        self.assertEqual({name for name in alike.route(CHAT, {})[1] if name != "reflexer-key"}, set())
+        other = reflexer.Reflexer(KEY, WIRE, answer=False, store=False, pass_through=True, timeout_ms=2500)
+        self.assertEqual({name: value for name, value in other.route(CHAT, {})[1].items() if name != "reflexer-key"},
+                         {"reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500"})
+
+    def test_a_calls_own_option_header_goes_to_reflexer_and_wins(self):
+        other = reflexer.Reflexer(KEY, WIRE, answer=False, timeout_ms=2500)
+        given = {"reflexer-answer": "TRUE", "reflexer-store": "false", "reflexer-pass-through": "True", "reflexer-timeout-ms": "100"}
+        headers = other.route(CHAT, given)[1]
+        self.assertEqual({name: headers[name] for name in given}, given)
+
+    def test_a_wrong_option_raises_as_the_client_is_made(self):
+        for option, value in (("answer", 0), ("answer", "false"), ("store", 1), ("store", None), ("pass_through", "true")):
+            with self.assertRaisesRegex(ValueError, f"^reflexer_{option} must be true or false: ", msg=(option, value)):
+                reflexer.Reflexer(KEY, WIRE, **{option: value})
+        for value in (0, -1, 1.5, 1e21, "100", True, False):
+            with self.assertRaisesRegex(ValueError, "^reflexer_timeout_ms must be a whole number of milliseconds from 1: ", msg=value):
+                reflexer.Reflexer(KEY, WIRE, timeout_ms=value)
+        reflexer.Reflexer(KEY, WIRE, timeout_ms=1)
+
+    def test_the_old_pass_through_header_value_points_to_the_skip(self):
+        with self.assertRaises(ValueError) as raised:
+            reflexer.checked({"reflexer-pass-through": "1"})
+        self.assertEqual(str(raised.exception), "the Reflexer-Pass-Through header must be true or false: true asks reflexer to forward the "
+                         "call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true")  # as TypeScript's
+
+    def test_a_calls_option_header_is_read_as_the_skip_is_and_a_wrong_value_raises(self):
+        for header in ("reflexer-answer", "reflexer-store", "reflexer-pass-through"):
+            for value in ("true", "FALSE", " True\t"):
+                self.assertFalse(reflexer.checked({header: value}), (header, value))
+            for value in ("1", "", "yes", "true, false", "t rue"):
+                with self.assertRaisesRegex(ValueError, f"^the {header.title()} header must be true or false: ", msg=(header, value)):
+                    reflexer.checked({header: value})
+        for value in ("1", " 2500 ", "100"):
+            reflexer.checked({"reflexer-timeout-ms": value})
+        for value in ("0", "-1", "1.5", "", "1e3", "100, 200", "01"):
+            with self.assertRaisesRegex(ValueError, "^the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: ", msg=value):
+                reflexer.checked({"reflexer-timeout-ms": value})
+        self.assertTrue(reflexer.checked({"reflexer-skip": "true", "reflexer-answer": "false"}))
 
     def test_a_private_address_in_another_notation_goes_straight(self):
         """As the system's resolver reads an IPv4 address (inet_aton), which the client's HTTP client goes by."""

@@ -10,7 +10,18 @@ export const BASE = "https://api.reflexer.ai";
 export const SKIP = "reflexer-skip"; // a header the client sets on one call: "true" skips reflexer, "false" does not; it never leaves
 export const NOT_A_SKIP = "the Reflexer-Skip header must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 export const OURS = "reflexer-"; // what starts each header of ours: none leaves for a provider
-export const NAMESPACE = "reflexer-namespace"; // the one header of ours a client may give reflexer
+export const NAMESPACE = "reflexer-namespace"; // a header of ours a client may give reflexer, as the option or on a call
+export const ANSWER_HEADER = "reflexer-answer", STORE_HEADER = "reflexer-store", PASS_THROUGH_HEADER = "reflexer-pass-through", TIMEOUT_HEADER = "reflexer-timeout-ms";
+export const OPTION_HEADERS = [ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER]; // an option's, given by the client or on a call
+export const PASSED = [NAMESPACE, ...OPTION_HEADERS]; // the headers of ours a client may give reflexer; none leaves for a provider
+/**
+ * A client's boolean option: its name in a message, its header, its default (nothing sent), and why it must be true or false.
+ * @typedef {[string, string, boolean, string]} Switch
+ */
+/** @type {Switch} */ const ANSWER_SWITCH = ["reflexerAnswer", ANSWER_HEADER, true, "false asks reflexer not to answer: reflexer replies with an empty response"];
+/** @type {Switch} */ const STORE_SWITCH = ["reflexerStore", STORE_HEADER, true, "false asks reflexer to keep no copy of the call"];
+/** @type {Switch} */ const PASS_THROUGH_SWITCH = ["reflexerPassThrough", PASS_THROUGH_HEADER, false, "true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true"]; // the old `Reflexer-Pass-Through: 1` skipped reflexer
+const TIMEOUT_WHY = "the longest reflexer waits for its own answer before it forwards the call to the provider";
 
 /**
  * @typedef {{ reflexerPath: string, provider?: string, calls: RegExp, routers?: (Wire & { host: string })[] }} Wire
@@ -24,9 +35,9 @@ export class Reflexer {
   /**
    * @param {string} key
    * @param {Wire} wire
-   * @param {{ base?: string, sample?: number, namespace?: string, clock?: () => number }} [options]
+   * @param {{ base?: string, sample?: number, namespace?: string, answer?: boolean, store?: boolean, passThrough?: boolean, timeoutMs?: number, clock?: () => number }} [options]
    */
-  constructor(key, wire, { base = BASE, sample = 1, namespace, clock = () => performance.now() / 1000 } = {}) {
+  constructor(key, wire, { base = BASE, sample = 1, namespace, answer = true, store = true, passThrough = false, timeoutMs, clock = () => performance.now() / 1000 } = {}) {
     check(key);
     if (namespace != null && !(typeof namespace === "string" && /^[!-~]+(?: [!-~]+)*$/.test(namespace))) {
       throw new Error("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header");
@@ -41,6 +52,7 @@ export class Reflexer {
     this.base = checkedBase(base);
     this.sample = sample;
     this.namespace = namespace;
+    this.given = given(namespace, answer, store, passThrough, timeoutMs);
     this.wire = wire;
     this.breaker = new Breaker(clock);
   }
@@ -67,11 +79,9 @@ export class Reflexer {
     const ours = { "reflexer-key": this.key };
     if (upstream !== wire.provider) ours["reflexer-upstream"] = upstream;
     const theirs = Object.entries(headers).filter(([name]) =>
-      name !== "host" && (name === NAMESPACE || !name.startsWith(OURS))); // no header of a client's steers us
+      name !== "host" && (PASSED.includes(name) || !name.startsWith(OURS))); // no other header of a client's steers us
     const to = `${this.base}${wire.reflexerPath}${address.pathname.slice(call.index)}${address.search}`;
-    /** @type {Record<string, string>} */
-    const given = this.namespace ? { [NAMESPACE]: this.namespace } : {}; // a call's own namespace header wins
-    return [to, { ...given, ...Object.fromEntries(theirs), ...ours }];
+    return [to, { ...this.given, ...Object.fromEntries(theirs), ...ours }]; // a call's own header wins over the client's option
   }
 
   /**
@@ -96,6 +106,55 @@ export class Reflexer {
     this.breaker.note(FAILED, null);
   }
 }
+
+/**
+ * The headers the client's options give reflexer: each only when it differs from its default, which reflexer takes when
+ * nothing is sent. A wrong option throws as the client is made, before anything is sent.
+ * @param {string | undefined} namespace @param {unknown} answer @param {unknown} store @param {unknown} passThrough @param {unknown} timeoutMs
+ * @returns {Record<string, string>}
+ */
+function given(namespace, answer, store, passThrough, timeoutMs) {
+  /** @type {[string, string][]} */
+  const headers = namespace ? [[NAMESPACE, namespace]] : [];
+  /** @type {[Switch, unknown][]} */
+  const switches = [[ANSWER_SWITCH, answer], [STORE_SWITCH, store], [PASS_THROUGH_SWITCH, passThrough]];
+  for (const [[name, header, byDefault, why], value] of switches) {
+    if (typeof value !== "boolean") throw new Error(`${name} must be true or false: ${why}`);
+    if (value !== byDefault) headers.push([header, String(value)]);
+  }
+  if (timeoutMs != null) {
+    if (!(Number.isSafeInteger(timeoutMs) && /** @type {number} */ (timeoutMs) >= 1)) {
+      throw new Error(`reflexerTimeoutMs must be a whole number of milliseconds from 1: ${TIMEOUT_WHY}`);
+    }
+    headers.push([TIMEOUT_HEADER, String(timeoutMs)]);
+  }
+  return Object.fromEntries(headers);
+}
+
+/**
+ * A call's own headers of ours, read before anything is sent: whether its `Reflexer-Skip` skips reflexer (`skips`), and
+ * a wrong value of any throws (fail loud). A switch's header is true or false, as the skip's is read; the timeout's, a
+ * whole number from 1.
+ * @param {{ get(name: string): string | null | undefined }} headers by name in any case, as `Headers` reads them
+ */
+export function checked(headers) {
+  for (const [, header, , why] of [ANSWER_SWITCH, STORE_SWITCH, PASS_THROUGH_SWITCH]) {
+    const value = headers.get(header);
+    if (value != null && !["true", "false"].includes(trimmed(value).toLowerCase())) {
+      throw new Error(`the ${titled(header)} header must be true or false: ${why}`);
+    }
+  }
+  const value = headers.get(TIMEOUT_HEADER);
+  if (value != null && !/^[1-9][0-9]*$/.test(trimmed(value))) {
+    throw new Error(`the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: ${TIMEOUT_WHY}`);
+  }
+  return skips(headers.get(SKIP));
+}
+
+/** @param {string} value */
+const trimmed = (value) => String(value).replace(/^[ \t]+|[ \t]+$/g, "");
+/** @param {string} header */
+const titled = (header) => header.replace(/(^|-)([a-z])/g, (_, dash, letter) => dash + letter.toUpperCase());
 
 /**
  * Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case and without the

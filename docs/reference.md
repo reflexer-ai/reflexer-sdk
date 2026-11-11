@@ -12,6 +12,16 @@ Use this page to look up a name. Every public name of the SDK takes the same few
 
 **`reflexer_namespace`** · **`reflexerNamespace`** · **`namespace`**: `str`, optional. A name for a group of your calls. reflexer keeps each group separate from your other calls. For example, use one namespace per product or per environment. If you give no namespace, your calls are in your default namespace. Allowed characters: ASCII letters, digits and signs, and single spaces between them. For any other value, the SDK raises `ValueError` (TypeScript: `Error`) when you create the client. Functions name this argument `namespace`, as they do for `base`. [Advanced](advanced.md#keep-calls-apart-a-namespace).
 
+**`reflexer_answer`** · **`reflexerAnswer`** · **`answer`**: `bool`, optional, default `True`. With `False`, reflexer does not answer, and it returns an empty reply (HTTP 204). [Advanced](advanced.md#tell-reflexer-what-to-do-with-your-calls).
+
+**`reflexer_store`** · **`reflexerStore`** · **`store`**: `bool`, optional, default `True`. With `False`, reflexer keeps no copy of the call.
+
+**`reflexer_pass_through`** · **`reflexerPassThrough`** · **`pass_through`** (TypeScript options: `passThrough`): `bool`, optional, default `False`. With `True`, reflexer forwards the call to your provider and never answers itself.
+
+**`reflexer_timeout_ms`** · **`reflexerTimeoutMs`** · **`timeout_ms`** (TypeScript options: `timeoutMs`): `int` from 1, optional. The longest time, in milliseconds, that reflexer waits for its own answer before it forwards the call to your provider. It can only make reflexer's own limit shorter.
+
+For each of these four options, the SDK sends nothing when you do not give it. For a value of the wrong kind (`answer`, `store`, `pass_through`: not `True` or `False`; `timeout_ms`: not a whole number from 1), the SDK raises `ValueError` (TypeScript: `Error`) when you create the client.
+
 **`own`** (Python functions) · **`fetch`** (TypeScript options): optional; the default is your provider SDK's own. Your HTTP client or `fetch` (for `reflexer.gemini.client_args`: your `client_args` dict). The SDK also sends its calls to reflexer through it. [Advanced](advanced.md#your-own-http-client).
 
 **`Reflexer-Skip: true`** (a header) · **`ReflexerSkip=True`** (boto3's argument) · **`reflexerSkip: true`** (the AWS SDK's option): set it on one call, and the SDK sends that call directly to your provider. With the value `false` (the header's) or `False`/`false` (the argument's, a boolean), the SDK does not skip reflexer. With any other value, the SDK raises an error and sends nothing. [Advanced](advanced.md#skip-reflexer-for-one-call).
@@ -22,7 +32,7 @@ Use this page to look up a name. Every public name of the SDK takes the same few
 
 ### Clients
 
-Each class takes the arguments of the provider SDK's class (the stock class), and also `reflexer_key`, `reflexer_base`, `sample` and `reflexer_namespace`. Everything else is the same as in the stock class.
+Each class takes the arguments of the provider SDK's class (the stock class), and also `reflexer_key`, `reflexer_base`, `sample`, `reflexer_namespace`, `reflexer_answer`, `reflexer_store`, `reflexer_pass_through` and `reflexer_timeout_ms`. Everything else is the same as in the stock class.
 
 | Name | Stock class | Page |
 |---|---|---|
@@ -57,12 +67,12 @@ Hello! How can I help you today?
 
 | Name | Returns | Takes | Page |
 |---|---|---|---|
-| `reflexer.openai.http_client`, `async_http_client`, `azure_http_client`, `azure_async_http_client`; `reflexer.anthropic.http_client`, `async_http_client` | An HTTP client for the stock class's `http_client=` | `key, own=None, base=…, sample=1.0, namespace=None` | [other libraries](other-libraries.md) |
-| `reflexer.gemini.http_client`, `async_http_client` | An HTTP client for google-genai's `httpx_client` and `httpx_async_client` | `key, own=None, base=…, sample=1.0, namespace=None` | [other libraries](other-libraries.md) |
-| `reflexer.gemini.client_args` | A dict for both `client_args` and `async_client_args` | `key, own=None, base=…, sample=1.0, namespace=None` | [other libraries](other-libraries.md) |
-| `reflexer.boto3.client` | A boto3 client | boto3's arguments, and `reflexer_key`, `reflexer_base`, `sample`, `reflexer_namespace` | [bedrock](bedrock.md#boto3) |
-| `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client you give, which now sends its calls through reflexer | `client, reflexer_key, base=…, sample=1.0, namespace=None` | [bedrock](bedrock.md#aiobotocore) |
-| `reflexer.litellm.client`, `async_client` | An HTTP handler for LiteLLM's `client=` | `reflexer_key, base=…, sample=1.0, namespace=None` | [bedrock](bedrock.md#litellm) |
+| `reflexer.openai.http_client`, `async_http_client`, `azure_http_client`, `azure_async_http_client`; `reflexer.anthropic.http_client`, `async_http_client` | An HTTP client for the stock class's `http_client=` | `key, own=None, base=…, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None` | [other libraries](other-libraries.md) |
+| `reflexer.gemini.http_client`, `async_http_client` | An HTTP client for google-genai's `httpx_client` and `httpx_async_client` | `key, own=None, base=…, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None` | [other libraries](other-libraries.md) |
+| `reflexer.gemini.client_args` | A dict for both `client_args` and `async_client_args` | `key, own=None, base=…, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None` | [other libraries](other-libraries.md) |
+| `reflexer.boto3.client` | A boto3 client | boto3's arguments, and `reflexer_key`, `reflexer_base`, `sample`, `reflexer_namespace`, `reflexer_answer`, `reflexer_store`, `reflexer_pass_through`, `reflexer_timeout_ms` | [bedrock](bedrock.md#boto3) |
+| `reflexer.boto3.through`, `reflexer.aiobotocore.through` | The client you give, which now sends its calls through reflexer | `client, reflexer_key, base=…, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None` | [bedrock](bedrock.md#aiobotocore) |
+| `reflexer.litellm.client`, `async_client` | An HTTP handler for LiteLLM's `client=` | `reflexer_key, base=…, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None` | [bedrock](bedrock.md#litellm) |
 
 <!-- example: served python bedrock -->
 ```python
@@ -81,7 +91,7 @@ Hello! How can I help you today?
 
 ### Classes
 
-Each class takes the options of the provider SDK's class, and also `reflexerKey`, `reflexerBase`, `sample` and `reflexerNamespace`.
+Each class takes the options of the provider SDK's class, and also `reflexerKey`, `reflexerBase`, `sample`, `reflexerNamespace`, `reflexerAnswer`, `reflexerStore`, `reflexerPassThrough` and `reflexerTimeoutMs`.
 
 | Name | From | Stock class | Page |
 |---|---|---|---|
@@ -93,12 +103,12 @@ Each class takes the options of the provider SDK's class, and also `reflexerKey`
 
 | Name | From | Returns | Takes |
 |---|---|---|---|
-| `openai.fetch`, `azure.fetch`, `anthropic.fetch`, `gemini.fetch` | `@reflexer-ai/sdk` | A `fetch` for the provider SDK's `fetch` option | `key, { base, sample, namespace, fetch, headersTimeout }` |
-| `wrap` | `@reflexer-ai/sdk/bedrock` | The AWS SDK client you give, which now sends its calls through reflexer | `client, key, { base, sample, namespace, headersTimeout }` |
-| `fetch` | `@reflexer-ai/sdk/bedrock` | A `fetch` for AnthropicBedrock | `key, { base, sample, namespace, fetch, headersTimeout }` |
+| `openai.fetch`, `azure.fetch`, `anthropic.fetch`, `gemini.fetch` | `@reflexer-ai/sdk` | A `fetch` for the provider SDK's `fetch` option | `key, { base, sample, namespace, answer, store, passThrough, timeoutMs, fetch, headersTimeout }` |
+| `wrap` | `@reflexer-ai/sdk/bedrock` | The AWS SDK client you give, which now sends its calls through reflexer | `client, key, { base, sample, namespace, answer, store, passThrough, timeoutMs, headersTimeout }` |
+| `fetch` | `@reflexer-ai/sdk/bedrock` | A `fetch` for AnthropicBedrock | `key, { base, sample, namespace, answer, store, passThrough, timeoutMs, fetch, headersTimeout }` |
 | `anthropicMiddleware` | `@reflexer-ai/sdk/bedrock` | AnthropicBedrock's `middleware`; put it after all your own middleware | (a value) |
-| `requestHandler` | `@reflexer-ai/sdk/bedrock` | An AWS SDK request handler that wraps your own handler. Use it for a client that sets its own `requestHandler`, because such a client cannot use `wrap`. Also give it the client's `signer`: without the signer, the SDK sends signed calls directly to Bedrock | `key, { handler, signer, base, sample, namespace, headersTimeout }` |
-| `fetch` | `@reflexer-ai/sdk/bedrock-ai` | A `fetch` for the AI SDK's Bedrock provider | `key, { base, sample, namespace, fetch, headersTimeout }` |
+| `requestHandler` | `@reflexer-ai/sdk/bedrock` | An AWS SDK request handler that wraps your own handler. Use it for a client that sets its own `requestHandler`, because such a client cannot use `wrap`. Also give it the client's `signer`: without the signer, the SDK sends signed calls directly to Bedrock | `key, { handler, signer, base, sample, namespace, answer, store, passThrough, timeoutMs, headersTimeout }` |
+| `fetch` | `@reflexer-ai/sdk/bedrock-ai` | A `fetch` for the AI SDK's Bedrock provider | `key, { base, sample, namespace, answer, store, passThrough, timeoutMs, fetch, headersTimeout }` |
 | `middleware` | `@reflexer-ai/sdk/bedrock-ai` | For `wrapLanguageModel` | (a value) |
 
 <!-- example: served -->

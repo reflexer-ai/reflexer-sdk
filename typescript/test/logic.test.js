@@ -75,10 +75,10 @@ describe("Route", () => {
     }
   });
 
-  test("the old skip header is dropped as any header of ours", () => {
-    const made = way().route(CHAT, { "reflexer-pass-through": "1" });
+  test("another header of ours is dropped", () => {
+    const made = way().route(CHAT, { "reflexer-made-up": "1" });
     assert.notEqual(made, null);
-    assert.ok(!Object.hasOwn(made?.[1] ?? {}, "reflexer-pass-through"));
+    assert.ok(!Object.hasOwn(made?.[1] ?? {}, "reflexer-made-up"));
   });
 
   test("straight", () => {
@@ -165,6 +165,49 @@ describe("Construction", () => {
       assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { sample: /** @type {any} */ (sample) }), { message: "sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer" });
     }
     for (const sample of [0, 0.5, 1]) new reflexer.Reflexer(KEY, WIRE, { sample });
+  });
+
+  test("the options go as headers only when they differ from reflexer's default", () => {
+    const others = (/** @type {any} */ made) => Object.fromEntries(Object.entries(made.route(CHAT, {})?.[1] ?? {}).filter(([name]) => name !== "reflexer-key"));
+    assert.deepEqual(others(new reflexer.Reflexer(KEY, WIRE)), {});
+    assert.deepEqual(others(new reflexer.Reflexer(KEY, WIRE, { answer: true, store: true, passThrough: false })), {});
+    assert.deepEqual(others(new reflexer.Reflexer(KEY, WIRE, { answer: false, store: false, passThrough: true, timeoutMs: 2500 })),
+      { "reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500" });
+  });
+
+  test("a call's own option header goes to reflexer and wins", () => {
+    const given = { "reflexer-answer": "TRUE", "reflexer-store": "false", "reflexer-pass-through": "True", "reflexer-timeout-ms": "100" };
+    const headers = new reflexer.Reflexer(KEY, WIRE, { answer: false, timeoutMs: 2500 }).route(CHAT, given)?.[1] ?? {};
+    assert.deepEqual(Object.fromEntries(Object.keys(given).map((name) => [name, headers[name]])), given);
+  });
+
+  test("a wrong option throws as the client is made", () => {
+    for (const [option, name, value] of [["answer", "reflexerAnswer", 0], ["answer", "reflexerAnswer", "false"], ["store", "reflexerStore", 1], ["store", "reflexerStore", null], ["passThrough", "reflexerPassThrough", "true"]]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { [String(option)]: /** @type {any} */ (value) }), { message: new RegExp(`^${name} must be true or false: `) });
+    }
+    for (const value of [0, -1, 1.5, 1e21, "100", true, false]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { timeoutMs: /** @type {any} */ (value) }), { message: /^reflexerTimeoutMs must be a whole number of milliseconds from 1: / });
+    }
+    new reflexer.Reflexer(KEY, WIRE, { timeoutMs: 1 });
+  });
+
+  test("the old pass-through header value points to the skip, as Python's does", () => {
+    const message = "the Reflexer-Pass-Through header must be true or false: true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true";
+    assert.throws(() => reflexer.checked(new Headers({ "Reflexer-Pass-Through": "1" })), { message });
+  });
+
+  test("a call's option header is read as the skip is, and a wrong value throws", () => {
+    for (const header of ["Reflexer-Answer", "Reflexer-Store", "Reflexer-Pass-Through"]) {
+      for (const value of ["true", "FALSE", " True\t"]) assert.equal(reflexer.checked(new Headers({ [header]: value })), false);
+      for (const value of ["1", "yes", "true, false", "t rue"]) {
+        assert.throws(() => reflexer.checked(new Headers({ [header]: value })), { message: new RegExp(`^the ${header} header must be true or false: `) });
+      }
+    }
+    for (const value of ["1", " 2500 ", "100"]) reflexer.checked(new Headers({ "reflexer-timeout-ms": value }));
+    for (const value of ["0", "-1", "1.5", "1e3", "100, 200", "01"]) {
+      assert.throws(() => reflexer.checked(new Headers({ "reflexer-timeout-ms": value })), { message: /^the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: / });
+    }
+    assert.equal(reflexer.checked(new Headers({ "reflexer-skip": "true", "reflexer-answer": "false" })), true);
   });
 
   test("a namespace that cannot go as a header throws", () => {

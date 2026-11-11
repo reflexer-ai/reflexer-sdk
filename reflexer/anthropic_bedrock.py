@@ -10,7 +10,7 @@ a signed one, to Mantle as stock: reflexer takes signed calls on Bedrock's runti
 """
 import contextvars, inspect
 import anthropic
-from . import BASE, OURS, PASS_THROUGH, supported
+from . import BASE, OURS, SKIP, skips, supported
 from .anthropic import MESSAGES
 from .bedrock import BEDROCK, Keyed, setup_http_client, straight
 from .transport import STRAIGHT, Through, setup_client
@@ -97,11 +97,14 @@ class Middleware(anthropic.Middleware):
 
     @staticmethod
     def attempt(request):
-        """(the attempt, its call's own state), the skip's header taken off: it never leaves, and the call goes straight."""
+        """(the attempt, its call's own state), the skip's header taken off: it never leaves. "true", the call goes straight;
+        "false", as with no header; any other value raises, before anything is sent."""
         headers = dict(request.headers)
-        if not any(name.lower() == PASS_THROUGH for name in headers):
+        given = [value for name, value in headers.items() if name.lower() == SKIP]
+        if not given:
             return request, {}
-        return request.copy(headers={name: value for name, value in headers.items() if name.lower() != PASS_THROUGH}), {"skipped": True}
+        skipped = any([skips(value) for value in given])  # each value read: a wrong one raises
+        return request.copy(headers={name: value for name, value in headers.items() if name.lower() != SKIP}), {"skipped": True} if skipped else {}
 
     def handle(self, request, call_next):
         request, call = self.attempt(request)

@@ -103,7 +103,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 ## Options
 
 - `sample=0.01` (TypeScript `sample: 0.01`): the SDK sends that share of the calls to reflexer, and the other calls directly to Gemini.
-- `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}` on a call (TypeScript: `config: { httpOptions: { headers: { "Reflexer-Pass-Through": "1" } } }`): the SDK sends that call directly to Gemini.
+- `config={"http_options": {"headers": {"Reflexer-Skip": "true"}}}` on a call (TypeScript: `config: { httpOptions: { headers: { "Reflexer-Skip": "true" } } }`): the SDK sends that call directly to Gemini.
 - `config={"http_options": {"extra_body": {"replay_response": answer}}}` on a call (TypeScript: `config: { httpOptions: { extraBody: { replay_response: answer } } }`): a [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer). You give reflexer your Gemini answer, and neither the SDK nor reflexer sends the call to Gemini.
 - `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if reflexer gave you another one.
 

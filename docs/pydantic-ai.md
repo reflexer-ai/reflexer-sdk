@@ -69,7 +69,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 ## Options
 
 - `sample=0.01` on reflexer's client: the SDK sends that share of the calls to reflexer, and the other calls directly to your provider.
-- `run_sync("Hi", model_settings={"extra_headers": {"Reflexer-Pass-Through": "1"}})`: the SDK sends that run's calls directly to your provider (OpenAI and Anthropic).
+- `run_sync("Hi", model_settings={"extra_headers": {"Reflexer-Skip": "true"}})`: the SDK sends that run's calls directly to your provider (OpenAI and Anthropic).
 
 All options: [Advanced](advanced.md).
 

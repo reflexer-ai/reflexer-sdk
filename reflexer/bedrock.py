@@ -14,17 +14,18 @@ What the lines share: `keyed`, `signed`, `straight`, the botocore family's per-c
 transport (`Keyed`, `setup_http_client`).
 """
 import copy, inspect, re
-from . import BASE, OURS, PASS_THROUGH, Reflexer, ReplayNotTaken, is_replay
+from . import BASE, OURS, SKIP, Reflexer, ReplayNotTaken, is_replay, skips
 from .transport import STRAIGHT, Through, body_of
 
 BEDROCK = {
     "reflexer_path": "/bedrock",
     "calls":         r"/model/[^/]+/(invoke|invoke-with-response-stream|converse|converse-stream)$",
 }
-SKIPPED_HERE = "reflexer_pass_through"  # in a botocore call's context: this call goes straight
+SKIPPED_HERE = "reflexer_skip"  # in a botocore call's context: this call goes straight
 SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
 UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its URL, body and headers as they came to `before-sign`, before the client's handlers
-ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerPassThrough=True)`
+ARGUMENT = "ReflexerSkip"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerSkip=True)`
+NOT_A_SKIP_ARGUMENT = f"the {ARGUMENT} argument must be True or False: True sends the call directly to the provider, False lets the call go through reflexer"
 
 
 def keyed(headers):
@@ -60,17 +61,21 @@ def skip_taken(event_name, kwargs, before):
     """The botocore family's per-call skip, taken off where botocore would carry it to Bedrock, and kept in the call's
     context: the argument, from the call's parameters before botocore validates them (`provide-client-params`, before the
     client's own handlers); the header, from the request after the client's own `before-sign` handlers, before it is signed."""
-    if before and event_name.startswith("provide-client-params.") and kwargs["params"].pop(ARGUMENT, None):
-        kwargs["context"][SKIPPED_HERE] = True
+    if before and event_name.startswith("provide-client-params.") and ARGUMENT in kwargs["params"]:
+        given = kwargs["params"].pop(ARGUMENT)
+        if not isinstance(given, bool):  # "false" too: a wrong value raises, before anything is sent
+            raise ValueError(NOT_A_SKIP_ARGUMENT)
+        kwargs["context"][SKIPPED_HERE] = given
     if before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[UNSIGNED] = (request.url, request.data, lower(request.headers))
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
-        for name in [name for name in request.headers if name.lower() == PASS_THROUGH]:
-            del request.headers[name]
+        given = request.headers.get_all(SKIP)  # every value, as a header held twice: read together, as httpx joins them
+        if given and skips(", ".join(value.decode() if isinstance(value, bytes) else value for value in given)):  # a wrong value raises, before anything is sent
             request.context[SKIPPED_HERE] = True
+        del request.headers[SKIP]
 
 
 def botocore_route(reflexer, request):
@@ -184,11 +189,13 @@ class Keyed(Through):
         self.send = aleg if inspect.iscoroutinefunction(inner.send) else leg
 
     def handle_request(self, request):
+        skips(request.headers.get(SKIP))  # a wrong value raises here, before anything is sent
         if keyed(request.headers):
             return super().handle_request(request)
         return (self.signed_call if signed(request.headers) else self.straight)(request)
 
     async def handle_async_request(self, request):
+        skips(request.headers.get(SKIP))
         if keyed(request.headers):
             return await super().handle_async_request(request)
         return await (self.asigned_call if signed(request.headers) else self.straight)(request)

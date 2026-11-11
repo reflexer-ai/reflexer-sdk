@@ -3,7 +3,7 @@
  * client's own `fetch`, so its proxy, TLS and connections hold. Whatever fails on the way to reflexer, the client's own call
  * still goes. No answer is touched.
  */
-import { BASE, OURS, Reflexer, ReplayNotTaken, isReplay } from "./logic.js";
+import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, isReplay, skips } from "./logic.js";
 
 export * from "./logic.js";
 
@@ -43,6 +43,7 @@ function through(wire, way) {
   /** @type {Fetch} */
   async function routed(input, init = {}) {
     tested(new Headers(init.headers));
+    skips(new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined)).get(SKIP)); // a wrong value throws here, before anything is sent
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {

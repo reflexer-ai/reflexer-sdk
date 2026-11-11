@@ -41,8 +41,8 @@ This page is for cases where reflexer does less than the library pages say. Each
 | Anthropic's Bedrock and Mantle clients, signed | They sign every header, so Bedrock receives any reflexer header that you set. A signed call to Mantle goes directly to Bedrock | For a namespace, pass `reflexer_namespace` to the client |
 | boto3, aiobotocore and the AWS SDK for JavaScript, signed, when reflexer did not answer and signing the call again fails | The SDK sends the call to Bedrock with its first signature. Python logs the warning "signing the call again failed" | Nothing |
 | langchain-aws, Strands, Pydantic AI | They make the boto3 call themselves, so no per-call argument reaches it | Skip reflexer with a hook on the client ([Advanced](advanced.md#skip-reflexer-for-one-call)) |
-| `ReflexerPassThrough=True` on a boto3 client without reflexer | botocore refuses it | Use it only on reflexer's client |
-| The AWS SDK for JavaScript, `reflexerPassThrough` | It is not in the AWS SDK's types | Cast the options to `any` in a `.ts` file |
+| `ReflexerSkip=True` on a boto3 client without reflexer | botocore refuses it | Use it only on reflexer's client |
+| The AWS SDK for JavaScript, `reflexerSkip` | It is not in the AWS SDK's types | Cast the options to `any` in a `.ts` file |
 | The AWS SDK for JavaScript with its fetch handler (a browser or edge build) | `bedrock.wrap` refuses it, because fetch follows redirects and would send the key with them | Use the Node handlers (the default on Node) |
 | aiobotocore on another HTTP session class | The SDK refuses the client when you give the client to reflexer | Use aiobotocore's own session |
 | The AI SDK on Bedrock, streamed, when its timeout expires during the call to reflexer | The call fails with a timeout error | Set `headersTimeout` lower than your timeout |

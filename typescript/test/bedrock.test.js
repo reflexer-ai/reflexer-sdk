@@ -226,7 +226,7 @@ const LINES = [
     const model = ai.wrapLanguageModel({ model: provider(MODEL), middleware: sdk.bedrockAi.middleware });
     return async (/** @type {string} */ op, /** @type {any} */ extra = {}) => {
       const params = { model, prompt: "Hi", maxRetries: 0, headers: extra.headers, abortSignal: extra.signal,
-        ...(extra.argument ? { providerOptions: { reflexer: { passThrough: true } } } : {}) };
+        ...("argument" in extra ? { providerOptions: { reflexer: { skip: extra.argument } } } : {}) };
       if (op === "converse") return (await ai.generateText(params)).text;
       let failure = null;
       const result = ai.streamText({ ...params, onError: ({ error }) => { failure = error; } });
@@ -251,7 +251,7 @@ function headerOnEachCall(client, headers) {
 /** @param {any} client @param {string} op @param {any} extra */
 async function awsCall(client, op, extra) {
   const id = headerOnEachCall(client, extra.headers);
-  const options = extra.argument ? { reflexerPassThrough: true } : undefined;
+  const options = "argument" in extra ? { reflexerSkip: extra.argument } : undefined;
   try {
     if (op === "converse") return (await client.send(new ConverseCommand({ modelId: MODEL, messages: HI }), options)).output.message.content[0].text;
     if (op === "converse-stream") {
@@ -421,10 +421,27 @@ describe("Bedrock", () => {
 
     test(`${name}: the skip's header sends a keyed call straight, and leaves for no one`, async () => {
       for (const keyed of [true, false]) {
-        const { result, seen } = await called(make, keyed, ops[0], "served", { headers: { "Reflexer-Pass-Through": "1" } });
+        const { result, seen } = await called(make, keyed, ops[0], "served", { headers: { "Reflexer-Skip": "TRUE" } });
         assert.equal(result, FROM.bedrock, `keyed ${keyed}`);
         assert.deepEqual(hosts(seen), [BEDROCK]);
-        assert.ok(!seen.some(({ headers }) => headers.has("reflexer-pass-through")));
+        assert.ok(!seen.some(({ headers }) => headers.has("reflexer-skip")));
+      }
+    });
+
+    test(`${name}: the skip's header false sends a keyed call to reflexer, and leaves for no one`, async () => {
+      const { result, seen } = await called(make, true, ops[0], "served", { headers: { "Reflexer-Skip": "False" } });
+      assert.equal(result, FROM.reflexer, String(result));
+      assert.ok(!seen.some(({ headers }) => headers.has("reflexer-skip")));
+    });
+
+    test(`${name}: the skip's header with another value throws, and nothing is sent`, async () => {
+      for (const keyed of [true, false]) {
+        const { result, seen } = await called(make, keyed, ops[0], "served", { headers: { "Reflexer-Skip": "yes" } });
+        /** @type {string[]} */
+        const messages = [];
+        for (let each = result; each instanceof Error; each = /** @type {any} */ (each).cause) messages.push(each.message);
+        assert.ok(messages.includes(sdk.index.NOT_A_SKIP), `keyed ${keyed}: ${result}`);
+        assert.deepEqual(seen, [], `keyed ${keyed}`);
       }
     });
 
@@ -452,6 +469,22 @@ describe("Bedrock", () => {
     assert.equal(result, FROM.bedrock);
     assert.deepEqual(hosts(seen), [BEDROCK]);
   });
+
+  for (const name of ["aws-js", "ai-sdk"].filter((each) => LINES.some(([line]) => line === each))) {
+    test(`${name}: the skip as an argument false sends the call to reflexer, and anything but a boolean throws, nothing sent`, async () => {
+      const make = /** @type {any} */ (LINES.find(([each]) => each === name))[2];
+      const kept = await called(make, true, "converse", "served", { argument: false });
+      assert.equal(kept.result, FROM.reflexer, String(kept.result));
+      for (const argument of ["false", "true", 1, null]) {
+        const { result, seen } = await called(make, true, "converse", "served", { argument });
+        /** @type {string[]} */
+        const messages = [];
+        for (let each = result; each instanceof Error; each = /** @type {any} */ (each).cause) messages.push(each.message);
+        assert.ok(messages.some((message) => /^the \S+ option must be true or false: /.test(message)), `${JSON.stringify(argument)}: ${result}`);
+        assert.deepEqual(seen, [], JSON.stringify(argument));
+      }
+    });
+  }
 
   test("aws-js: a count of tokens goes straight", async () => {
     const { result, seen } = await called(LINES[0][2], true, "count-tokens");
@@ -896,8 +929,8 @@ describe("Broken", () => {
   });
 
   test("a key in a frame of the SDK's at a throw turns it red", { skip: noSocket }, async () => {
-    await check.planted("bedrock.js", "const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);",
-      "const held = { key }; const { response, sent } = reflexerPassThrough ? { response: null, sent: false } : await ask(request, given);", async (faulty) => {
+    await check.planted("bedrock.js", "const { response, sent } = reflexerSkip ? { response: null, sent: false } : await ask(request, given);",
+      "const held = { key }; const { response, sent } = reflexerSkip ? { response: null, sent: false } : await ask(request, given);", async (faulty) => {
         assert.deepEqual((await framesAtThrows(faulty)).shown, ["handle.held"]);
       });
   });
@@ -921,7 +954,7 @@ describe("Broken", () => {
   });
 
   test("a signed call's own headers taken off turns it red", async () => {
-    await check.planted("bedrock.js", "const ours = keyed(new Headers(plain(request.headers))) ? OURS : PASS_THROUGH;", "const ours = OURS;", async (faulty) => {
+    await check.planted("bedrock.js", "const ours = keyed(new Headers(plain(request.headers))) ? OURS : SKIP;", "const ours = OURS;", async (faulty) => {
       const found = await signedAsMade(faulty, NAMESPACE);
       assert.notDeepEqual(found["aws-js"].line, found["aws-js"].stock);
     });

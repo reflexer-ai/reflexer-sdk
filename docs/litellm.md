@@ -1,6 +1,6 @@
 # reflexer with LiteLLM
 
-Send LiteLLM's calls to OpenAI, Azure OpenAI, Anthropic, Gemini and Bedrock through reflexer: add one line. The line covers `litellm.completion` and `acompletion`, streamed or not, from your code or from a framework built on LiteLLM. LiteLLM sends its calls to other providers, or to another host (a router or a gateway given as `api_base`), as before. A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) (`replay_response`) is the exception: the SDK sends it only to reflexer. The line does not cover LiteLLM's Proxy.
+Send LiteLLM's calls to OpenAI, Azure OpenAI, Anthropic, Gemini and Bedrock through reflexer: add one line. The line covers `litellm.completion` and `acompletion`, streamed or not, from your code or from a framework built on LiteLLM. LiteLLM sends its calls to other providers, or to another host (a router or a gateway given as `api_base`), as before, except for a call's own `ssl_verify` ([Known limits](limits.md#libraries)). A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) (`replay_response`) is the exception: the SDK sends it only to reflexer. The line does not cover LiteLLM's Proxy.
 
 **Before you begin:** you need LiteLLM 1 on Python 3.10 or later, and the environment variable `REFLEXER_KEY` set to the reflexer key you got at onboarding. LiteLLM reads your provider keys where it read them before.
 
@@ -61,7 +61,7 @@ On Bedrock, the reply keeps your model's name. There, `reply._hidden_params["add
 - **What leaves your machine:** the SDK sends the call to reflexer, with your provider key. When reflexer does not answer the call itself, reflexer uses this key to forward the call to your provider. Only reflexer receives your reflexer key.
 - **Your whole process:** the line sets LiteLLM's own settings, so the SDK sends every LiteLLM call of your process through reflexer. If your code sets `client_session`, `aclient_session` or `sync_transport` after the line, or replaces the list with `litellm.callbacks = [...]`, the SDK no longer sees the calls that setting covers, and LiteLLM sends them directly to your provider: [Known limits](limits.md).
 - **Gemini 3:** LiteLLM sends Gemini 3 calls to `v1alpha`, which reflexer does not take. The SDK sends those calls directly to Gemini.
-- **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the line, your code works as before.
+- **What stays the same:** your arguments, except a call's own `ssl_verify` ([Known limits](limits.md#libraries)), the answer's types and fields, errors and streams. If you remove the line, your code works as before.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 

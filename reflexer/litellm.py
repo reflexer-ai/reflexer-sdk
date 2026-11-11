@@ -31,8 +31,8 @@ from litellm.integrations.custom_logger import CustomLogger
 from litellm.litellm_core_utils.completion_timeout import CompletionTimeout
 from litellm.litellm_core_utils.request_timeout_resolver import get_configured_request_timeout
 from litellm.utils import supports_httpx_timeout
-from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
-from . import BASE, Reflexer, checked, supported
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler, get_ssl_verify
+from . import BASE, Reflexer, checked, log, supported
 from .bedrock import BEDROCK, Keyed, straight
 from .transport import STRAIGHT, Through, body_of
 from .wires import AZURE, CHAT, GENERATE, MESSAGES
@@ -268,6 +268,9 @@ def through(reflexer_key, base=BASE, sample=1.0, namespace=None, answer=True, st
     except BaseException:
         litellm.sync_transport = was
         raise
+    if get_ssl_verify() is False:  # as LiteLLM resolves it: `SSL_VERIFY`, then `litellm.ssl_verify`
+        log.warning("LiteLLM's global certificate check is off (litellm.ssl_verify or SSL_VERIFY): certificates are not checked"
+                    " on LiteLLM's calls through the line, even on a call that asks for the check with its own ssl_verify")
     litellm.client_session, litellm.aclient_session = session(httpx.Client, sync, own["client_session"], way), session(Kept, aio, own["aclient_session"], way)
     litellm.input_callback[:] = [each for each in litellm.input_callback if not isinstance(each, Hook)]  # where LiteLLM filed the last
     litellm.callbacks[:] = [each for each in litellm.callbacks if not isinstance(each, Hook)] + [Hook(aio)]

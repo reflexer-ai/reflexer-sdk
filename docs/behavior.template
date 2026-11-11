@@ -35,7 +35,8 @@ bedrock.md | - **A signed call:** the SDK sends the call to reflexer exactly as 
 bedrock.md | - **Mantle:** Python only. With a Bedrock API key, the SDK sends Mantle calls to reflexer. The SDK sends signed Mantle calls directly to Bedrock.
 litellm.md | - **Your whole process:** the line sets LiteLLM's own settings, so the SDK sends every LiteLLM call of your process through reflexer. If your code sets `client_session`, `aclient_session` or `sync_transport` after the line, or replaces the list with `litellm.callbacks = [...]`, the SDK no longer sees the calls that setting covers, and LiteLLM sends them directly to your provider: [Known limits](limits.md).
 litellm.md | - **Gemini 3:** LiteLLM sends Gemini 3 calls to `v1alpha`, which reflexer does not take. The SDK sends those calls directly to Gemini.
-!other-libraries.md | - **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the line, your code works as before.
+!other-libraries.md !litellm.md | - **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the line, your code works as before.
+litellm.md | - **What stays the same:** your arguments, except a call's own `ssl_verify` ([Known limits](limits.md#libraries)), the answer's types and fields, errors and streams. If you remove the line, your code works as before.
 other-libraries.md | - **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the reflexer client, your code works as before.
 all |
 all | Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).

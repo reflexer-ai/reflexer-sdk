@@ -457,6 +457,19 @@ class Line(World):
         self.assertEqual(self.ask("anthropic", True, client=own), standins.STRAIGHT_TEXT)
         self.assertEqual(self.world.reflexer.seen, [])
 
+    def test_the_line_warns_when_litellms_global_certificate_check_is_off(self):
+        """Every call the line's HTTP client sends takes LiteLLM's global check, so with it off a call asking for the check
+        is not checked: the line says so, by `litellm.ssl_verify` or by `SSL_VERIFY`, as LiteLLM reads them; on, silence."""
+        self.addCleanup(setattr, litellm, "ssl_verify", litellm.ssl_verify)
+        with self.assertNoLogs("reflexer", "WARNING"):
+            reflexer.litellm.through(self.world.key)
+        for off in (dict(attribute=False), dict(environment="false")):
+            litellm.ssl_verify = off.get("attribute", True)
+            with mock.patch.dict(os.environ, {"SSL_VERIFY": off["environment"]} if "environment" in off else {}), \
+                    self.assertLogs("reflexer", "WARNING") as said:
+                reflexer.litellm.through(self.world.key)
+            self.assertIn("not checked", " ".join(said.output))
+
     def test_a_key_or_an_address_refused_changes_nothing(self):
         for way in (dict(reflexer_key="rfx1_made_up"), dict(reflexer_key=self.world.key, base="http://reflexer.example")):
             before = [getattr(litellm, name, None) for name in GLOBALS] + [list(litellm.callbacks)]

@@ -6,7 +6,7 @@ its proxies, TLS and connections hold. No private name is read, no class of the 
 answer's bytes are touched.
 """
 import copy, functools, threading, weakref
-from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay, log
+from . import BASE, OURS, SKIP, Reflexer, ReplayNotTaken, is_replay, log, skips
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
 KEPT = ("timeout",)  # of a client's request extensions, what reflexer's request keeps: no callback of theirs sees our key
@@ -121,6 +121,7 @@ class Through:
             await closed_unless_its_loop_ended(self.inner)
 
     def handle_request(self, request):
+        skips(request.headers.get(SKIP))  # a wrong value raises here, before anything is sent
         try:
             try:
                 ours = to_reflexer(self.reflexer, request)
@@ -137,6 +138,7 @@ class Through:
 
     async def handle_async_request(self, request):
         """`handle_request`, for an async client: the language asks for a second copy, not any provider."""
+        skips(request.headers.get(SKIP))
         try:
             try:
                 ours = to_reflexer(self.reflexer, request)

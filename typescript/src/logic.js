@@ -7,7 +7,8 @@
 import { createHash } from "node:crypto";
 
 export const BASE = "https://api.reflexer.ai";
-export const PASS_THROUGH = "reflexer-pass-through"; // a header the client sets on one call to skip reflexer; it never leaves
+export const SKIP = "reflexer-skip"; // a header the client sets on one call: "true" skips reflexer, "false" does not; it never leaves
+export const NOT_A_SKIP = "the Reflexer-Skip header must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 export const OURS = "reflexer-"; // what starts each header of ours: none leaves for a provider
 export const NAMESPACE = "reflexer-namespace"; // the one header of ours a client may give reflexer
 
@@ -54,7 +55,7 @@ export class Reflexer {
    */
   route(url, headers, replay = false) {
     const turnedAway = Math.random() >= this.sample || this.breaker.isOpen(); // a share of calls, no secret
-    if (Object.hasOwn(headers, PASS_THROUGH) || (turnedAway && !replay)) return null;
+    if (skips(Object.entries(headers).find(([name]) => name === SKIP)?.[1]) || (turnedAway && !replay)) return null;
     const address = new URL(url);
     const router = this.wire.routers?.find((one) => one.host === address.hostname);
     const wire = router?.calls.test(address.pathname) ? router : this.wire;
@@ -94,6 +95,17 @@ export class Reflexer {
     console.warn("reflexer: the call to reflexer failed (%s); the SDK sends the call directly to the provider", failure instanceof Error ? failure.name : typeof failure);
     this.breaker.note(FAILED, null);
   }
+}
+
+/**
+ * Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case: "true" does,
+ * "false" does not, and no header does not. Any other value throws, before anything is sent (fail loud).
+ * @param {string | null | undefined} value
+ */
+export function skips(value) {
+  const lowered = String(value ?? false).toLowerCase();
+  if (lowered !== "true" && lowered !== "false") throw new Error(NOT_A_SKIP);
+  return lowered === "true";
 }
 
 export const REPLAY = "replay_response"; // a body's field: the caller's answer takes the provider's place

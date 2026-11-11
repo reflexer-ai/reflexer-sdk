@@ -4,7 +4,7 @@ This page shows how to tune reflexer after your calls go through it. Each sectio
 
 ## Skip reflexer for one call
 
-By default, every call goes through reflexer. To skip reflexer for one call, set the `Reflexer-Pass-Through` header on that call: the SDK then sends the call directly to your provider. The SDK removes this header: neither reflexer nor your provider receives it. The exception is a few Bedrock clients, which send the header to Bedrock ([Known limits](limits.md)).
+By default, every call goes through reflexer. To skip reflexer for one call, set the `Reflexer-Skip` header to `true` on that call: the SDK then sends the call directly to your provider. With the value `false`, the SDK does not skip reflexer: the call goes as if it had no such header. The SDK reads the value in any case (`TRUE` is `true`). Any other value is an error: the SDK raises a `ValueError` (Python) or throws an `Error` (TypeScript) before it sends anything, or your provider SDK raises its connection error, caused by that error. The SDK removes this header: neither reflexer nor your provider receives it. The exception is a few Bedrock clients, which send the header to Bedrock ([Known limits](limits.md)).
 
 <!-- example: straight -->
 ```python
@@ -13,7 +13,7 @@ from reflexer.openai import OpenAI
 
 client = OpenAI(reflexer_key=os.environ["REFLEXER_KEY"])
 reply = client.chat.completions.create(model="frontier-x", messages=[{"role": "user", "content": "Hi"}],
-                                       extra_headers={"Reflexer-Pass-Through": "1"})
+                                       extra_headers={"Reflexer-Skip": "true"})
 print(reply.choices[0].message.content)
 ```
 
@@ -27,7 +27,7 @@ import { OpenAI } from "@reflexer-ai/sdk/openai";
 
 const client = new OpenAI({ reflexerKey: process.env.REFLEXER_KEY });
 const reply = await client.chat.completions.create({ model: "frontier-x", messages: [{ role: "user", content: "Hi" }] },
-  { headers: { "Reflexer-Pass-Through": "1" } });
+  { headers: { "Reflexer-Skip": "true" } });
 console.log(reply.choices[0].message.content);
 ```
 
@@ -43,7 +43,7 @@ import os
 import reflexer.boto3
 
 client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", reflexer_key=os.environ["REFLEXER_KEY"])
-reply = client.converse(modelId="frontier-x", messages=[{"role": "user", "content": [{"text": "Hi"}]}], ReflexerPassThrough=True)
+reply = client.converse(modelId="frontier-x", messages=[{"role": "user", "content": [{"text": "Hi"}]}], ReflexerSkip=True)
 print(reply["output"]["message"]["content"][0]["text"])
 ```
 
@@ -58,7 +58,7 @@ import * as bedrock from "@reflexer-ai/sdk/bedrock";
 
 const client = bedrock.wrap(new BedrockRuntimeClient({ region: "us-east-1" }), process.env.REFLEXER_KEY);
 const command = new ConverseCommand({ modelId: "frontier-x", messages: [{ role: "user", content: [{ text: "Hi" }] }] });
-console.log((await client.send(command, { reflexerPassThrough: true })).output.message.content[0].text);
+console.log((await client.send(command, { reflexerSkip: true })).output.message.content[0].text);
 ```
 
 ```text
@@ -69,16 +69,16 @@ Where each library takes it:
 
 | Library | How to skip |
 |---|---|
-| OpenAI, Anthropic, Anthropic's Bedrock clients, LiteLLM, LangChain's `ChatOpenAI` (Python) | `extra_headers={"Reflexer-Pass-Through": "1"}` on the call |
-| Gemini (Python) | `config={"http_options": {"headers": {"Reflexer-Pass-Through": "1"}}}` |
-| LangChain's `ChatGoogleGenerativeAI` | `http_options={"headers": {"Reflexer-Pass-Through": "1"}}` on `invoke` |
-| Pydantic AI (OpenAI, Anthropic) | `model_settings={"extra_headers": {"Reflexer-Pass-Through": "1"}}` on the run |
-| boto3, aiobotocore | `ReflexerPassThrough=True` on the call |
-| OpenAI, Anthropic, AnthropicBedrock (TypeScript) | `{ headers: { "Reflexer-Pass-Through": "1" } }` as the call's second argument |
-| Gemini (TypeScript) | `config: { httpOptions: { headers: { "Reflexer-Pass-Through": "1" } } }` |
-| The AI SDK | `headers: { "Reflexer-Pass-Through": "1" }` in `generateText`; on Bedrock, `providerOptions: { reflexer: { passThrough: true } }` |
-| LangChain.js | `invoke("Hi", { options: { headers: { "Reflexer-Pass-Through": "1" } } })` |
-| The AWS SDK for JavaScript | `client.send(command, { reflexerPassThrough: true })` |
+| OpenAI, Anthropic, Anthropic's Bedrock clients, LiteLLM, LangChain's `ChatOpenAI` (Python) | `extra_headers={"Reflexer-Skip": "true"}` on the call |
+| Gemini (Python) | `config={"http_options": {"headers": {"Reflexer-Skip": "true"}}}` |
+| LangChain's `ChatGoogleGenerativeAI` | `http_options={"headers": {"Reflexer-Skip": "true"}}` on `invoke` |
+| Pydantic AI (OpenAI, Anthropic) | `model_settings={"extra_headers": {"Reflexer-Skip": "true"}}` on the run |
+| boto3, aiobotocore | `ReflexerSkip=True` on the call |
+| OpenAI, Anthropic, AnthropicBedrock (TypeScript) | `{ headers: { "Reflexer-Skip": "true" } }` as the call's second argument |
+| Gemini (TypeScript) | `config: { httpOptions: { headers: { "Reflexer-Skip": "true" } } }` |
+| The AI SDK | `headers: { "Reflexer-Skip": "true" }` in `generateText`; on Bedrock, `providerOptions: { reflexer: { skip: true } }` |
+| LangChain.js | `invoke("Hi", { options: { headers: { "Reflexer-Skip": "true" } } })` |
+| The AWS SDK for JavaScript | `client.send(command, { reflexerSkip: true })` |
 
 On Bedrock, langchain-aws, Strands and Pydantic AI make the boto3 call themselves. For these libraries, set the header with a hook on the client. The hook sets the header on every call while the hook is registered.
 
@@ -92,7 +92,7 @@ client = reflexer.boto3.client("bedrock-runtime", region_name="us-east-1", refle
 chat = ChatBedrockConverse(model="frontier-x", client=client)
 
 def skip_reflexer(request, **_):
-    request.headers["Reflexer-Pass-Through"] = "1"
+    request.headers["Reflexer-Skip"] = "true"
 
 client.meta.events.register("before-sign.bedrock-runtime.Converse", skip_reflexer)
 print(chat.invoke("Hi").content)
@@ -103,7 +103,7 @@ client.meta.events.unregister("before-sign.bedrock-runtime.Converse", skip_refle
 Hello! How can I help you today?
 ```
 
-LangChain.js on Bedrock: set the same header with your own middleware on the AWS SDK client. In a `.ts` file, cast the options of `client.send(command, { reflexerPassThrough: true })` to `any`.
+LangChain.js on Bedrock: set the same header with your own middleware on the AWS SDK client. In a `.ts` file, cast the options of `client.send(command, { reflexerSkip: true })` to `any`.
 
 ## A dry run: give reflexer your provider's answer
 
@@ -295,7 +295,7 @@ console.log(reply.choices[0].message.content);
 Hello! How can I help you today?
 ```
 
-The SDK sends the namespace only to reflexer, never to your provider. To use another namespace on one call, set the `Reflexer-Namespace` header on that call. This header has priority over the client's namespace. Set it in the same way as for [skipping reflexer for one call](#skip-reflexer-for-one-call), with `Reflexer-Namespace` in place of `Reflexer-Pass-Through`. On Bedrock's signed calls, give the namespace on the client instead ([Known limits](limits.md#amazon-bedrock)). The functions that take the key take `namespace`, as they take `base`.
+The SDK sends the namespace only to reflexer, never to your provider. To use another namespace on one call, set the `Reflexer-Namespace` header on that call. This header has priority over the client's namespace. Set it in the same way as for [skipping reflexer for one call](#skip-reflexer-for-one-call), with `Reflexer-Namespace` and your namespace in place of `Reflexer-Skip` and `true`. On Bedrock's signed calls, give the namespace on the client instead ([Known limits](limits.md#amazon-bedrock)). The functions that take the key take `namespace`, as they take `base`.
 
 ## How long reflexer may take
 

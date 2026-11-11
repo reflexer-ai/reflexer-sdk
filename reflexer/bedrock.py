@@ -14,17 +14,17 @@ What the lines share: `keyed`, `signed`, `straight`, the botocore family's per-c
 transport (`Keyed`, `setup_http_client`).
 """
 import copy, inspect, re
-from . import BASE, OURS, PASS_THROUGH, Reflexer, ReplayNotTaken, is_replay
+from . import BASE, OURS, SKIP, Reflexer, ReplayNotTaken, is_replay, skips
 from .transport import STRAIGHT, Through, body_of
 
 BEDROCK = {
     "reflexer_path": "/bedrock",
     "calls":         r"/model/[^/]+/(invoke|invoke-with-response-stream|converse|converse-stream)$",
 }
-SKIPPED_HERE = "reflexer_pass_through"  # in a botocore call's context: this call goes straight
+SKIPPED_HERE = "reflexer_skip"  # in a botocore call's context: this call goes straight
 SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
 UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its URL, body and headers as they came to `before-sign`, before the client's handlers
-ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerPassThrough=True)`
+ARGUMENT = "ReflexerSkip"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerSkip=True)`
 
 
 def keyed(headers):
@@ -68,9 +68,10 @@ def skip_taken(event_name, kwargs, before):
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
-        for name in [name for name in request.headers if name.lower() == PASS_THROUGH]:
+        for name in [name for name in request.headers if name.lower() == SKIP]:
+            if skips(request.headers[name]):  # a wrong value raises, before anything is sent
+                request.context[SKIPPED_HERE] = True
             del request.headers[name]
-            request.context[SKIPPED_HERE] = True
 
 
 def botocore_route(reflexer, request):
@@ -184,11 +185,13 @@ class Keyed(Through):
         self.send = aleg if inspect.iscoroutinefunction(inner.send) else leg
 
     def handle_request(self, request):
+        skips(request.headers.get(SKIP))  # a wrong value raises here, before anything is sent
         if keyed(request.headers):
             return super().handle_request(request)
         return (self.signed_call if signed(request.headers) else self.straight)(request)
 
     async def handle_async_request(self, request):
+        skips(request.headers.get(SKIP))
         if keyed(request.headers):
             return await super().handle_async_request(request)
         return await (self.asigned_call if signed(request.headers) else self.straight)(request)

@@ -67,6 +67,45 @@ class TheWire(unittest.TestCase):
         self.assertNotIn("_generate_content", vars(client.aio.models))
 
 
+class Skip(unittest.TestCase):
+    """`Reflexer-Skip` on one call: true goes straight, false goes to reflexer, any other value raises before anything
+    is sent. It reaches no one; nor does the old `Reflexer-Pass-Through`, dropped as any header of ours."""
+
+    def test_true_goes_straight_and_the_header_reaches_no_one(self):
+        client, seen, _ = wrapped(served)
+        client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "TRUE"})
+        self.assertEqual([request.url.host for request in seen], ["api.openai.com"])
+        self.assertNotIn("reflexer-skip", seen[0].headers)
+
+    def test_false_goes_to_reflexer_and_the_header_reaches_no_one(self):
+        client, seen, _ = wrapped(busy)
+        client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "False", "Reflexer-Pass-Through": "1"})
+        self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai", "api.openai.com"])
+        for request in seen:
+            self.assertNotIn("reflexer-skip", request.headers)
+            self.assertNotIn("reflexer-pass-through", request.headers)
+
+    def test_another_value_raises_and_nothing_is_sent(self):
+        for library in (httpx, httpx2):
+            client, seen, _ = wrapped(served, library)
+            with self.assertRaises(ValueError) as raised:
+                client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "1"})
+            self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)
+            self.assertEqual(seen, [])
+
+    def test_another_value_raises_on_an_async_client_and_nothing_is_sent(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return served(request)
+        own = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+        client = setup_http_client(None, WIRE)(KEY, own=own)
+        with self.assertRaises(ValueError):
+            asyncio.run(client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "maybe"}))
+        self.assertEqual(seen, [])
+
+
 class Replay(unittest.TestCase):
     """A request carrying `replay_response` bypasses the upstream : to reflexer, or an error, never to the provider."""
     REPLAY = b'{"model": "frontier-x", "replay_response": {"id": "made-up"}}'
@@ -94,7 +133,7 @@ class Replay(unittest.TestCase):
     def test_the_flag_to_skip_reflexer_raises_and_nothing_is_sent(self):
         client, seen, _ = wrapped(served)
         with self.assertRaises(reflexer.ReplayNotTaken):
-            client.post(CHAT, content=self.REPLAY, headers={"reflexer-pass-through": "1"})
+            client.post(CHAT, content=self.REPLAY, headers={"Reflexer-Skip": "true"})
         self.assertEqual(seen, [])
 
     def test_sampling_and_an_open_breaker_do_not_drop_a_replay(self):

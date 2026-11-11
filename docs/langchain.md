@@ -133,7 +133,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
 ## Options
 
 - `sample=0.01` (LangChain.js: `{ sample: 0.01 }` in the `fetch`'s options): the SDK sends that share of the calls to reflexer, and the other calls directly to your provider.
-- `chat.invoke("Hi", extra_headers={"Reflexer-Pass-Through": "1"})` (Gemini: `http_options={"headers": {"Reflexer-Pass-Through": "1"}}`; LangChain.js: `invoke("Hi", { options: { headers: { "Reflexer-Pass-Through": "1" } } })`): the SDK sends that call directly to your provider.
+- `chat.invoke("Hi", extra_headers={"Reflexer-Skip": "true"})` (Gemini: `http_options={"headers": {"Reflexer-Skip": "true"}}`; LangChain.js: `invoke("Hi", { options: { headers: { "Reflexer-Skip": "true" } } })`): the SDK sends that call directly to your provider.
 - `reflexer_base=` (LangChain.js `{ base }`): reflexer's address, if reflexer gave you another one.
 
 All options: [Advanced](advanced.md).

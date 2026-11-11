@@ -69,11 +69,28 @@ class Route(unittest.TestCase):
 
     def test_straight(self):
         self.assertIsNone(self.reflexer.route("https://api.openai.com/v1/models", {}))
-        self.assertIsNone(self.reflexer.route(CHAT, {reflexer.PASS_THROUGH: "1"}))
+        self.assertIsNone(self.reflexer.route(CHAT, {reflexer.SKIP: "true"}))
         self.assertIsNone(self.reflexer.route("http://localhost:11434/v1/chat/completions", {}))
         self.assertIsNone(reflexer.Reflexer(KEY, WIRE, sample=0.0).route(CHAT, {}))
         for private in ("https://localhost./v1/chat/completions", "https://10.0.0.5/v1/chat/completions"):
             self.assertIsNone(self.reflexer.route(private, {}), private)
+
+    def test_the_skip_header_is_read_by_its_value_in_any_case(self):
+        for value in ("true", "TRUE", "True"):
+            self.assertIsNone(self.reflexer.route(CHAT, {reflexer.SKIP: value}), value)
+        for value in ("false", "FALSE", "False"):
+            made = self.reflexer.route(CHAT, {reflexer.SKIP: value})
+            self.assertIsNotNone(made, value)
+            self.assertNotIn(reflexer.SKIP, made[1])
+        for value in ("1", "", "yes", "true, true", " true"):
+            with self.assertRaises(ValueError, msg=value) as raised:
+                self.reflexer.route(CHAT, {reflexer.SKIP: value})
+            self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)
+
+    def test_the_old_skip_header_is_dropped_as_any_header_of_ours(self):
+        made = self.reflexer.route(CHAT, {"reflexer-pass-through": "1"})
+        self.assertIsNotNone(made)
+        self.assertNotIn("reflexer-pass-through", made[1])
 
     def test_a_private_address_in_another_notation_goes_straight(self):
         """As the system's resolver reads an IPv4 address (inet_aton), which the client's HTTP client goes by."""

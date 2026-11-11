@@ -811,6 +811,24 @@ class Promises(Case):
                 self.assertEqual(holding(signed, "AWS4-HMAC-SHA256")[lib], ["bedrock", "reflexer"] if lib in RUNTIME else ["bedrock"])
                 self.assertEqual(holding(signed, bedrock.BEARER)[lib] + holding(keyed, bedrock.SECRET)[lib] + holding(signed, bedrock.SECRET)[lib], [])
 
+    def test_the_skip_header_true_skips_false_does_not_another_value_raises_and_none_leaves(self):
+        """`Reflexer-Skip`, in any case, on a keyed call through each line: true goes straight, false goes to reflexer, any
+        other value raises before anything is sent; the header reaches neither reflexer nor Bedrock."""
+        for lib in LINES:
+            for value, to_reflexer in (("TRUE", False), ("False", True), ("yes", None)):
+                with self.subTest(lib=lib, value=value):
+                    made, calls = world(lib)
+                    outcome = calls.call(calls.client(), headers={"Reflexer-Skip": value})
+                    everything = made.reflexer.seen + made.provider.seen
+                    if to_reflexer is None:  # the ValueError, or the library's connection error that it causes
+                        raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                        self.assertEqual([str(each) for each in raised][-1:], [reflexer.NOT_A_SKIP], repr(outcome.error))
+                        self.assertEqual(everything, [])
+                        continue
+                    self.assertIsNone(outcome.error)
+                    self.assertEqual(bool(made.reflexer.seen), to_reflexer)
+                    self.assertEqual([arrival for arrival in everything if reflexer.SKIP in {name.lower() for name in arrival.headers}], [])
+
     def test_a_signed_call_goes_to_reflexer_and_falls_back_as_stock(self):
         for lib, held in signed_as_stock().items():
             with self.subTest(lib=lib):

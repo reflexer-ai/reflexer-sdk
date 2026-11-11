@@ -10,7 +10,7 @@ MESSAGES = [{"role": "user", "content": "Hi"}]
 PROVIDER_KEY = {"openai": "sk-made-up", "azure": "az-made-up", "anthropic": "sk-ant-made-up", "gemini": "ai-made-up", "acme": "acme-made-up"}
 AZURE_ENDPOINT = "https://made-up.openai.azure.com"
 AZURE_VERSION = "2024-10-21"
-PASS_THROUGH = "Reflexer-Pass-Through"
+SKIP = "Reflexer-Skip"
 REFLEXER_NAMES = ["api.reflexer.ai"]
 PROVIDER_NAMES = ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "openrouter.ai",
                   "api.groq.com", "made-up.openai.azure.com", "api.acme.example", *bedrock.NAMES]
@@ -266,8 +266,8 @@ class Test:
 
     def skip_headers(self):
         """The header that skips reflexer for one call; it must never leave this machine."""
-        self.local_flags.add(PASS_THROUGH.lower())
-        return {PASS_THROUGH: "1"}
+        self.local_flags.add(SKIP.lower())
+        return {SKIP: "true"}
 
     def skip(self, client, timeout=None):
         return self.ask(client, headers=self.skip_headers(), timeout=timeout)

@@ -1,4 +1,5 @@
-# Pinned actions and the locked tools move only by a pull request, which runs every check; a release waits a week first.
+# Pinned actions and the locked tools move only by a pull request, which every check runs on before its merge;
+# a new release waits a week first.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -7,15 +8,32 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:  # one pull request a week for the minor and patch releases; a major comes alone
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:  # one pull request a week for the minor and patch releases; a major comes alone
+      python-tools:
+        patterns: ["*"]
+        update-types: [minor, patch]
   - package-ecosystem: npm
     directory: /typescript
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:  # one pull request a week for the minor and patch releases; a major comes alone
+      npm-tools:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:  # the types of the oldest Node the package supports (engines), so no newer Node's API type-checks
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript  # kept on 6: 7 writes the declarations clients read in another form, and adds a native
+        versions: [">=7"]            # build per OS to the tools; until clients' compatibility is checked

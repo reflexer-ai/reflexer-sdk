@@ -100,7 +100,7 @@ def spam_until(condition, seconds, call, pause=0.005):
     return None
 
 
-# ---- skip: pass through per call; the flag never leaves the machine
+# ---- skip: reflexer skipped per call; the flag never leaves the machine
 
 @case("skip")
 def skip_goes_straight_and_its_flag_stays_here(t):
@@ -211,12 +211,20 @@ def routing_other_calls_go_straight(t):
 ROUTER_BASE = {"openai": "https://openrouter.ai/api/v1", "anthropic": "https://openrouter.ai/api", "gemini": "https://openrouter.ai/api/"}
 
 
-@case("routing", sdks=MESSAGE_SDKS)
+@case("routing", sdks=("anthropic", "gemini"))
 def routing_a_router_is_named_as_the_upstream(t):
     t.served(t.ask(t.client(base_url=ROUTER_BASE[t.sdk])))
     upstream = t.reflexer.seen[0].headers.get("reflexer-upstream")
     t.check(upstream == "https://openrouter.ai/api", f"Reflexer-Upstream {upstream}")
     t.note(f"upstream {upstream}")
+
+
+@case("routing", sdks=("openai",))
+def routing_a_router_with_a_route_of_its_own_takes_it(t):
+    t.served(t.ask(t.client(base_url=ROUTER_BASE[t.sdk])))
+    arrival = t.reflexer.seen[0]
+    t.check(arrival.path == "/openrouter/api/v1/chat/completions", f"path {arrival.path}")
+    t.check("reflexer-upstream" not in arrival.headers, f"Reflexer-Upstream {arrival.headers.get('reflexer-upstream')}")
 
 
 @case("routing", sdks=("openai",))
@@ -767,7 +775,7 @@ def fields_in_the_objects_dump(t):
     outcome = t.ask(t.client())
     t.served(outcome)
     dump = outcome.answer.model_dump()
-    price = dump["sdk_http_response"]["headers"]["reflexer-cost"] if t.sdk == "gemini" else dump["usage"]["cost"]
+    price = dump["sdk_http_response"]["headers"]["reflexer-cost-nano-usd"] if t.sdk == "gemini" else dump["usage"]["cost"]
     t.check(price in (standins.SERVED_COST, EXPECTED_COST), f"its dump holds {price}")
 
 
@@ -831,7 +839,7 @@ def fields_leave_a_responses_bytes_untouched(t):
     sent = json.dumps(standins.as_served(path, standins.body_for(path, SERVED_TEXT))).encode()
     got = raw.http_response.content
     t.check(got == sent, f"the bytes changed: {got[:120]!r}")
-    t.check(raw.headers.get("reflexer-cost") == standins.SERVED_COST, "our header is not in the raw view")
+    t.check(raw.headers.get("reflexer-cost-nano-usd") == standins.SERVED_COST, "our header is not in the raw view")
 
 
 @case("fields", sdks=("openai", "azure"))

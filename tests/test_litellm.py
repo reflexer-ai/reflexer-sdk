@@ -234,10 +234,52 @@ class Line(World):
         for provider in PROVIDERS:
             for is_async in (False, True):
                 with self.subTest(provider=provider, is_async=is_async):
-                    answer = self.ask(provider, is_async, extra_headers={harness.PASS_THROUGH: "1"})
+                    answer = self.ask(provider, is_async, extra_headers={harness.SKIP: "true"})
                     self.assertEqual(answer, standins.STRAIGHT_TEXT)
-        self.assertEqual([a for s in (self.world.reflexer, self.world.provider) for a in s.seen if harness.PASS_THROUGH.lower() in a.headers], [])
+        self.assertEqual([a for s in (self.world.reflexer, self.world.provider) for a in s.seen if harness.SKIP.lower() in a.headers], [])
         self.assertEqual(self.world.reflexer.seen, [])
+
+    def test_the_lines_namespace_and_options_reach_reflexer_and_a_calls_own_header_wins(self):
+        """The line takes what every other line takes: each option, sent only when it differs from its default, on every
+        call to reflexer; a call's own header of ours wins over the line's."""
+        reflexer.litellm.through(self.world.key, namespace="team a", answer=True, store=False, pass_through=True, timeout_ms=1500)
+        sent = {"reflexer-namespace": "team a", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "1500"}
+        for provider in PROVIDERS:
+            for is_async in (False, True):
+                with self.subTest(provider=provider, is_async=is_async):
+                    self.world.reflexer.seen.clear()
+                    self.assertEqual(self.ask(provider, is_async), standins.SERVED_TEXT)
+                    self.assertEqual([{name: a.headers.get(name) for name in (*sent, "reflexer-answer")} for a in self.world.reflexer.seen],
+                                     [sent | {"reflexer-answer": None}])
+                    self.world.reflexer.seen.clear()
+                    self.assertEqual(self.ask(provider, is_async, extra_headers={"Reflexer-Namespace": "call b"}), standins.SERVED_TEXT)
+                    self.assertEqual([a.headers.get("reflexer-namespace") for a in self.world.reflexer.seen], ["call b"])
+        self.assertEqual([a for a in self.world.provider.seen if any(name.startswith("reflexer-") for name in a.headers)], [])
+
+    def test_a_wrong_option_is_refused_before_the_line_changes_anything(self):
+        before = {name: getattr(litellm, name, None) for name in GLOBALS}
+        for wrong in (dict(answer="no"), dict(store=0), dict(pass_through=None), dict(timeout_ms=0), dict(namespace="a\nb")):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                reflexer.litellm.through(self.world.key, **wrong)
+        self.assertEqual({name: getattr(litellm, name, None) for name in GLOBALS}, before)
+
+    def test_a_calls_wrong_header_of_ours_raises_before_anything_is_sent(self):
+        """The old skip, `Reflexer-Pass-Through: 1`, and a skip neither true nor false: the call fails, and sends nothing."""
+        reflexer.litellm.through(self.world.key)
+        for headers in ({"Reflexer-Pass-Through": "1"}, {harness.SKIP: "yes"}):
+            for provider in PROVIDERS:
+                for is_async in (False, True):
+                    with self.subTest(headers=headers, provider=provider, is_async=is_async):
+                        self.assertIsInstance(self.ask(provider, is_async, extra_headers=headers), Exception)
+        self.assertEqual([s.seen for s in (self.world.reflexer, self.world.provider, self.world.elsewhere)], [[], [], []])
+
+    def test_a_wrong_header_of_ours_raises_on_another_providers_call_the_line_carries(self):
+        """A sync call to another provider's host goes by the line's transport, as stock: a wrong header of ours fails it
+        there, as on every other line, and it sends nothing."""
+        reflexer.litellm.through(self.world.key)
+        model, more = OTHERS[0]
+        self.assertIsInstance(self.ask("other", model=model, extra_headers={"Reflexer-Pass-Through": "1"}, **more), Exception)
+        self.assertEqual([s.seen for s in (self.world.reflexer, self.world.provider, self.world.elsewhere)], [[], [], []])
 
     def test_no_callback_of_the_clients_sees_the_key(self):
         reflexer.litellm.through(self.world.key)
@@ -305,7 +347,7 @@ class Line(World):
         wires = reflexer.litellm.Wires(__import__("httpx").Client(), reflexer.litellm.ways(self.world.key))
         for path in ("/openai/v1/chat/completions", "/openai/deployments/frontier-d/chat/completions", "/openai/responses"):
             line = wires.line_of(__import__("httpx").Request("POST", f"{harness.AZURE_ENDPOINT}{path}"), wires.now()[0])
-            self.assertEqual(line.reflexer.reflexer_path, "/azure", path)
+            self.assertEqual(line.reflexer.way[0], "/azure", path)
 
     def test_litellms_own_fallbacks_to_another_provider_go_through(self):
         """`fallbacks=`, LiteLLM's own: from a provider on LiteLLM's handlers whose call fails (nothing listens at its

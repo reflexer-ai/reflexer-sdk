@@ -6,13 +6,24 @@ none is ours.
 
 Where can my key go? `Reflexer.route`, then `transport.Through`. What happens when reflexer fails? `transport.Through`.
 """
-import base64, hashlib, importlib.metadata, ipaddress, json, logging, random, re, time
+import base64, hashlib, ipaddress, json, logging, random, re, time
+from importlib.metadata import version as installed  # its one function the SDK reads: no other loads a module
 from urllib.parse import urlsplit
 
 BASE = "https://api.reflexer.ai"
-PASS_THROUGH = "reflexer-pass-through"  # noqa: S105 a header the client sets on one call to skip reflexer; it never leaves
+SKIP = "reflexer-skip"  # a header the client sets on one call: "true" skips reflexer, "false" does not; it never leaves
+NOT_A_SKIP = "the Reflexer-Skip header must be true or false: true sends the call directly to the provider, false lets the call go through reflexer"
 OURS = "reflexer-"  # what starts each header of ours: none leaves for a provider
-NAMESPACE = "reflexer-namespace"  # the one header of ours a client may give reflexer
+NAMESPACE = "reflexer-namespace"  # a header of ours a client may give reflexer, as the option or on a call
+ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER = "reflexer-answer", "reflexer-store", "reflexer-pass-through", "reflexer-timeout-ms"
+OPTION_HEADERS = (ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER)  # an option's, given by the client or on a call
+PASSED = (NAMESPACE, *OPTION_HEADERS)  # the headers of ours a client may give reflexer; none leaves for a provider
+SWITCHES = {  # a client's boolean option: its header, its default (nothing sent), and why it must be true or false
+    "answer":       (ANSWER_HEADER,       True,  "false asks reflexer not to answer: reflexer replies with an empty response"),
+    "store":        (STORE_HEADER,        True,  "false asks reflexer to keep no copy of the call"),
+    "pass_through": (PASS_THROUGH_HEADER, False, "true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true"),  # the old `Reflexer-Pass-Through: 1` skipped reflexer
+}
+TIMEOUT_WHY = "the longest reflexer waits for its own answer before it forwards the call to the provider"
 
 log = logging.getLogger("reflexer")
 
@@ -20,12 +31,20 @@ log = logging.getLogger("reflexer")
 class Reflexer:
     """One client's way to reflexer, for one wire format, from its data (`wires.py`): `reflexer_path`, reflexer's path
     for the format; `provider`, the provider's own address, to which no upstream is named; `calls`, the path
-    of the calls that return a model's message, the only ones that go to reflexer."""
+    of the calls that return a model's message, the only ones that go to reflexer; `routers`, optional, by host, the wire
+    of a router with a route of its own at reflexer, taken for the calls it lists."""
 
-    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic):
+    def __init__(self, key, wire, base=BASE, sample=1.0, clock=time.monotonic, namespace=None, answer=True, store=True,
+                 pass_through=False, timeout_ms=None):
         check(key)
-        self.key, self.base, self.sample = key, checked_base(base), sample
-        self.reflexer_path, self.provider, self.calls = wire["reflexer_path"], wire.get("provider"), wire["calls"]
+        if namespace is not None and not (isinstance(namespace, str) and re.fullmatch(r"[!-~]+(?: [!-~]+)*", namespace)):
+            raise ValueError("a namespace may contain only ASCII letters, digits and signs, and single spaces between them, because the SDK sends it in a header")
+        if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:  # nan is neither
+            raise ValueError("sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer")
+        self.key, self.base, self.sample, self.namespace = key, checked_base(base), sample, namespace
+        self.given = given(namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)
+        self.way = way(wire)  # a typo in a provider file raises here, as the client is made, never on a call
+        self.routers = {host: way(router) for host, router in wire.get("routers", {}).items()}
         self.breaker = Breaker(clock)
 
     def route(self, url, headers, replay=False):
@@ -33,23 +52,25 @@ class Reflexer:
         It carries all the client's headers, its provider's key among them, and its query: reflexer passes them on,
         and stores no key. A replay has nowhere else to go, so neither sampling nor the breaker turns it away."""
         turned_away = random.random() >= self.sample or self.breaker.is_open()  # noqa: S311 a share of calls, no secret
-        if PASS_THROUGH in headers or (turned_away and not replay):
+        if skips(headers.get(SKIP)) or (turned_away and not replay):
             return None
         address = urlsplit(url)
-        call = re.search(self.calls, address.path)
+        router = self.routers.get(address.hostname)
+        reflexer_path, provider, calls = router if router and re.search(router[2], address.path) else self.way
+        call = re.search(calls, address.path)
         if not call or not reachable(address):
             return None
         host = address.netloc.rpartition("@")[2]  # no user or password of the URL's goes to reflexer
         upstream = f"{address.scheme}://{host}{address.path[:call.start()]}"  # its provider, a router, a runner
         ours = {"reflexer-key": self.key}
-        if upstream != self.provider:
+        if upstream != provider:
             ours["reflexer-upstream"] = upstream
         theirs = {name: value for name, value in headers.items()
-                  if name != "host" and (name == NAMESPACE or not name.startswith(OURS))}  # no header of a client's steers us
-        to = f"{self.base}{self.reflexer_path}{address.path[call.start():]}"
+                  if name != "host" and (name in PASSED or not name.startswith(OURS))}  # no other header of a client's steers us
+        to = f"{self.base}{reflexer_path}{address.path[call.start():]}"
         if address.query:
             to += f"?{address.query}"
-        return to, theirs | ours
+        return to, self.given | theirs | ours  # a call's own header wins over the client's option
 
     def goes_straight(self, status, headers):
         """Whether the call goes straight to the provider, given reflexer's response."""
@@ -57,13 +78,65 @@ class Reflexer:
         meaning = read(status, headers.get("reflexer-status-origin"), straight_for)
         self.breaker.note(meaning, straight_for)
         if meaning == GRACE:
-            log.warning("the reflexer key is revoked; calls go straight to the provider until its grace ends")
+            log.warning("the reflexer key is revoked; the SDK sends calls directly to the provider until the key's grace period ends")
         return meaning != ANSWER
 
     def failed(self, failure):
         """The call to reflexer raised: it goes straight. Only the kind of failure is logged, never its text."""
-        log.warning("the call to reflexer failed (%s); it goes straight to the provider", type(failure).__name__)
+        log.warning("the call to reflexer failed (%s); the SDK sends the call directly to the provider", type(failure).__name__)
         self.breaker.note(FAILED, None)
+
+
+def skips(value):
+    """Whether the client's `Reflexer-Skip` header skips reflexer for this call, by its value in any case and without the
+    whitespace around it, which is not part of a header's value (RFC 9110 5.5): "true" does, "false" does not, and no
+    header does not. Any other value raises, before anything is sent (fail loud)."""
+    if value is None:
+        return False
+    value = (value.decode() if isinstance(value, bytes) else value).strip(" \t").lower()
+    if value not in ("true", "false"):
+        raise ValueError(NOT_A_SKIP)
+    return value == "true"
+
+
+def given(namespace, **options):
+    """The headers the client's options give reflexer: each only when it differs from its default, which reflexer takes
+    when nothing is sent. A wrong option raises as the client is made, before anything is sent."""
+    headers = {NAMESPACE: namespace} if namespace else {}
+    for option, (header, default, why) in SWITCHES.items():
+        if not isinstance(options[option], bool):  # 0 and 1 too: only True or False
+            raise ValueError(f"reflexer_{option} must be true or false: {why}")
+        if options[option] != default:
+            headers[header] = str(options[option]).lower()
+    timeout = options["timeout_ms"]
+    if timeout is not None:
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
+            raise ValueError(f"reflexer_timeout_ms must be a whole number of milliseconds from 1: {TIMEOUT_WHY}")
+        headers[TIMEOUT_HEADER] = str(timeout)
+    return headers
+
+
+def checked(headers):
+    """A call's own headers of ours, read before anything is sent: whether its `Reflexer-Skip` skips reflexer (`skips`),
+    and a wrong value of any raises (fail loud). A switch's header is true or false, as the skip's is read; the timeout's,
+    a whole number from 1. `headers`, a mapping by lower-case name, as httpx's and `lower`'s are."""
+    for option, (header, _, why) in SWITCHES.items():
+        value = headers.get(header)
+        if value is not None and text(value).strip(" \t").lower() not in ("true", "false"):
+            raise ValueError(f"the {header.title()} header must be true or false: {why}")
+    value = headers.get(TIMEOUT_HEADER)
+    if value is not None and not re.fullmatch("[1-9][0-9]*", text(value).strip(" \t")):
+        raise ValueError(f"the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: {TIMEOUT_WHY}")
+    return skips(headers.get(SKIP))
+
+
+def text(value):
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def way(wire):
+    """A wire's (reflexer_path, provider, calls)."""
+    return wire["reflexer_path"], wire.get("provider"), wire["calls"]
 
 
 REPLAY = "replay_response"  # a body's field: the caller's answer takes the provider's place
@@ -96,7 +169,7 @@ def read(status, origin, straight_for):
     overloaded = status == 429 or status >= 500
     if origin is None:  # none of our headers: the load balancer's own
         return FAILED
-    if origin == "connection" or 300 <= status < 400:  # reflexer could not reach the provider, or a redirect to follow
+    if origin in ("relay", "connection") or 300 <= status < 400:  # reflexer sent it back to go straight (`connection`: the old name), or a redirect
         return ASKED
     if origin != "reflexer" or status < 400:  # served, passed through, or the provider's own error
         return ANSWER
@@ -151,16 +224,28 @@ def reachable(address):
     if address.scheme != "https" or host == "localhost":
         return False
     try:
-        return ipaddress.ip_address(host).is_global
+        return ipaddress.ip_address(numeric(host)).is_global
     except ValueError:  # a name: reflexer resolves and checks it
         return True
+
+
+def numeric(host):
+    """The host as the system's resolver reads it: an IPv4 address in any notation inet_aton takes (`10.1`, `167772161`,
+    `0x0a000001`, `0300.0250.0.1`) as its number; anything else (a name, IPv6) as it is."""
+    forms = [re.fullmatch("(0[xX][0-9a-fA-F]+)|(0[0-7]*)|([1-9][0-9]*)", part) for part in host.split(".")]
+    if len(forms) > 4 or not all(forms):
+        return host
+    *high, low = [int(form[0], (16, 8, 10)[form.lastindex - 1]) for form in forms]
+    if any(part > 255 for part in high) or low >= 256 ** (4 - len(high)):
+        return host
+    return sum(part << 8 * (3 - at) for at, part in enumerate(high)) + low
 
 
 def checked_base(base):
     """Reflexer's address, which gets the key: https, or plain http on this machine for a stand-in."""
     address = urlsplit(base)
     if address.scheme != "https" and address.hostname not in ("127.0.0.1", "localhost"):
-        raise ValueError(f"reflexer's address must be https, for the key's sake: {base}")
+        raise ValueError(f"reflexer's address must use https, to protect the key: {base}")
     return base.rstrip("/")
 
 
@@ -168,7 +253,7 @@ def check(key):
     """A key not of the form raises before anything is sent."""
     form = re.fullmatch(r"(rfx1_[a-z2-7]{7}_[a-z2-7]{52})_([a-z2-7]{7})", key or "")
     if not form or form[2] != checksum(form[1]):
-        raise ValueError("not a reflexer key: expected rfx1_CLIENT_SECRET_CHECK, as given at onboarding")
+        raise ValueError("this is not a reflexer key: a reflexer key has the form rfx1_CLIENT_SECRET_CHECK, as given at onboarding")
 
 
 def checksum(text):
@@ -177,6 +262,6 @@ def checksum(text):
 
 def supported(package, majors):
     """A provider file runs only on the majors of its SDK it was tested on: a new major raises at import, never misroutes."""
-    version = importlib.metadata.version(package)
+    version = installed(package)
     if int(version.split(".")[0]) not in majors:
         raise ImportError(f"reflexer is tested on {package} {majors}, not {version}")

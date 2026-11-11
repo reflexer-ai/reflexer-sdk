@@ -4,7 +4,7 @@ sync and async, streamed or not, and falls back as every line does. Registered b
 import asyncio
 
 from cases import case, overloaded, reflexer_status
-from harness import PASS_THROUGH, litellm
+from harness import SKIP, litellm
 
 ALL = litellm.COLUMNS
 WAYS = ((False, False), (True, False), (False, True), (True, True))  # (async, streamed)
@@ -51,7 +51,7 @@ def litellm_skip_goes_straight_and_its_flag_stays_here(t):
     for is_async in (False, True):
         t.straight(litellm.ask(t, is_async, headers=t.skip_headers()))
     t.check(not t.to_reflexer(), f"reflexer got a skipped call: {t.to_reflexer()}")
-    t.check(not any(PASS_THROUGH.lower() in arrival.headers for arrival in t.provider.seen), "the flag reached the provider")
+    t.check(not any(SKIP.lower() in arrival.headers for arrival in t.provider.seen), "the flag reached the provider")
 
 
 @case("litellm", sdks=ALL)

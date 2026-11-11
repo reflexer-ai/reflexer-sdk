@@ -11,7 +11,7 @@ from reflexer.transport import setup_http_client
 
 CHAT = "https://api.openai.com/v1/chat/completions"
 WIRE = {"reflexer_path": "/openai", "provider": "https://api.openai.com", "calls": r"/v1/chat/completions$"}
-SERVED = {"reflexer-request-id": "made-up", "reflexer-answered-by": "reflexer", "reflexer-cost": "12000", "reflexer-status-origin": "reflexer"}
+SERVED = {"reflexer-request-id": "made-up", "reflexer-answered-by": "reflexer", "reflexer-cost-nano-usd": "12000", "reflexer-status-origin": "reflexer"}
 BODY = {"id": "made-up", "usage": {"in": 1}}
 SECRET = "rfx1_aaaaakq_" + "a" * 52
 KEY = f"{SECRET}_{reflexer.checksum(SECRET)}"  # made up, of the form
@@ -56,10 +56,67 @@ class TheWire(unittest.TestCase):
         with client.stream("POST", CHAT, content=b"{}") as made:
             self.assertEqual(b"".join(made.iter_bytes()), self.STREAM)
 
+    def test_openais_wire_is_the_routed_one_the_logic_is_tested_on(self):
+        import reflexer.openai
+        from tests.test_logic import ROUTED
+        self.assertEqual(reflexer.openai.CHAT, ROUTED)
+
     def test_gemini_wraps_no_method_of_its_client(self):
         client = reflexer.gemini.Client(reflexer_key=KEY, api_key="made-up")
         self.assertNotIn("_generate_content", vars(client.models))
         self.assertNotIn("_generate_content", vars(client.aio.models))
+
+
+class Skip(unittest.TestCase):
+    """`Reflexer-Skip` on one call: true goes straight, false goes to reflexer, any other value raises before anything
+    is sent. It reaches no one; nor does another header of ours."""
+
+    def test_true_goes_straight_and_the_header_reaches_no_one(self):
+        client, seen, _ = wrapped(served)
+        client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "TRUE"})
+        self.assertEqual([request.url.host for request in seen], ["api.openai.com"])
+        self.assertNotIn("reflexer-skip", seen[0].headers)
+
+    def test_false_goes_to_reflexer_and_the_header_reaches_no_one(self):
+        client, seen, _ = wrapped(busy)
+        client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "False", "Reflexer-Made-Up": "1"})
+        self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai", "api.openai.com"])
+        for request in seen:
+            self.assertNotIn("reflexer-skip", request.headers)
+            self.assertNotIn("reflexer-made-up", request.headers)
+
+    def test_a_calls_option_headers_reach_reflexer_alone_and_a_wrong_one_raises_before_anything_is_sent(self):
+        given = {"Reflexer-Answer": "false", "Reflexer-Store": "False", "Reflexer-Pass-Through": "TRUE", "Reflexer-Timeout-Ms": "100"}
+        client, seen, _ = wrapped(busy)
+        client.post(CHAT, content=b"{}", headers=given)
+        self.assertEqual([(request.url.host, {name: request.headers.get(name) for name in given}) for request in seen],
+                         [("api.reflexer.ai", given), ("api.openai.com", dict.fromkeys(given))])
+        for library in (httpx, httpx2):
+            for header, value in (("Reflexer-Answer", "no"), ("Reflexer-Store", "1"), ("Reflexer-Pass-Through", ""), ("Reflexer-Timeout-Ms", "0")):
+                client, seen, _ = wrapped(served, library)
+                with self.assertRaisesRegex(ValueError, f"^the {header} header must be ", msg=header):
+                    client.post(CHAT, content=b"{}", headers={header: value})
+                self.assertEqual(seen, [])
+
+    def test_another_value_raises_and_nothing_is_sent(self):
+        for library in (httpx, httpx2):
+            client, seen, _ = wrapped(served, library)
+            with self.assertRaises(ValueError) as raised:
+                client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "1"})
+            self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)
+            self.assertEqual(seen, [])
+
+    def test_another_value_raises_on_an_async_client_and_nothing_is_sent(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return served(request)
+        own = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+        client = setup_http_client(None, WIRE)(KEY, own=own)
+        with self.assertRaises(ValueError):
+            asyncio.run(client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "maybe"}))
+        self.assertEqual(seen, [])
 
 
 class Replay(unittest.TestCase):
@@ -89,7 +146,7 @@ class Replay(unittest.TestCase):
     def test_the_flag_to_skip_reflexer_raises_and_nothing_is_sent(self):
         client, seen, _ = wrapped(served)
         with self.assertRaises(reflexer.ReplayNotTaken):
-            client.post(CHAT, content=self.REPLAY, headers={"reflexer-pass-through": "1"})
+            client.post(CHAT, content=self.REPLAY, headers={"Reflexer-Skip": "true"})
         self.assertEqual(seen, [])
 
     def test_sampling_and_an_open_breaker_do_not_drop_a_replay(self):
@@ -126,6 +183,47 @@ class Replay(unittest.TestCase):
         self.assertEqual(self.hosts(seen), ["api.reflexer.ai", "api.openai.com"])
 
 
+class EmptyAnswer(unittest.TestCase):
+    """Reflexer asked not to answer: its empty 204, origin reflexer, is reflexer's answer, handed to the client's SDK as it
+    came, never a call to the provider, streamed or not, sync or async."""
+    EMPTY = {"reflexer-request-id": "made-up", "reflexer-cost": "0", "reflexer-status-origin": "reflexer"}  # no content-type
+
+    def answer(self, request):
+        if request.url.host == "api.reflexer.ai":
+            return httpx2.Response(204, headers=self.EMPTY)
+        return httpx2.Response(200, json={"from": "provider"})
+
+    def test_it_reaches_the_client_as_it_came(self):
+        client, seen, _ = wrapped(self.answer)
+        made = client.post(CHAT, content=b"{}")
+        self.assertEqual((made.status_code, made.content, made.headers.get("reflexer-cost")), (204, b"", "0"))
+        self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai"])
+
+    def test_through_the_real_sdk_never_a_call_to_the_provider(self):
+        import openai
+        for stream in (False, True):
+            client, seen, _ = wrapped(self.answer)
+            sdk = openai.OpenAI(api_key="made-up", http_client=client, max_retries=0)
+            made = sdk.chat.completions.create(model="frontier-x", messages=[], stream=stream)
+            list(made) if stream else None
+            self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai"], f"stream {stream}")
+
+    def test_async_through_the_real_sdk_never_a_call_to_the_provider(self):
+        import openai
+        for stream in (False, True):
+            seen = []
+            own = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: (seen.append(request), self.answer(request))[1]))
+            client = setup_http_client(None, WIRE)(KEY, own=own)
+
+            async def call():
+                sdk = openai.AsyncOpenAI(api_key="made-up", http_client=client, max_retries=0)
+                made = await sdk.chat.completions.create(model="frontier-x", messages=[], stream=stream)
+                if stream:
+                    [chunk async for chunk in made]
+            asyncio.run(call())
+            self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai"], f"stream {stream}")
+
+
 class Copies(unittest.TestCase):
     """The SDK's own copy, `with_options(http_client=...)`, keeps working and keeps going through reflexer."""
 
@@ -143,6 +241,62 @@ class Copies(unittest.TestCase):
             except Exception:
                 pass  # the made-up body is no real answer; where it went is what is checked
             self.assertEqual([r.url.host for r in seen], ["api.reflexer.ai"], module.__name__)
+
+
+    def test_the_lines_options_reach_reflexer_alone_and_a_copy_keeps_them(self):
+        import anthropic, openai
+        import reflexer.anthropic, reflexer.openai
+        options = dict(reflexer_answer=False, reflexer_store=False, reflexer_pass_through=True, reflexer_timeout_ms=2500)
+        sent = {"reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500"}
+        for module, made, stock in ((reflexer.openai, lambda c: c.chat.completions.create(model="m", messages=[]), openai),
+                                    (reflexer.anthropic, lambda c: c.messages.create(model="m", max_tokens=1, messages=[]), anthropic)):
+            seen = []
+
+            def busy_reflexer(request):
+                seen.append(request)
+                if request.url.host == "api.reflexer.ai":
+                    return httpx2.Response(503, headers={"reflexer-status-origin": "reflexer"})
+                return served(request)
+            own = lambda: stock.DefaultHttpxClient(transport=httpx2.MockTransport(busy_reflexer))
+            cls = module.OpenAI if module is reflexer.openai else module.Anthropic
+            client = cls(api_key="made-up", reflexer_key=KEY, max_retries=0, http_client=own(), **options)
+            for one in (client, client.with_options(http_client=own())):
+                seen.clear()
+                try:
+                    made(one)
+                except Exception:
+                    pass  # the made-up body is no real answer; what each leg carried is what is checked
+                self.assertEqual([(r.url.host, {name: r.headers.get(name) for name in sent}) for r in seen],
+                                 [("api.reflexer.ai", sent),
+                                  ("api.openai.com" if module is reflexer.openai else "api.anthropic.com", dict.fromkeys(sent))],
+                                 module.__name__)
+            with self.assertRaisesRegex(ValueError, "^reflexer_answer must be true or false"):
+                cls(api_key="made-up", reflexer_key=KEY, reflexer_answer="false")
+
+    def test_the_lines_namespace_reaches_reflexer_alone_and_a_copy_keeps_it(self):
+        import anthropic, openai
+        import reflexer.anthropic, reflexer.openai
+        for module, made, stock in ((reflexer.openai, lambda c: c.chat.completions.create(model="m", messages=[]), openai),
+                                    (reflexer.anthropic, lambda c: c.messages.create(model="m", max_tokens=1, messages=[]), anthropic)):
+            seen = []
+
+            def busy_reflexer(request):
+                seen.append(request)
+                if request.url.host == "api.reflexer.ai":
+                    return httpx2.Response(503, headers={"reflexer-status-origin": "reflexer"})
+                return served(request)
+            own = lambda: stock.DefaultHttpxClient(transport=httpx2.MockTransport(busy_reflexer))
+            cls = module.OpenAI if module is reflexer.openai else module.Anthropic
+            client = cls(api_key="made-up", reflexer_key=KEY, reflexer_namespace="team-a", max_retries=0, http_client=own())
+            for one in (client, client.with_options(http_client=own())):
+                seen.clear()
+                try:
+                    made(one)
+                except Exception:
+                    pass  # the made-up body is no real answer; what each leg carried is what is checked
+                self.assertEqual([(r.url.host, r.headers.get("reflexer-namespace")) for r in seen],
+                                 [("api.reflexer.ai", "team-a"), ("api.openai.com" if module is reflexer.openai else "api.anthropic.com", None)],
+                                 module.__name__)
 
 
 class GeminiWithAiohttp(unittest.TestCase):

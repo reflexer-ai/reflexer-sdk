@@ -102,10 +102,17 @@ def run_in_child(job, fault, condition, contexts, out_path, log_path, limit):
     if test is not None:
         result["data"] = test.data
     result["seconds"] = round(time.monotonic() - began, 2)
-    with open(out_path, "w") as out:
-        json.dump(result, out)
+    write_result(result, out_path)
     sys.stdout.flush()
     os._exit(0)
+
+
+def write_result(result, out_path):
+    """The case's result at `out_path`, whole, or no file at all: written aside, then moved in one step. A case killed at
+    its limit while it writes is reported killed, never as a file the runner cannot read."""
+    with open(out_path + ".part", "w") as out:
+        json.dump(result, out)
+    os.replace(out_path + ".part", out_path)
 
 
 def run_jobs(jobs, fault, condition, contexts, tmp, parallel):

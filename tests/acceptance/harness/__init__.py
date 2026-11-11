@@ -10,7 +10,7 @@ MESSAGES = [{"role": "user", "content": "Hi"}]
 PROVIDER_KEY = {"openai": "sk-made-up", "azure": "az-made-up", "anthropic": "sk-ant-made-up", "gemini": "ai-made-up", "acme": "acme-made-up"}
 AZURE_ENDPOINT = "https://made-up.openai.azure.com"
 AZURE_VERSION = "2024-10-21"
-PASS_THROUGH = "Reflexer-Pass-Through"
+SKIP = "Reflexer-Skip"
 REFLEXER_NAMES = ["api.reflexer.ai"]
 PROVIDER_NAMES = ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "openrouter.ai",
                   "api.groq.com", "made-up.openai.azure.com", "api.acme.example", *bedrock.NAMES]
@@ -178,7 +178,7 @@ def fields(sdk, answer):
     or None. On gemini, whose objects hold no price: the headers its object keeps."""
     if sdk == "gemini":
         headers = getattr(getattr(answer, "sdk_http_response", None), "headers", None) or {}
-        return {"request_id": headers["reflexer-request-id"], "answered_by": "reflexer", "cost": int(headers["reflexer-cost"])} \
+        return {"request_id": headers["reflexer-request-id"], "answered_by": "reflexer", "cost": int(headers["reflexer-cost-nano-usd"])} \
             if headers.get("reflexer-answered-by") == "reflexer" else None
     cost = usage_cost(sdk, answer)
     served = str(getattr(answer, "id", "")).startswith("rfx-") or (sdk == "acme" and cost is not None)
@@ -266,8 +266,8 @@ class Test:
 
     def skip_headers(self):
         """The header that skips reflexer for one call; it must never leave this machine."""
-        self.local_flags.add(PASS_THROUGH.lower())
-        return {PASS_THROUGH: "1"}
+        self.local_flags.add(SKIP.lower())
+        return {SKIP: "true"}
 
     def skip(self, client, timeout=None):
         return self.ask(client, headers=self.skip_headers(), timeout=timeout)

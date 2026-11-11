@@ -6,7 +6,7 @@ its proxies, TLS and connections hold. No private name is read, no class of the 
 answer's bytes are touched.
 """
 import copy, functools, threading, weakref
-from . import BASE, OURS, Reflexer, ReplayNotTaken, is_replay, log
+from . import BASE, OURS, Reflexer, ReplayNotTaken, checked, is_replay, log
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
 KEPT = ("timeout",)  # of a client's request extensions, what reflexer's request keeps: no callback of theirs sees our key
@@ -16,15 +16,15 @@ def setup_http_client(stock, wire):
     """What a provider file exports: a function making the HTTP client to give the SDK. `stock`, the SDK's own HTTP
     client when the client has none; `wire`, its data (`wires.py`): see `Reflexer`."""
 
-    def http_client(key, own=None, base=BASE, sample=1.0):
+    def http_client(key, own=None, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
         own = own or stock()
         inner = copy.copy(own)  # the client's own object stays as it was, for its other users; they share connections
         inner.event_hooks = {}  # they run once, above, and never see our key
-        outer = type(own)(transport=Through(Reflexer(key, wire, base, sample), inner),  # the rest: what the outer one acts on
+        outer = type(own)(transport=Through(Reflexer(key, wire, base, sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms), inner),  # the rest: what the outer one acts on
                           event_hooks=own.event_hooks, auth=own.auth, params=own.params, headers=own.headers,
                           cookies=own.cookies.jar, timeout=own.timeout, follow_redirects=own.follow_redirects,
                           max_redirects=own.max_redirects, base_url=own.base_url)
-        outer.reflexer_through = dict(key=key, base=base, sample=sample)  # what a copy given its own HTTP client is made with
+        outer.reflexer_through = dict(key=key, base=base, sample=sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)  # what a copy given its own HTTP client is made with
         return outer
 
     return http_client
@@ -35,9 +35,11 @@ def setup_client(cls, make_http_client):
     our HTTP client, by its public argument; the SDK's own copies (`with_options`) hand ours back in, with no key."""
 
     class Client(cls):
-        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, http_client=None, **config):
+        def __init__(self, *args, reflexer_key=None, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, reflexer_answer=True, reflexer_store=True,
+                 reflexer_pass_through=False, reflexer_timeout_ms=None, http_client=None, **config):
             if not hasattr(http_client, "reflexer_through"):
-                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample)
+                http_client = make_http_client(reflexer_key, own=http_client, base=reflexer_base, sample=sample, namespace=reflexer_namespace, answer=reflexer_answer,
+                 store=reflexer_store, pass_through=reflexer_pass_through, timeout_ms=reflexer_timeout_ms)
             self.reflexer_way = http_client.reflexer_through
             super().__init__(*args, http_client=http_client, **config)
 
@@ -57,7 +59,7 @@ def stays_straight(request):
     """The client's own call, for its provider: no header of ours leaves, and its redirects and auth rounds, which keep the
     mark, stay with its provider. A replay never does: the one call that cannot fall back."""
     if is_replay(body_of(request) or b""):
-        raise ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider")
+        raise ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider")
     for name in dict(request.headers):
         if name.startswith(OURS):
             del request.headers[name]
@@ -121,6 +123,7 @@ class Through:
             await closed_unless_its_loop_ended(self.inner)
 
     def handle_request(self, request):
+        checked(request.headers)  # a wrong value raises here, before anything is sent
         try:
             try:
                 ours = to_reflexer(self.reflexer, request)
@@ -137,6 +140,7 @@ class Through:
 
     async def handle_async_request(self, request):
         """`handle_request`, for an async client: the language asks for a second copy, not any provider."""
+        checked(request.headers)
         try:
             try:
                 ours = to_reflexer(self.reflexer, request)
@@ -223,7 +227,7 @@ async def closed_unless_its_loop_ended(client):
     except RuntimeError as failure:
         if str(failure) != "Event loop is closed":  # asyncio's, on any use of a loop that has ended
             raise
-        log.info("a client of a finished event loop was left unclosed")
+        log.info("the SDK did not close a client whose event loop has ended")
 
 
 def without_its_cookie(answer):
@@ -281,7 +285,7 @@ class Both:
             try:
                 await self.overdue.pop().aclose()
             except Exception as failure:  # nothing of a call's: a finished loop's connections, which none can use again
-                log.info("a retired client of a finished event loop did not close (%s)", type(failure).__name__)
+                log.info("closing an unused client whose event loop has ended failed (%s)", type(failure).__name__)
 
     def out(self, is_async):
         with self.lock:

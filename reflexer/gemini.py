@@ -33,11 +33,11 @@ def library_of(request):
     return next((library for library in LIBRARIES if isinstance(request, library.Request)), httpx)
 
 
-def client_args(key, own=None, base=BASE, sample=1.0):
+def client_args(key, own=None, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
     """What to give as both `client_args` and `async_client_args`, for what builds its own `genai.Client` and takes only
     those. `own`, the client's own: split as `setup_http_client`
     splits a client, so its hooks run once, above, and never see our key. A transport given also keeps the SDK off aiohttp."""
-    own, one = own or {}, Reflexer(key, GENERATE, base, sample)
+    own, one = own or {}, Reflexer(key, GENERATE, base, sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)
     below = {name: value for name, value in own.items() if name not in ABOVE}
     above = {name: value for name, value in own.items() if name in ABOVE}
     return {"follow_redirects": True} | above | {"transport": Both(library_of, lambda library: Through(one, own_client(library.Client, None, below)),
@@ -45,8 +45,11 @@ def client_args(key, own=None, base=BASE, sample=1.0):
 
 
 class Client(genai.Client):
-    def __init__(self, *, reflexer_key, reflexer_base=BASE, sample=1.0, http_options=None, **config):
-        options, way = genai.types.HttpOptions.model_validate(http_options or {}), dict(base=reflexer_base, sample=sample)
+    def __init__(self, *, reflexer_key, reflexer_base=BASE, sample=1.0, reflexer_namespace=None, reflexer_answer=True, reflexer_store=True,
+                 reflexer_pass_through=False, reflexer_timeout_ms=None, http_options=None, **config):
+        options = genai.types.HttpOptions.model_validate(http_options or {})
+        way = dict(base=reflexer_base, sample=sample, namespace=reflexer_namespace, answer=reflexer_answer,
+                 store=reflexer_store, pass_through=reflexer_pass_through, timeout_ms=reflexer_timeout_ms)
         self.reflexer_http = http_client(reflexer_key, own_client(httpx.Client, options.httpx_client, options.client_args), **way)
         self.reflexer_built = options.httpx_client is None
         self.reflexer_async_built = options.httpx_async_client is None

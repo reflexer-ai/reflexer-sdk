@@ -1,15 +1,15 @@
 # reflexer with OpenAI
 
-Reflexer in front of your OpenAI calls, Python or TypeScript, by changing one import and one line.
+Send your OpenAI calls through reflexer, in Python or TypeScript: change one import and one line.
 
-**Before you begin:** `openai` 3 (Python) or `openai` 7 (TypeScript), and `REFLEXER_KEY` set to the key you got at onboarding. In a `.ts` file, write the key as `process.env.REFLEXER_KEY!`: the examples are plain JavaScript.
+**Before you begin:** you need `openai` 3 (Python) or `openai` 7 (TypeScript), and the environment variable `REFLEXER_KEY` set to the reflexer key you got at onboarding. The examples are plain JavaScript: in a `.ts` file, write the key as `process.env.REFLEXER_KEY!`.
 
 ## 1. Install
 
-Not on PyPI or npm yet: install from a clone of this repository ([README](../README.md#install)).
+The SDK is not on PyPI or npm yet. Install it from a clone of this repository ([README](../README.md#install)).
 
 ```sh
-pip install ./reflexer-sdk
+pip install --build-constraint reflexer-sdk/build-constraints.txt ./reflexer-sdk  # pip 26.1 or later
 ```
 
 ```sh
@@ -17,7 +17,7 @@ npm install /path/to/reflexer-sdk/typescript/reflexer-ai-sdk-VERSION.tgz
 ```
 ## 2. Add the line
 
-Python: change the import, and add your reflexer key at the end of the line that makes the client.
+Python: change the import. Then add your reflexer key as the last argument of the line that creates the client.
 
 <!-- example: served python -->
 ```diff
@@ -52,11 +52,11 @@ TypeScript: the same change.
 Hello! How can I help you today?
 ```
 
-`AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` change the same way, and so does any client of OpenAI's format pointed elsewhere by `base_url` (TypeScript: `baseURL`), such as a router. The Responses API goes through too.
+Change `AsyncOpenAI`, `AzureOpenAI` and `AsyncAzureOpenAI` the same way. Change any other client of OpenAI's format the same way, for example a client whose `base_url` (TypeScript: `baseURL`) points to a router. For chat completions to OpenRouter or Vercel AI Gateway, reflexer uses a route made for that router, so it handles the router's own request fields. Calls to the Responses API also go through reflexer.
 
 ## 3. Verify
 
-The reply looks the same either way. The `Reflexer-Answered-By` header says who answered: `reflexer`, or `provider` when reflexer forwarded the call to OpenAI; it is absent when the call went to OpenAI directly.
+The reply looks the same whether reflexer or OpenAI answered. The `Reflexer-Answered-By` header names who answered: `reflexer`, or `provider` when reflexer forwarded the call to OpenAI. The reply has no such header when the SDK sent the call directly to OpenAI.
 
 <!-- example: served -->
 ```python
@@ -85,31 +85,32 @@ console.log(response.headers.get("reflexer-answered-by"));
 reflexer
 ```
 
-A reply from reflexer has a `model` ending in `-reflexer`, and `usage.cost` holds its price in USD.
+A reply from reflexer has a `model` that ends in `-reflexer`, and its `usage.cost` holds its price in USD.
 
 ## Behavior
 
-- **Reflexer down, slow or busy:** the call goes to OpenAI, and your code gets OpenAI's answer. The SDK logs a warning (Python: the `reflexer` logger; TypeScript: `console.warn`). After a failure, the next calls go to OpenAI too, for about a minute at most, then reflexer is tried again.
-- **Timeouts, Python:** your client's timeout covers the call to reflexer. If it fires, the call goes to OpenAI with the same timeout, so a call can take up to twice it. If reflexer had already forwarded the call, OpenAI may run it, and bill it, twice.
-- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the call goes to OpenAI. If your client's own timeout fires first, that try fails as a timeout, and a retry of your SDK's, if it makes one, goes to OpenAI. Either way, if reflexer had already forwarded the call, OpenAI may run it, and bill it, twice.
-- **Key refused:** if reflexer refuses your reflexer key, your SDK raises its authentication error; the call does not go to OpenAI. A key revoked less than a day ago still sends calls to OpenAI, with a warning.
-- **Which calls:** only the calls that return a model's message go to reflexer. Other calls, and calls to `http`, `localhost` or a private IP, go where they were sent, as before.
-- **What leaves your machine:** the call, with your OpenAI key, goes to reflexer, which uses the key to forward the call to OpenAI when it does not answer. The reflexer key goes to reflexer only.
-- **What stays the same:** your arguments, the answer's types and fields, errors and streams. Remove the line and your code is as it was.
+- **Reflexer down, slow or busy:** the SDK sends the call directly to OpenAI, and your code gets OpenAI's answer. The SDK logs a warning (Python: on the `reflexer` logger; TypeScript: with `console.warn`). After a failure, the SDK sends the next calls directly to OpenAI too, for about a minute at most. Then the SDK tries reflexer again.
+- **Timeouts, Python:** your client's timeout applies to the call to reflexer. If that timeout expires, the SDK sends the call directly to OpenAI, with the same timeout. So one call can take up to two times your timeout. If reflexer had already forwarded the call, OpenAI may run the call twice and bill it twice.
+- **Timeouts, TypeScript:** if reflexer's answer has not started after `headersTimeout` (300 seconds by default), the SDK sends the call directly to OpenAI. If your client's own timeout expires first, that attempt fails with a timeout error. If your provider SDK then retries the call, the SDK sends the retry directly to OpenAI. In every case, if reflexer had already forwarded the call, OpenAI may run the call twice and bill it twice.
+- **Key refused:** if reflexer refuses your reflexer key, your provider SDK raises its authentication error, and the SDK does not send the call to OpenAI. If your reflexer key was revoked less than one day ago, the SDK still sends your calls directly to OpenAI, and logs a warning.
+- **Which calls:** the SDK sends to reflexer only the calls that return a model's message. The SDK sends all other calls, and all calls to `http`, `localhost` or a private IP, to the address your code gave them, as before.
+- **What leaves your machine:** the SDK sends the call to reflexer, with your OpenAI key. When reflexer does not answer the call itself, reflexer uses this key to forward the call to OpenAI. Only reflexer receives your reflexer key.
+- **What stays the same:** your arguments, the answer's types and fields, errors and streams. If you remove the line, your code works as before.
 
 Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Every limit: [Known limits](limits.md).
 
 ## Options
 
-- `sample=0.01` (TypeScript `sample: 0.01`): send that share of the calls to reflexer, the rest to OpenAI.
-- `extra_headers={"Reflexer-Pass-Through": "1"}` on a call (TypeScript: `{ headers: { "Reflexer-Pass-Through": "1" } }` as its second argument): that call goes to OpenAI.
-- `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if you were given another.
-- Your own HTTP client, as `http_client=` (TypeScript `fetch`): reflexer's calls go by it too.
+- `sample=0.01` (TypeScript `sample: 0.01`): the SDK sends that share of the calls to reflexer, and the other calls directly to OpenAI.
+- `extra_headers={"Reflexer-Skip": "true"}` on a call (TypeScript: `{ headers: { "Reflexer-Skip": "true" } }` as its second argument): the SDK sends that call directly to OpenAI.
+- `extra_body={"replay_response": answer}` on a call (TypeScript: `replay_response: answer` among its parameters): a [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer). You give reflexer your OpenAI answer, and neither the SDK nor reflexer sends the call to OpenAI.
+- `reflexer_base=` (TypeScript `reflexerBase`): reflexer's address, if reflexer gave you another one.
+- Your own HTTP client, as `http_client=` (TypeScript `fetch`): the SDK also sends the calls to reflexer through it.
 
-All of them: [Advanced](advanced.md).
+All options: [Advanced](advanced.md).
 
 ## Supported versions
 
-`openai` 3 on Python 3.10+, `openai` 7 on Node 20.3+ (openai 7 itself asks for Node 22; the tests run on Node 20 too). Another major raises at import, before any call.
+`openai` 3 on Python 3.10+, `openai` 7 on Node 20.3+ (openai 7 itself asks for Node 22; the SDK's tests also run on Node 20). With another major version, the SDK raises an error at import, before any call.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Advanced](advanced.md) · [Reference](reference.md)

@@ -9,6 +9,9 @@ from reflexer import ANSWER, ASKED, FAILED, GRACE
 secret = "rfx1_aaaaakq_" + "a" * 52
 KEY = f"{secret}_{reflexer.checksum(secret)}"
 WIRE = {"reflexer_path": "/openai", "provider": "https://api.openai.com", "calls": r"/v1/(chat/completions|responses)$"}
+ROUTED = WIRE | {"routers": {  # as reflexer/openai.py's: a router with a route of its own at reflexer, by its host
+    "openrouter.ai":        {"reflexer_path": "/openrouter", "provider": "https://openrouter.ai", "calls": r"/api/v1/chat/completions$"},
+    "ai-gateway.vercel.sh": {"reflexer_path": "/vercel", "provider": "https://ai-gateway.vercel.sh", "calls": r"/v1/chat/completions$"}}}
 CHAT = "https://api.openai.com/v1/chat/completions"
 OURS = {"reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "content-type": "application/json"}  # as the HTTP library gives them
 LONG = 10**6  # seconds: past every wait
@@ -41,17 +44,104 @@ class Route(unittest.TestCase):
         self.assertEqual(url, "https://api.reflexer.ai/openai/v1/chat/completions")
         self.assertEqual(headers, {"authorization": "Bearer sk-made-up", "reflexer-key": KEY})
 
+    def test_the_lines_namespace_goes_on_each_call_and_a_calls_own_wins(self):
+        way = reflexer.Reflexer(KEY, WIRE, namespace="team-a")
+        self.assertEqual(way.route(CHAT, {})[1]["reflexer-namespace"], "team-a")
+        self.assertEqual(way.route(CHAT, {"reflexer-namespace": "team-b"})[1]["reflexer-namespace"], "team-b")
+        self.assertNotIn("reflexer-namespace", self.reflexer.route(CHAT, {})[1])
+
     def test_a_base_of_the_clients_own_is_named_as_the_upstream(self):
-        _, headers = self.reflexer.route("https://openrouter.ai/api/v1/chat/completions", {})
-        self.assertEqual(headers["reflexer-upstream"], "https://openrouter.ai/api")
+        _, headers = self.reflexer.route("https://api.groq.com/openai/v1/chat/completions", {})
+        self.assertEqual(headers["reflexer-upstream"], "https://api.groq.com/openai")
+
+    def test_a_router_with_a_route_of_its_own_takes_it_for_the_calls_it_serves(self):
+        """Reflexer reads a router's own body keys only on its route; its default base names no upstream."""
+        way = reflexer.Reflexer(KEY, ROUTED)
+        for url, to, upstream in (
+                ("https://openrouter.ai/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", None),
+                ("https://ai-gateway.vercel.sh/v1/chat/completions", "/vercel/v1/chat/completions", None),
+                ("https://openrouter.ai:8443/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", "https://openrouter.ai:8443"),
+                ("https://openrouter.ai/api/v1/responses", "/openai/v1/responses", "https://openrouter.ai/api"),  # not its route: as before
+                ("https://ai-gateway.vercel.sh/v1/responses", "/openai/v1/responses", "https://ai-gateway.vercel.sh")):
+            made, headers = way.route(url, {})
+            self.assertEqual((made, headers.get("reflexer-upstream")), (f"https://api.reflexer.ai{to}", upstream), url)
+        self.assertIsNone(way.route("https://openrouter.ai/api/v1/models", {}))
 
     def test_straight(self):
         self.assertIsNone(self.reflexer.route("https://api.openai.com/v1/models", {}))
-        self.assertIsNone(self.reflexer.route(CHAT, {reflexer.PASS_THROUGH: "1"}))
+        self.assertIsNone(self.reflexer.route(CHAT, {reflexer.SKIP: "true"}))
         self.assertIsNone(self.reflexer.route("http://localhost:11434/v1/chat/completions", {}))
         self.assertIsNone(reflexer.Reflexer(KEY, WIRE, sample=0.0).route(CHAT, {}))
         for private in ("https://localhost./v1/chat/completions", "https://10.0.0.5/v1/chat/completions"):
             self.assertIsNone(self.reflexer.route(private, {}), private)
+
+    def test_the_skip_header_is_read_by_its_value_in_any_case(self):
+        for value in ("true", "TRUE", "True", " true ", "\ttrue"):  # whitespace around a value is not part of it (RFC 9110 5.5)
+            self.assertIsNone(self.reflexer.route(CHAT, {reflexer.SKIP: value}), value)
+        for value in ("false", "FALSE", "False", " false\t"):
+            made = self.reflexer.route(CHAT, {reflexer.SKIP: value})
+            self.assertIsNotNone(made, value)
+            self.assertNotIn(reflexer.SKIP, made[1])
+        for value in ("1", "", " ", "yes", "true, true", "t rue"):
+            with self.assertRaises(ValueError, msg=value) as raised:
+                self.reflexer.route(CHAT, {reflexer.SKIP: value})
+            self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)
+
+    def test_another_header_of_ours_is_dropped(self):
+        made = self.reflexer.route(CHAT, {"reflexer-made-up": "1", "reflexer-upstream": "https://made-up.example"})
+        self.assertIsNotNone(made)
+        self.assertNotIn("reflexer-made-up", made[1])
+        self.assertNotIn("reflexer-upstream", made[1])
+
+    def test_the_options_go_as_headers_only_when_they_differ_from_reflexers_default(self):
+        self.assertEqual({name for name in self.reflexer.route(CHAT, {})[1] if name != "reflexer-key"}, set())
+        alike = reflexer.Reflexer(KEY, WIRE, answer=True, store=True, pass_through=False, timeout_ms=None)
+        self.assertEqual({name for name in alike.route(CHAT, {})[1] if name != "reflexer-key"}, set())
+        other = reflexer.Reflexer(KEY, WIRE, answer=False, store=False, pass_through=True, timeout_ms=2500)
+        self.assertEqual({name: value for name, value in other.route(CHAT, {})[1].items() if name != "reflexer-key"},
+                         {"reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500"})
+
+    def test_a_calls_own_option_header_goes_to_reflexer_and_wins(self):
+        other = reflexer.Reflexer(KEY, WIRE, answer=False, timeout_ms=2500)
+        given = {"reflexer-answer": "TRUE", "reflexer-store": "false", "reflexer-pass-through": "True", "reflexer-timeout-ms": "100"}
+        headers = other.route(CHAT, given)[1]
+        self.assertEqual({name: headers[name] for name in given}, given)
+
+    def test_a_wrong_option_raises_as_the_client_is_made(self):
+        for option, value in (("answer", 0), ("answer", "false"), ("store", 1), ("store", None), ("pass_through", "true")):
+            with self.assertRaisesRegex(ValueError, f"^reflexer_{option} must be true or false: ", msg=(option, value)):
+                reflexer.Reflexer(KEY, WIRE, **{option: value})
+        for value in (0, -1, 1.5, 1e21, "100", True, False):
+            with self.assertRaisesRegex(ValueError, "^reflexer_timeout_ms must be a whole number of milliseconds from 1: ", msg=value):
+                reflexer.Reflexer(KEY, WIRE, timeout_ms=value)
+        reflexer.Reflexer(KEY, WIRE, timeout_ms=1)
+
+    def test_the_old_pass_through_header_value_points_to_the_skip(self):
+        with self.assertRaises(ValueError) as raised:
+            reflexer.checked({"reflexer-pass-through": "1"})
+        self.assertEqual(str(raised.exception), "the Reflexer-Pass-Through header must be true or false: true asks reflexer to forward the "
+                         "call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true")  # as TypeScript's
+
+    def test_a_calls_option_header_is_read_as_the_skip_is_and_a_wrong_value_raises(self):
+        for header in ("reflexer-answer", "reflexer-store", "reflexer-pass-through"):
+            for value in ("true", "FALSE", " True\t"):
+                self.assertFalse(reflexer.checked({header: value}), (header, value))
+            for value in ("1", "", "yes", "true, false", "t rue"):
+                with self.assertRaisesRegex(ValueError, f"^the {header.title()} header must be true or false: ", msg=(header, value)):
+                    reflexer.checked({header: value})
+        for value in ("1", " 2500 ", "100"):
+            reflexer.checked({"reflexer-timeout-ms": value})
+        for value in ("0", "-1", "1.5", "", "1e3", "100, 200", "01"):
+            with self.assertRaisesRegex(ValueError, "^the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: ", msg=value):
+                reflexer.checked({"reflexer-timeout-ms": value})
+        self.assertTrue(reflexer.checked({"reflexer-skip": "true", "reflexer-answer": "false"}))
+
+    def test_a_private_address_in_another_notation_goes_straight(self):
+        """As the system's resolver reads an IPv4 address (inet_aton), which the client's HTTP client goes by."""
+        for host in ("10.1", "127.1", "167772161", "0x0a000001", "0300.0250.0.1", "0X0A.1", "10.0.0.5.", "0"):
+            self.assertIsNone(self.reflexer.route(f"https://{host}/v1/chat/completions", {}), host)
+        for host in ("8.8.8.8", "134744072", "0x08080808", "8.526344", "1.2.3.4.5", "10.1.example", "0x", "0x1g", "08.0.0.1", "1.16777216"):
+            self.assertIsNotNone(self.reflexer.route(f"https://{host}/v1/chat/completions", {}), host)  # public, or a name
 
     def test_no_userinfo_in_the_upstream(self):
         _, headers = self.reflexer.route("https://user:made-up@router.example/v1/chat/completions", {})
@@ -72,6 +162,20 @@ class Construction(unittest.TestCase):
             with self.assertRaises((ValueError, AttributeError)):
                 reflexer.Reflexer(KEY, WIRE, base=base)
         reflexer.Reflexer(KEY, WIRE, base="http://127.0.0.1:8000")  # a stand-in on this machine
+
+    def test_a_sample_not_a_number_from_0_to_1_raises(self):
+        for sample in (-0.1, 1.5, float("nan"), "0.5", None, True):
+            with self.assertRaisesRegex(ValueError, "^sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer$"):
+                reflexer.Reflexer(KEY, WIRE, sample=sample)
+        for sample in (0, 0.5, 1):
+            reflexer.Reflexer(KEY, WIRE, sample=sample)
+
+    def test_a_namespace_that_cannot_go_as_a_header_raises(self):
+        for namespace in ("", " team", "team\r\nx-made-up: 1", "équipe", 7):
+            with self.assertRaisesRegex(ValueError, "^a namespace may contain only"):
+                reflexer.Reflexer(KEY, WIRE, namespace=namespace)
+        for namespace in (None, "team-a", "Team A/2026"):
+            reflexer.Reflexer(KEY, WIRE, namespace=namespace)
 
     def test_a_typo_in_a_provider_file_raises_when_the_client_is_made(self):
         with self.assertRaises(KeyError):
@@ -96,6 +200,9 @@ class Read(unittest.TestCase):
             (503, told, ASKED),
             (529, told, ASKED),
             (502, OURS | {"reflexer-status-origin": "connection"}, ASKED),
+            (502, OURS | {"reflexer-status-origin": "relay"}, ASKED),  # the same meaning under its new name
+            (200, OURS | {"reflexer-status-origin": "relay"}, ASKED),
+            (204, {"reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "reflexer-cost": "0"}, ANSWER),  # reflexer asked not to answer: its empty answer, never the provider's
             (401, told, GRACE),
             (400, told, GRACE),  # gemini's key error
             (500, OURS | {"reflexer-status-origin": "provider"}, ANSWER),  # a provider's status never trips it

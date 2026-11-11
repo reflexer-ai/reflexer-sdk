@@ -18,7 +18,7 @@ BEARER = "ABSKbWFkZS11cC1iZWRyb2NrLWtleQ=="  # a Bedrock API key's form, made up
 REFUSED = "ABSK-made-up-one-bedrock-refuses"  # another, which Bedrock's stand-in does not take
 ACCESS_KEY, SECRET = "AKIDMADEUPMADEUP0001", "made-up-secret-access-key-of-the-suite"  # not of AWS's key form: no scanner takes it for one
 EVENT_STREAM = "application/vnd.amazon.eventstream"
-ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, as a client writes it
+ARGUMENT = "ReflexerSkip"  # the botocore family's per-call skip, as a client writes it
 TEXT = "Hi"
 OPERATIONS = ("converse", "converse_stream", "invoke", "invoke_stream", "count_tokens")
 STREAMED = {"converse_stream", "invoke_stream"}  # Bedrock's streamed operations, as its wire names them

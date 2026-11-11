@@ -41,6 +41,20 @@ describe("The wire", () => {
   });
 });
 
+describe("Asked not to answer", () => {
+  test("reflexer's empty answer reaches each SDK as it came, never a call to the provider", async () => {
+    const empty = (/** @type {URL} */ url) => url.host === check.REFLEXER
+      ? new Response(null, { status: 204, headers: { "reflexer-status-origin": "reflexer", "reflexer-request-id": "made-up", "reflexer-cost": "0" } })
+      : check.providers(url);
+    const raw = await index.openai.fetch(key, { fetch: check.mock(empty).fetch })(check.CHAT, { method: "POST", body: "{}" });
+    assert.deepEqual([raw.status, await raw.text(), raw.headers.get("reflexer-cost")], [204, "", "0"]);
+    for (const stream of [false, true]) {
+      const found = await check.throughEachSdk(sdk, stream ? { stream: true } : {}, empty);
+      for (const [name, reached] of Object.entries(found)) assert.deepEqual(reached, [`${check.REFLEXER} keyed`], `${name}, stream ${stream}`);
+    }
+  });
+});
+
 describe("Azure", () => {
   test("each message call's path reaches reflexer, the dated Responses one too", async () => {
     for (const path of ["/openai/deployments/made-up/chat/completions", "/openai/deployments/made-up/responses", "/openai/v1/responses", "/openai/responses"]) {
@@ -61,20 +75,77 @@ describe("Azure", () => {
 });
 
 describe("Headers", () => {
-  test("no header of ours leaves for the provider, and the pass-through header leaves for no one", async () => {
+  test("no header of ours leaves for the provider, and the skip header leaves for no one", async () => {
     const { fetch, seen } = made(check.served);
-    const headers = { "reflexer-pass-through": "1", "reflexer-namespace": "made-up", "reflexer-made-up": "1", authorization: "Bearer sk-made-up" };
+    const headers = { "reflexer-skip": "true", "reflexer-answer": "false", "reflexer-timeout-ms": "100", "reflexer-namespace": "made-up", "reflexer-made-up": "1", authorization: "Bearer sk-made-up" };
     await fetch(check.CHAT, { method: "POST", body: "{}", headers });
     assert.deepEqual(hosts(seen), ["api.openai.com"]);
     assert.deepEqual([...seen[0].headers.keys()], ["authorization"]);
   });
 
-  test("the pass-through header, on one SDK call, sends it straight and leaves for no one", async () => {
+  test("the skip header true, on one SDK call, sends it straight and leaves for no one", async () => {
     const own = check.mock(check.served);
     const client = new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, fetch: own.fetch });
-    await client.chat.completions.create({ model: "m", messages: [] }, { headers: { "Reflexer-Pass-Through": "1" } }).catch(() => {});
+    await client.chat.completions.create({ model: "m", messages: [] }, { headers: { "Reflexer-Skip": "TRUE" } }).catch(() => {});
     assert.deepEqual(hosts(own.seen), ["api.openai.com"]);
     assert.ok(![...own.seen[0].headers.keys()].some((name) => name.startsWith("reflexer-")));
+  });
+
+  test("the skip header false sends the call to reflexer and leaves for no one, nor does another header of ours", async () => {
+    const { fetch, seen } = made(check.busy);
+    await fetch(check.CHAT, { method: "POST", body: "{}", headers: { "Reflexer-Skip": "False", "Reflexer-Made-Up": "1" } });
+    assert.deepEqual(hosts(seen), [check.REFLEXER, "api.openai.com"]);
+    for (const { headers } of seen) assert.ok(!headers.has("reflexer-skip") && !headers.has("reflexer-made-up"));
+  });
+
+  test("a call's option headers reach reflexer alone, and a wrong one throws before anything is sent", async () => {
+    const given = { "reflexer-answer": "false", "reflexer-store": "False", "reflexer-pass-through": "TRUE", "reflexer-timeout-ms": "100" };
+    const { fetch, seen } = made(check.busy);
+    await fetch(check.CHAT, { method: "POST", body: "{}", headers: given });
+    assert.deepEqual(seen.map(({ url, headers }) => [url.host, Object.keys(given).map((name) => headers.get(name))]),
+      [[check.REFLEXER, Object.values(given)], ["api.openai.com", [null, null, null, null]]]);
+    for (const [header, value] of [["Reflexer-Answer", "no"], ["Reflexer-Store", "1"], ["Reflexer-Pass-Through", ""], ["Reflexer-Timeout-Ms", "0"]]) {
+      const { fetch, seen } = made(check.served);
+      await assert.rejects(fetch(check.CHAT, { method: "POST", body: "{}", headers: { [header]: value } }), { message: new RegExp(`^the ${header} header must be `) });
+      assert.deepEqual(seen, []);
+    }
+  });
+
+  test("the line's options reach reflexer alone, and a copy keeps them", async () => {
+    const options = { reflexerAnswer: false, reflexerStore: false, reflexerPassThrough: true, reflexerTimeoutMs: 2500 };
+    const sent = { "reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500" };
+    for (const make of [(/** @type {any} */ fetch) => new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, ...options, maxRetries: 0, fetch }),
+      (/** @type {any} */ fetch) => new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, ...options, maxRetries: 0, fetch })]) {
+      for (const copied of [false, true]) {
+        const own = check.mock(check.busy);
+        const client = /** @type {any} */ (copied ? make(undefined).withOptions({ fetch: own.fetch }) : make(own.fetch));
+        await (client.chat ? client.chat.completions.create({ model: "m", messages: [] }) : client.messages.create({ model: "m", max_tokens: 1, messages: [] }))
+          .catch(() => {});
+        assert.deepEqual(own.seen.map(({ url, headers }) => [url.host === check.REFLEXER, Object.keys(sent).map((name) => headers.get(name))]),
+          [[true, Object.values(sent)], [false, [null, null, null, null]]], `${client.constructor.name}${copied ? ", a copy" : ""}`);
+      }
+    }
+    assert.throws(() => new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, reflexerAnswer: /** @type {any} */ ("false") }), { message: /^reflexerAnswer must be true or false/ });
+  });
+
+  test("the skip header with another value throws, and nothing is sent", async () => {
+    const { fetch, seen } = made(check.served);
+    await assert.rejects(fetch(check.CHAT, { method: "POST", body: "{}", headers: { "Reflexer-Skip": "1" } }), { name: "Error", message: index.NOT_A_SKIP });
+    assert.deepEqual(seen, []);
+  });
+
+  test("the line's namespace reaches reflexer alone, and a copy keeps it", async () => {
+    for (const make of [(/** @type {any} */ fetch) => new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, reflexerNamespace: "team-a", maxRetries: 0, fetch }),
+      (/** @type {any} */ fetch) => new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, reflexerNamespace: "team-a", maxRetries: 0, fetch })]) {
+      for (const copied of [false, true]) {
+        const own = check.mock(check.busy);
+        const client = /** @type {any} */ (copied ? make(undefined).withOptions({ fetch: own.fetch }) : make(own.fetch));
+        await (client.chat ? client.chat.completions.create({ model: "m", messages: [] }) : client.messages.create({ model: "m", max_tokens: 1, messages: [] }))
+          .catch(() => {});
+        assert.deepEqual(own.seen.map(({ url, headers }) => [url.host === check.REFLEXER, headers.get("reflexer-namespace")]),
+          [[true, "team-a"], [false, null]], `${client.constructor.name}${copied ? ", a copy" : ""}`);
+      }
+    }
   });
 
   test("the namespace reaches reflexer", async () => {
@@ -108,9 +179,9 @@ describe("Straight", () => {
     assert.deepEqual(hosts(seen), ["api.openai.com"]);
   });
 
-  test("a replay with the pass-through header throws, and nothing is sent", async () => {
+  test("a replay with the skip header throws, and nothing is sent", async () => {
     const { fetch, seen } = made(check.served);
-    await assert.rejects(fetch(check.CHAT, { method: "POST", body: check.REPLAY, headers: { "reflexer-pass-through": "1" } }), index.ReplayNotTaken);
+    await assert.rejects(fetch(check.CHAT, { method: "POST", body: check.REPLAY, headers: { "reflexer-skip": "true" } }), index.ReplayNotTaken);
     assert.deepEqual(seen, []);
   });
 
@@ -248,16 +319,17 @@ describe("Failures", () => {
   test("an SDK's own timeout on a hung reflexer still reaches the provider, on its retry", async (t) => {
     t.mock.method(console, "warn", () => {});
     const seen = /** @type {string[]} */ ([]);
-    const hung = (/** @type {any} */ input, /** @type {any} */ init) => {
+    const hung = async (/** @type {any} */ input, /** @type {any} */ init) => {
       const url = new URL(input);
       seen.push(url.host);
-      if (url.host !== check.REFLEXER) return Promise.resolve(check.providers(url));
-      return check.stalled(init.signal);
+      if (url.host === check.REFLEXER) return check.stalled(init.signal);
+      init.signal?.throwIfAborted(); // as a real fetch: the first try's own call, its signal already cut, gets no answer
+      return check.providers(url);
     };
     const client = new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, fetch: hung, timeout: 50, maxRetries: 1 });
     const answer = await client.chat.completions.create({ model: "m", messages: [] });
     assert.equal(/** @type {any} */ (answer).from, "provider");
-    assert.deepEqual(seen, [check.REFLEXER, "api.openai.com"]);
+    assert.deepEqual(seen, [check.REFLEXER, "api.openai.com", "api.openai.com"]); // the first try, then its retry, straight
   });
 });
 
@@ -341,7 +413,7 @@ describe("Majors", () => {
     const own = check.mock(check.served);
     const client = new sdk.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: key,
       httpOptions: { fetch: own.fetch, headers: { "User-Agent": "made-up-app/1.0", "x-goog-api-client": "made-up-app/1.0" } } });
-    await assert.rejects(client.models.generateContent({ model: "m", contents: "x" }), /cannot tell/);
+    await assert.rejects(client.models.generateContent({ model: "m", contents: "x" }), /cannot find google-genai's version/);
     assert.deepEqual(own.seen, []);
   });
 

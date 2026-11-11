@@ -14,17 +14,19 @@ What the lines share: `keyed`, `signed`, `straight`, the botocore family's per-c
 transport (`Keyed`, `setup_http_client`).
 """
 import copy, inspect, re
-from . import BASE, OURS, PASS_THROUGH, Reflexer, ReplayNotTaken, is_replay
+from . import BASE, OURS, OPTION_HEADERS, SKIP, Reflexer, ReplayNotTaken, checked, is_replay, skips, text
 from .transport import STRAIGHT, Through, body_of
 
 BEDROCK = {
     "reflexer_path": "/bedrock",
     "calls":         r"/model/[^/]+/(invoke|invoke-with-response-stream|converse|converse-stream)$",
 }
-SKIPPED_HERE = "reflexer_pass_through"  # in a botocore call's context: this call goes straight
+SKIPPED_HERE = "reflexer_skip"  # in a botocore call's context: this call goes straight
+GIVEN_HERE = "reflexer_given"  # in a botocore call's context: the call's own headers for reflexer, taken off before it is signed
 SIGNER = "reflexer_signer"  # in a botocore call's context: the client's own signer and operation, as botocore gives them to `before-sign`
 UNSIGNED = "reflexer_unsigned"  # in a botocore call's context: its URL, body and headers as they came to `before-sign`, before the client's handlers
-ARGUMENT = "ReflexerPassThrough"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerPassThrough=True)`
+ARGUMENT = "ReflexerSkip"  # the botocore family's per-call skip, a call's argument: `client.converse(..., ReflexerSkip=True)`
+NOT_A_SKIP_ARGUMENT = f"the {ARGUMENT} argument must be True or False: True sends the call directly to the provider, False lets the call go through reflexer"
 
 
 def keyed(headers):
@@ -43,7 +45,7 @@ def straight(request, headers, body):
     """The client's own call, for Bedrock: no header of ours leaves but one its signature covers, which a signed call keeps
     so that Bedrock still takes it. A replay never goes. `headers`, the request's own, changed in place."""
     if body is not None and is_replay(body):
-        raise ReplayNotTaken("reflexer did not take this replay, and a replay does not go to the provider")
+        raise ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider")
     auth = headers.get("authorization") or ""
     signed = re.search(r"SignedHeaders=([^,\s]+)", auth.decode() if isinstance(auth, bytes) else auth)
     covered = set(signed[1].split(";")) if signed else set()
@@ -57,20 +59,29 @@ def lower(headers):
 
 
 def skip_taken(event_name, kwargs, before):
-    """The botocore family's per-call skip, taken off where botocore would carry it to Bedrock, and kept in the call's
+    """The botocore family's per-call skip and the call's own headers for reflexer (`OPTION_HEADERS`), taken off where botocore would carry it to Bedrock, and kept in the call's
     context: the argument, from the call's parameters before botocore validates them (`provide-client-params`, before the
     client's own handlers); the header, from the request after the client's own `before-sign` handlers, before it is signed."""
-    if before and event_name.startswith("provide-client-params.") and kwargs["params"].pop(ARGUMENT, None):
-        kwargs["context"][SKIPPED_HERE] = True
+    if before and event_name.startswith("provide-client-params.") and ARGUMENT in kwargs["params"]:
+        given = kwargs["params"].pop(ARGUMENT)
+        if not isinstance(given, bool):  # "false" too: a wrong value raises, before anything is sent
+            raise ValueError(NOT_A_SKIP_ARGUMENT)
+        kwargs["context"][SKIPPED_HERE] = given
     if before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[UNSIGNED] = (request.url, request.data, lower(request.headers))
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
-        for name in [name for name in request.headers if name.lower() == PASS_THROUGH]:
+        ours = {name: ", ".join(text(each) for each in values) for name in OPTION_HEADERS if (values := request.headers.get_all(name))}  # every value, as the skip's
+        checked(ours)  # a wrong value raises, two values too, before anything is sent
+        request.context[GIVEN_HERE] = ours  # for reflexer's leg only
+        for name in request.context[GIVEN_HERE]:
             del request.headers[name]
+        given = request.headers.get_all(SKIP)  # every value, as a header held twice: read together, as httpx joins them
+        if given and skips(", ".join(value.decode() if isinstance(value, bytes) else value for value in given)):  # a wrong value raises, before anything is sent
             request.context[SKIPPED_HERE] = True
+        del request.headers[SKIP]
 
 
 def botocore_route(reflexer, request):
@@ -80,7 +91,7 @@ def botocore_route(reflexer, request):
     headers = lower(request.headers)
     if body is None or not (keyed(headers) or signed(headers)) or (request.context or {}).get(SKIPPED_HERE):
         return None
-    return reflexer.route(request.url, headers, is_replay(body))
+    return reflexer.route(request.url, headers | (request.context or {}).get(GIVEN_HERE, {}), is_replay(body))
 
 
 def signing_anew(request, unprepared):
@@ -184,11 +195,13 @@ class Keyed(Through):
         self.send = aleg if inspect.iscoroutinefunction(inner.send) else leg
 
     def handle_request(self, request):
+        checked(request.headers)  # a wrong value raises here, before anything is sent
         if keyed(request.headers):
             return super().handle_request(request)
         return (self.signed_call if signed(request.headers) else self.straight)(request)
 
     async def handle_async_request(self, request):
+        checked(request.headers)
         if keyed(request.headers):
             return await super().handle_async_request(request)
         return await (self.asigned_call if signed(request.headers) else self.straight)(request)
@@ -203,14 +216,14 @@ class Keyed(Through):
 def setup_http_client(stock, wire, transport=Keyed):
     """The shipped `setup_http_client`, with Bedrock's transport, `Keyed` or a line's own."""
 
-    def http_client(key, own=None, base=BASE, sample=1.0):
+    def http_client(key, own=None, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
         own = own or stock()
         inner = copy.copy(own)  # the client's own object stays as it was, for its other users; they share connections
         inner.event_hooks = {}  # they run once, above, and never see our key
-        outer = type(own)(transport=transport(Reflexer(key, wire, base, sample), inner), event_hooks=own.event_hooks, auth=own.auth,
+        outer = type(own)(transport=transport(Reflexer(key, wire, base, sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms), inner), event_hooks=own.event_hooks, auth=own.auth,
                           params=own.params, headers=own.headers, cookies=own.cookies.jar, timeout=own.timeout,
                           follow_redirects=own.follow_redirects, max_redirects=own.max_redirects, base_url=own.base_url)
-        outer.reflexer_through = dict(key=key, base=base, sample=sample)  # what a copy given its own HTTP client is made with
+        outer.reflexer_through = dict(key=key, base=base, sample=sample, namespace=namespace, answer=answer, store=store, pass_through=pass_through, timeout_ms=timeout_ms)  # what a copy given its own HTTP client is made with
         return outer
 
     return http_client

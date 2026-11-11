@@ -1,6 +1,5 @@
 #!/bin/sh
-# Every check of .github/workflows/ci.yml, run on this machine. GitHub runs that workflow weekly only, for its
-# minutes; this is what runs before a merge. Keep the two in step: a check added there is added here.
+# Every check of .github/workflows/ci.yml, run on this machine. Keep the two in step: a check added there is added here.
 # Usage: sh tools/ci.sh [check] [python] [typescript]   (all three by default)
 #   PYTHONS="3.10 3.14" NODES="20 24" narrow the matrices (default: every version CI runs).
 set -eu
@@ -38,11 +37,24 @@ job_python() {
   done
 }
 
+# The bin directory of a Node of major $1 already on this machine: nvm's, or the `node` on PATH. Nothing is fetched or
+# installed here, so no package's install script runs: a major missing fails, saying how to get it.
+node_bin() {
+  found=""
+  if [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
+    found=$(. "${NVM_DIR:-$HOME/.nvm}/nvm.sh" --no-use && nvm which "$1" 2>/dev/null) || found=""
+  fi
+  if [ -z "$found" ] && [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null)" = "$1" ]; then found=$(command -v node); fi
+  if [ -z "$found" ]; then echo "Node $1 is not on this machine: install it with your version manager (nvm install $1), or narrow NODES" >&2; return 1; fi
+  dirname "$found"
+}
+
 job_typescript() {
   (cd typescript && npm ci --ignore-scripts)
   for v in $NODES; do
     echo "== Node $v"
-    (cd typescript && npx -y -p "node@$v" -- npm run build && npx -y -p "node@$v" -- npm test)
+    bin=$(node_bin "$v")
+    (cd typescript && PATH="$bin:$PATH" && npm run build && npm test)
   done
   (cd typescript && npm audit --audit-level=low && npm audit signatures)
 }

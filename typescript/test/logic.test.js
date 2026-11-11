@@ -36,14 +36,54 @@ describe("Route", () => {
     assert.deepEqual(headers, { authorization: "Bearer sk-made-up", "reflexer-key": KEY });
   });
 
+  test("the line's namespace goes on each call and a call's own wins", () => {
+    const named = new reflexer.Reflexer(KEY, WIRE, { namespace: "team-a" });
+    assert.equal(named.route(CHAT, {})?.[1]["reflexer-namespace"], "team-a");
+    assert.equal(named.route(CHAT, { "reflexer-namespace": "team-b" })?.[1]["reflexer-namespace"], "team-b");
+    assert.equal(Object.hasOwn(way().route(CHAT, {})?.[1] ?? {}, "reflexer-namespace"), false);
+  });
+
   test("a base of the client's own is named as the upstream", () => {
-    const [, headers] = way().route("https://openrouter.ai/api/v1/chat/completions", {}) ?? [];
-    assert.equal(headers?.["reflexer-upstream"], "https://openrouter.ai/api");
+    const [, headers] = way().route("https://api.groq.com/openai/v1/chat/completions", {}) ?? [];
+    assert.equal(headers?.["reflexer-upstream"], "https://api.groq.com/openai");
+  });
+
+  test("a router with a route of its own takes it for the calls it serves", () => {
+    // reflexer reads a router's own body keys only on its route; its default base names no upstream
+    for (const [url, to, upstream] of [
+      ["https://openrouter.ai/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", undefined],
+      ["https://ai-gateway.vercel.sh/v1/chat/completions", "/vercel/v1/chat/completions", undefined],
+      ["https://openrouter.ai:8443/api/v1/chat/completions", "/openrouter/api/v1/chat/completions", "https://openrouter.ai:8443"],
+      ["https://openrouter.ai/api/v1/responses", "/openai/v1/responses", "https://openrouter.ai/api"], // not its route: as before
+      ["https://ai-gateway.vercel.sh/v1/responses", "/openai/v1/responses", "https://ai-gateway.vercel.sh"],
+    ]) {
+      const [made, headers] = way().route(url, {}) ?? [];
+      assert.deepEqual([made, headers?.["reflexer-upstream"]], [`https://api.reflexer.ai${to}`, upstream], url);
+    }
+    assert.equal(way().route("https://openrouter.ai/api/v1/models", {}), null);
+  });
+
+  test("the skip header is read by its value, in any case", () => {
+    for (const value of ["true", "TRUE", "True", " true ", "\ttrue"]) assert.equal(way().route(CHAT, { [reflexer.SKIP]: value }), null, value);
+    for (const value of ["false", "FALSE", "False", " false\t"]) { // whitespace around a value is not part of it (RFC 9110 5.5)
+      const made = way().route(CHAT, { [reflexer.SKIP]: value });
+      assert.notEqual(made, null, value);
+      assert.ok(!Object.hasOwn(made?.[1] ?? {}, reflexer.SKIP), value);
+    }
+    for (const value of ["1", "", " ", "yes", "true, true", "t rue"]) {
+      assert.throws(() => way().route(CHAT, { [reflexer.SKIP]: value }), { name: "Error", message: reflexer.NOT_A_SKIP }, value);
+    }
+  });
+
+  test("another header of ours is dropped", () => {
+    const made = way().route(CHAT, { "reflexer-made-up": "1" });
+    assert.notEqual(made, null);
+    assert.ok(!Object.hasOwn(made?.[1] ?? {}, "reflexer-made-up"));
   });
 
   test("straight", () => {
     assert.equal(way().route("https://api.openai.com/v1/models", {}), null);
-    assert.equal(way().route(CHAT, { [reflexer.PASS_THROUGH]: "1" }), null);
+    assert.equal(way().route(CHAT, { [reflexer.SKIP]: "true" }), null);
     assert.equal(way().route("http://localhost:11434/v1/chat/completions", {}), null);
     assert.equal(new reflexer.Reflexer(KEY, WIRE, { sample: 0 }).route(CHAT, {}), null);
     for (const host of ["localhost.", "10.0.0.5", "[::1]", "[::ffff:10.0.0.1]"]) {
@@ -90,6 +130,21 @@ describe("Reachable", () => {
     }
     assert.equal(reflexer.reachable(new URL("http://api.openai.com/v1")), false);
   });
+
+  // The vectors are tests/test_logic.py's: URL's parser reads an IPv4 address as the system's resolver does (inet_aton)
+  const OTHER_NOTATIONS = ["10.1", "127.1", "167772161", "0x0a000001", "0300.0250.0.1", "0X0A.1", "0"];
+
+  test("a private address in another notation goes straight", () => {
+    const reflexerOf = new reflexer.Reflexer(KEY, WIRE);
+    for (const host of OTHER_NOTATIONS) assert.equal(reflexerOf.route(`https://${host}/v1/chat/completions`, {}), null, host);
+    for (const host of ["134744072", "0x08080808", "8.526344", "10.1.example"]) {
+      assert.notEqual(reflexerOf.route(`https://${host}/v1/chat/completions`, {}), null, host); // public, or a name
+    }
+  });
+
+  test("Broken: a host read as written, not as URL's parser reads it, would be taken", () => {
+    for (const host of OTHER_NOTATIONS.slice(0, -1)) assert.equal(reflexer.reachable({ protocol: "https:", hostname: host }), true, host);
+  });
 });
 
 describe("Construction", () => {
@@ -103,6 +158,63 @@ describe("Construction", () => {
       assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { base: /** @type {any} */ (base) }), String(base));
     }
     new reflexer.Reflexer(KEY, WIRE, { base: "http://127.0.0.1:8000" }); // a stand-in on this machine
+  });
+
+  test("a sample not a number from 0 to 1 throws", () => {
+    for (const sample of [-0.1, 1.5, NaN, "0.5", null, true]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { sample: /** @type {any} */ (sample) }), { message: "sample must be a number from 0 to 1: the share of calls that the SDK sends to reflexer" });
+    }
+    for (const sample of [0, 0.5, 1]) new reflexer.Reflexer(KEY, WIRE, { sample });
+  });
+
+  test("the options go as headers only when they differ from reflexer's default", () => {
+    const others = (/** @type {any} */ made) => Object.fromEntries(Object.entries(made.route(CHAT, {})?.[1] ?? {}).filter(([name]) => name !== "reflexer-key"));
+    assert.deepEqual(others(new reflexer.Reflexer(KEY, WIRE)), {});
+    assert.deepEqual(others(new reflexer.Reflexer(KEY, WIRE, { answer: true, store: true, passThrough: false })), {});
+    assert.deepEqual(others(new reflexer.Reflexer(KEY, WIRE, { answer: false, store: false, passThrough: true, timeoutMs: 2500 })),
+      { "reflexer-answer": "false", "reflexer-store": "false", "reflexer-pass-through": "true", "reflexer-timeout-ms": "2500" });
+  });
+
+  test("a call's own option header goes to reflexer and wins", () => {
+    const given = { "reflexer-answer": "TRUE", "reflexer-store": "false", "reflexer-pass-through": "True", "reflexer-timeout-ms": "100" };
+    const headers = new reflexer.Reflexer(KEY, WIRE, { answer: false, timeoutMs: 2500 }).route(CHAT, given)?.[1] ?? {};
+    assert.deepEqual(Object.fromEntries(Object.keys(given).map((name) => [name, headers[name]])), given);
+  });
+
+  test("a wrong option throws as the client is made", () => {
+    for (const [option, name, value] of [["answer", "reflexerAnswer", 0], ["answer", "reflexerAnswer", "false"], ["store", "reflexerStore", 1], ["store", "reflexerStore", null], ["passThrough", "reflexerPassThrough", "true"]]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { [String(option)]: /** @type {any} */ (value) }), { message: new RegExp(`^${name} must be true or false: `) });
+    }
+    for (const value of [0, -1, 1.5, 1e21, "100", true, false]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { timeoutMs: /** @type {any} */ (value) }), { message: /^reflexerTimeoutMs must be a whole number of milliseconds from 1: / });
+    }
+    new reflexer.Reflexer(KEY, WIRE, { timeoutMs: 1 });
+  });
+
+  test("the old pass-through header value points to the skip, as Python's does", () => {
+    const message = "the Reflexer-Pass-Through header must be true or false: true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true";
+    assert.throws(() => reflexer.checked(new Headers({ "Reflexer-Pass-Through": "1" })), { message });
+  });
+
+  test("a call's option header is read as the skip is, and a wrong value throws", () => {
+    for (const header of ["Reflexer-Answer", "Reflexer-Store", "Reflexer-Pass-Through"]) {
+      for (const value of ["true", "FALSE", " True\t"]) assert.equal(reflexer.checked(new Headers({ [header]: value })), false);
+      for (const value of ["1", "yes", "true, false", "t rue"]) {
+        assert.throws(() => reflexer.checked(new Headers({ [header]: value })), { message: new RegExp(`^the ${header} header must be true or false: `) });
+      }
+    }
+    for (const value of ["1", " 2500 ", "100"]) reflexer.checked(new Headers({ "reflexer-timeout-ms": value }));
+    for (const value of ["0", "-1", "1.5", "1e3", "100, 200", "01"]) {
+      assert.throws(() => reflexer.checked(new Headers({ "reflexer-timeout-ms": value })), { message: /^the Reflexer-Timeout-Ms header must be a whole number of milliseconds from 1: / });
+    }
+    assert.equal(reflexer.checked(new Headers({ "reflexer-skip": "true", "reflexer-answer": "false" })), true);
+  });
+
+  test("a namespace that cannot go as a header throws", () => {
+    for (const namespace of ["", " team", "team\r\nx-made-up: 1", "équipe", 7]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { namespace: /** @type {any} */ (namespace) }), { message: /^a namespace may contain only/ });
+    }
+    for (const namespace of [undefined, null, "team-a", "Team A/2026"]) new reflexer.Reflexer(KEY, WIRE, { namespace: /** @type {any} */ (namespace) });
   });
 
   test("a typo in a wire throws when the client is made", () => {
@@ -129,6 +241,9 @@ describe("Read", () => {
       [503, told, ASKED],
       [529, told, ASKED],
       [502, { ...OURS, "reflexer-status-origin": "connection" }, ASKED],
+      [502, { ...OURS, "reflexer-status-origin": "relay" }, ASKED], // the same meaning under its new name
+      [200, { ...OURS, "reflexer-status-origin": "relay" }, ASKED],
+      [204, { "reflexer-request-id": "made-up", "reflexer-status-origin": "reflexer", "reflexer-cost": "0" }, ANSWER], // reflexer asked not to answer: its empty answer, never the provider's
       [401, told, GRACE],
       [400, told, GRACE], // gemini's key error
       [500, { ...OURS, "reflexer-status-origin": "provider" }, ANSWER], // a provider's status never trips it
@@ -296,6 +411,6 @@ describe("Replay", () => {
     assert.notEqual(way.route(CHAT, {}, true), null);
     way.breaker.openFor(LONG);
     assert.notEqual(way.route(CHAT, {}, true), null);
-    assert.equal(way.route(CHAT, { [reflexer.PASS_THROUGH]: "1" }, true), null);
+    assert.equal(way.route(CHAT, { [reflexer.SKIP]: "true" }, true), null);
   });
 });

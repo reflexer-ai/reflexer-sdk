@@ -9,11 +9,11 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { HEADERS_TIMEOUT, provider, textOf } from "./index.js";
-import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, checked, isReplay, skips, skipsByOption } from "./logic.js";
+import { BASE, OPTION_HEADERS, OURS, Reflexer, ReplayNotTaken, SKIP, checked, isReplay, skips, skipsByOption } from "./logic.js";
 
 export const WIRE = { reflexerPath: "/bedrock", calls: /\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/ };
 const STREAMED = /\/(invoke-with-response-stream|converse-stream)$/; // the wire's streamed calls
-const call = new AsyncLocalStorage(); // a call's own, set around it by our middleware: { skipped, seen }
+const call = new AsyncLocalStorage(); // a call's own, set around it by our middleware: { skipped, seen, again, given }
 
 /**
  * The Bedrock libraries this is tested on, as `SDKS` lists the provider SDKs: their majors, the oldest release tested,
@@ -111,13 +111,14 @@ export function fetch(key, options = {}) {
     const headers = tested(new Headers(init.headers));
     checked(headers); // a wrong value throws here, before anything is sent
     if (store?.skipped || !(keyed(headers) || (signed(headers) && (store?.again || options.signed)))) return straight(own, input, init);
-    if (init.signal?.aborted) return routed(input, init); // the client's own signal ended before reflexer's leg: as shipped
+    const toReflexer = store?.given ? { ...init, headers: { ...Object.fromEntries(headers), ...store.given } } : init; // the middleware's, unsigned
+    if (init.signal?.aborted) return routed(input, toReflexer); // the client's own signal ended before reflexer's leg: as shipped
     const seen = store?.seen ?? {};
     const began = performance.now();
     try {
       const again = signed(headers) ? store?.again : undefined; // a keyed call falls back here
       if (again) again.init = init;
-      return await call.run({ ...store, seen, again }, () => routed(input, init));
+      return await call.run({ ...store, seen, again }, () => routed(input, toReflexer));
     } catch (failure) {
       if (/** @type {any} */ (seen).cut?.name !== "TimeoutError" || STREAMED.test(new URL(String(input)).pathname)) throw failure;
       return straight(own, input, { ...init, signal: AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) });
@@ -126,19 +127,21 @@ export function fetch(key, options = {}) {
 }
 
 /**
- * AnthropicBedrock's own middleware. The skip header, taken off before the SDK signs; the call then goes straight. A
+ * AnthropicBedrock's own middleware. The skip header, taken off before the SDK signs; the call then goes straight. The
+ * call's own option headers, taken off too, kept for reflexer's leg alone (the `fetch` line adds them, unsigned). A
  * signed call's straight leg is not sent after reflexer's: `next` again, straight, which the SDK signs anew. The SDK
  * arms its timeout around each inner fetch and cuts with no reason, as a cancel does; the middleware, above that timer,
  * sees the client's own signal (`ctx.options.signal`): reflexer's leg cut while it is not aborted was cut by the timer,
  * so `next` again, straight, with the client's timeout afresh and its cancel kept.
  */
 export async function anthropicMiddleware(/** @type {any} */ request, /** @type {any} */ next, /** @type {any} */ ctx) {
-  const headers = new Headers(request.headers), skip = skips(headers.get(SKIP)); // "false", as with no header; any other value but "true" throws, before anything is sent
-  if (headers.has(SKIP)) headers.delete(SKIP), request = { ...request, headers };
+  const headers = new Headers(request.headers), skip = checked(headers); // "false", as with no header; a wrong value of any throws, before anything is sent
+  const given = Object.fromEntries(OPTION_HEADERS.filter((name) => headers.has(name)).map((name) => [name, /** @type {string} */ (headers.get(name))]));
+  if (headers.has(SKIP) || Object.keys(given).length) [SKIP, ...OPTION_HEADERS].forEach((name) => headers.delete(name)), request = { ...request, headers };
   if (skip) return skipped(() => next(request));
   const seen = { cut: undefined }, again = { straight: false, sent: false, init: {} };
   try {
-    return await call.run({ seen, again }, () => next(request));
+    return await call.run({ seen, again, given }, () => next(request));
   } catch (failure) {
     const options = ctx?.options ?? {};
     if (seen.cut && !options.signal?.aborted && options.timeout) {
@@ -223,7 +226,8 @@ async function signedAnew(signer, request) {
 /**
  * The one line on a client made elsewhere: its own handler, from its resolved config, wrapped by ours, and its own
  * signer, at its own clock (AWS JS corrects it by each answer's `Date`), for a signed call's straight leg. The skip as a
- * header the client's middleware sets: taken off just before signing, put back after, unsigned, for the handler.
+ * header the client's middleware sets: taken off just before signing, put back after, unsigned, for the handler; so are
+ * the call's own option headers, which reach reflexer's leg alone.
  * @template C @param {C} client @param {string} key @param {any} [options] @returns {C}
  */
 export function wrap(client, key, options = {}) {
@@ -233,17 +237,19 @@ export function wrap(client, key, options = {}) {
     return (await config.signer()).sign(request, { signingDate: (Date.now() + (config.systemClockOffset ?? 0)) / 1000 }); // seconds, as Smithy reads a number
   };
   config.requestHandler = requestHandler(key, { ...options, handler: config.requestHandler, signer });
-  const skippedCalls = new WeakMap(); // each skipped call's context, Smithy's own per call
+  const keptCalls = new WeakMap(); // each call's own headers of ours, by its context (Smithy's own per call): put back after signing
   const stack = /** @type {any} */ (client).middlewareStack;
   stack.addRelativeTo((/** @type {any} */ next, /** @type {any} */ context) => (/** @type {any} */ args) => {
     const headers = Object.entries(args.request?.headers ?? {});
     const given = headers.filter(([name]) => name.toLowerCase() === SKIP).map(([, value]) => skips(value)); // a wrong value throws, before anything is sent
-    if (given.length) args.request.headers = Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== SKIP));
-    if (given.includes(true)) skippedCalls.set(context, true);
+    const kept = headers.filter(([name]) => OPTION_HEADERS.includes(name.toLowerCase())); // checked by the handler, before anything is sent
+    if (given.length || kept.length) args.request.headers = Object.fromEntries(headers.filter(([name]) => name.toLowerCase() !== SKIP && !kept.some(([each]) => each === name)));
+    if (given.includes(true)) kept.push([SKIP, "true"]);
+    if (kept.length) keptCalls.set(context, kept);
     return next(args);
   }, { relation: "before", toMiddleware: "httpSigningMiddleware", name: "reflexerSkipBeforeSigning" });
   stack.add((/** @type {any} */ next, /** @type {any} */ context) => (/** @type {any} */ args) => {
-    if (skippedCalls.has(context)) args.request.headers = { ...args.request.headers, [SKIP]: "true" };
+    if (keptCalls.has(context)) args.request.headers = { ...args.request.headers, ...Object.fromEntries(keptCalls.get(context)) };
     return next(args);
   }, { step: "deserialize", priority: "low", name: "reflexerSkipAfterSigning" });
   return client;
@@ -272,14 +278,14 @@ function plain(headers) {
 }
 
 /**
- * The client's own request, for Bedrock: the skip's header, put back unsigned, taken off; on a keyed call, every header
- * of ours; a signed call's own headers stay, as signed. A replay never goes.
+ * The client's own request, for Bedrock: the skip's and the option headers, put back unsigned, taken off; on a keyed
+ * call, every header of ours; a signed call's other headers stay, as signed. A replay never goes.
  * @param {any} request
  */
 function smithyStaysStraight(request) {
   const body = textOf(request.body);
   if (body !== undefined && isReplay(body)) throw new ReplayNotTaken("reflexer did not accept this replay, and the SDK never sends a replay to the provider");
-  const ours = keyed(new Headers(plain(request.headers))) ? OURS : SKIP;
-  request.headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => !name.toLowerCase().startsWith(ours)));
+  const ours = keyed(new Headers(plain(request.headers))) ? [OURS] : [SKIP, ...OPTION_HEADERS];
+  request.headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => !ours.some((each) => name.toLowerCase().startsWith(each))));
   return request;
 }

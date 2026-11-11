@@ -301,7 +301,7 @@ The SDK sends the namespace only to reflexer, never to your provider. To use ano
 
 Four options tell reflexer what to do with your calls. You give them next to your key. If you do not give an option, the SDK sends nothing for it, and reflexer uses its default.
 
-- `reflexer_answer` (TypeScript: `reflexerAnswer`), default `True`. With `False`, reflexer does not answer: it asks no model and no provider, and it returns an empty reply (HTTP 204). Details on what your code receives will follow.
+- `reflexer_answer` (TypeScript: `reflexerAnswer`), default `True`. With `False`, reflexer does not answer: it asks no model and no provider, and it returns an empty reply (HTTP 204). Your provider SDK receives this empty reply. What it returns depends on the library: for example, OpenAI's Python `create()` returns an empty string, and some libraries raise their own error.
 - `reflexer_store` (`reflexerStore`), default `True`. With `False`, reflexer keeps no copy of the call.
 - `reflexer_pass_through` (`reflexerPassThrough`), default `False`. With `True`, reflexer never answers itself: it forwards the call to your provider (for a replay, it returns the replay's answer).
 - `reflexer_timeout_ms` (`reflexerTimeoutMs`), default none. A whole number of milliseconds, from 1. reflexer waits at most this long for its own answer, then it forwards the call to your provider. This option can only make reflexer's own limit shorter: for a value above that limit, reflexer returns an error (HTTP 400).
@@ -335,7 +335,7 @@ Hello! How can I help you today?
 
 The SDK checks each option when you create the client. `reflexer_answer`, `reflexer_store` and `reflexer_pass_through` must be `True` or `False` (a number or a string is refused). `reflexer_timeout_ms` must be a whole number from 1. For any other value, the SDK raises `ValueError` (TypeScript: `Error`). The SDK sends the options only to reflexer, never to your provider.
 
-To change an option for one call, set its header on that call: `Reflexer-Answer`, `Reflexer-Store` or `Reflexer-Pass-Through` with `true` or `false`, or `Reflexer-Timeout-Ms` with a number of milliseconds. The header has priority over the client's option. Set it in the same way as for [skipping reflexer for one call](#skip-reflexer-for-one-call). On Bedrock's signed calls, give the option on the client instead ([Known limits](limits.md#amazon-bedrock)). The SDK checks the header's value before it sends anything; for a wrong value, it raises `ValueError` (TypeScript: `Error`). The functions that take the key take `answer`, `store`, `pass_through` and `timeout_ms` (TypeScript options: `answer`, `store`, `passThrough`, `timeoutMs`), as they take `base`.
+To change an option for one call, set its header on that call: `Reflexer-Answer`, `Reflexer-Store` or `Reflexer-Pass-Through` with `true` or `false`, or `Reflexer-Timeout-Ms` with a number of milliseconds. The header has priority over the client's option. Set it in the same way as for [skipping reflexer for one call](#skip-reflexer-for-one-call). On signed calls through Anthropic's Mantle client or the AI SDK, give the option on the client instead ([Known limits](limits.md#amazon-bedrock)). The SDK checks the header's value before it sends anything; for a wrong value, it raises `ValueError` (TypeScript: `Error`). The functions that take the key take `answer`, `store`, `pass_through` and `timeout_ms` (TypeScript options: `answer`, `store`, `passThrough`, `timeoutMs`), as they take `base`.
 
 ## How long reflexer may take
 

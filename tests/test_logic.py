@@ -109,12 +109,18 @@ class Route(unittest.TestCase):
 
     def test_a_wrong_option_raises_as_the_client_is_made(self):
         for option, value in (("answer", 0), ("answer", "false"), ("store", 1), ("store", None), ("pass_through", "true")):
-            with self.assertRaisesRegex(ValueError, f"^the {option.replace('_', '-')} option must be true or false: ", msg=(option, value)):
+            with self.assertRaisesRegex(ValueError, f"^reflexer_{option} must be true or false: ", msg=(option, value)):
                 reflexer.Reflexer(KEY, WIRE, **{option: value})
-        for value in (0, -1, 1.5, "100", True, False):
-            with self.assertRaisesRegex(ValueError, "^the timeout option must be a whole number of milliseconds from 1: ", msg=value):
+        for value in (0, -1, 1.5, 1e21, "100", True, False):
+            with self.assertRaisesRegex(ValueError, "^reflexer_timeout_ms must be a whole number of milliseconds from 1: ", msg=value):
                 reflexer.Reflexer(KEY, WIRE, timeout_ms=value)
         reflexer.Reflexer(KEY, WIRE, timeout_ms=1)
+
+    def test_the_old_pass_through_header_value_points_to_the_skip(self):
+        with self.assertRaises(ValueError) as raised:
+            reflexer.checked({"reflexer-pass-through": "1"})
+        self.assertEqual(str(raised.exception), "the Reflexer-Pass-Through header must be true or false: true asks reflexer to forward the "
+                         "call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true")  # as TypeScript's
 
     def test_a_calls_option_header_is_read_as_the_skip_is_and_a_wrong_value_raises(self):
         for header in ("reflexer-answer", "reflexer-store", "reflexer-pass-through"):

@@ -18,9 +18,9 @@ export const PASSED = [NAMESPACE, ...OPTION_HEADERS]; // the headers of ours a c
  * A client's boolean option: its name in a message, its header, its default (nothing sent), and why it must be true or false.
  * @typedef {[string, string, boolean, string]} Switch
  */
-/** @type {Switch} */ const ANSWER_SWITCH = ["answer", ANSWER_HEADER, true, "false asks reflexer not to answer: reflexer replies with an empty response"];
-/** @type {Switch} */ const STORE_SWITCH = ["store", STORE_HEADER, true, "false asks reflexer to keep no copy of the call"];
-/** @type {Switch} */ const PASS_THROUGH_SWITCH = ["pass-through", PASS_THROUGH_HEADER, false, "true asks reflexer to forward the call to the provider and never answer itself"];
+/** @type {Switch} */ const ANSWER_SWITCH = ["reflexerAnswer", ANSWER_HEADER, true, "false asks reflexer not to answer: reflexer replies with an empty response"];
+/** @type {Switch} */ const STORE_SWITCH = ["reflexerStore", STORE_HEADER, true, "false asks reflexer to keep no copy of the call"];
+/** @type {Switch} */ const PASS_THROUGH_SWITCH = ["reflexerPassThrough", PASS_THROUGH_HEADER, false, "true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true"]; // the old `Reflexer-Pass-Through: 1` skipped reflexer
 const TIMEOUT_WHY = "the longest reflexer waits for its own answer before it forwards the call to the provider";
 
 /**
@@ -119,12 +119,12 @@ function given(namespace, answer, store, passThrough, timeoutMs) {
   /** @type {[Switch, unknown][]} */
   const switches = [[ANSWER_SWITCH, answer], [STORE_SWITCH, store], [PASS_THROUGH_SWITCH, passThrough]];
   for (const [[name, header, byDefault, why], value] of switches) {
-    if (typeof value !== "boolean") throw new Error(`the ${name} option must be true or false: ${why}`);
+    if (typeof value !== "boolean") throw new Error(`${name} must be true or false: ${why}`);
     if (value !== byDefault) headers.push([header, String(value)]);
   }
   if (timeoutMs != null) {
-    if (!(Number.isInteger(timeoutMs) && /** @type {number} */ (timeoutMs) >= 1)) {
-      throw new Error(`the timeout option must be a whole number of milliseconds from 1: ${TIMEOUT_WHY}`);
+    if (!(Number.isSafeInteger(timeoutMs) && /** @type {number} */ (timeoutMs) >= 1)) {
+      throw new Error(`reflexerTimeoutMs must be a whole number of milliseconds from 1: ${TIMEOUT_WHY}`);
     }
     headers.push([TIMEOUT_HEADER, String(timeoutMs)]);
   }

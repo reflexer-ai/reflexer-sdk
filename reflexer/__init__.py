@@ -21,7 +21,7 @@ PASSED = (NAMESPACE, *OPTION_HEADERS)  # the headers of ours a client may give r
 SWITCHES = {  # a client's boolean option: its header, its default (nothing sent), and why it must be true or false
     "answer":       (ANSWER_HEADER,       True,  "false asks reflexer not to answer: reflexer replies with an empty response"),
     "store":        (STORE_HEADER,        True,  "false asks reflexer to keep no copy of the call"),
-    "pass_through": (PASS_THROUGH_HEADER, False, "true asks reflexer to forward the call to the provider and never answer itself"),
+    "pass_through": (PASS_THROUGH_HEADER, False, "true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true"),  # the old `Reflexer-Pass-Through: 1` skipped reflexer
 }
 TIMEOUT_WHY = "the longest reflexer waits for its own answer before it forwards the call to the provider"
 
@@ -105,13 +105,13 @@ def given(namespace, **options):
     headers = {NAMESPACE: namespace} if namespace else {}
     for option, (header, default, why) in SWITCHES.items():
         if not isinstance(options[option], bool):  # 0 and 1 too: only True or False
-            raise ValueError(f"the {option.replace('_', '-')} option must be true or false: {why}")
+            raise ValueError(f"reflexer_{option} must be true or false: {why}")
         if options[option] != default:
             headers[header] = str(options[option]).lower()
     timeout = options["timeout_ms"]
     if timeout is not None:
         if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
-            raise ValueError(f"the timeout option must be a whole number of milliseconds from 1: {TIMEOUT_WHY}")
+            raise ValueError(f"reflexer_timeout_ms must be a whole number of milliseconds from 1: {TIMEOUT_WHY}")
         headers[TIMEOUT_HEADER] = str(timeout)
     return headers
 

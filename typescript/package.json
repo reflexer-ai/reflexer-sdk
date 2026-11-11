@@ -104,8 +104,8 @@
           "bedrock.js",
           "bedrock-ai.js"
         ],
-        "lines": 228,
-        "ifs": 44,
+        "lines": 232,
+        "ifs": 46,
         "privateNames": 0
       }
     }

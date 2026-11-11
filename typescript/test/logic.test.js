@@ -182,13 +182,18 @@ describe("Construction", () => {
   });
 
   test("a wrong option throws as the client is made", () => {
-    for (const [option, name, value] of [["answer", "answer", 0], ["answer", "answer", "false"], ["store", "store", 1], ["store", "store", null], ["passThrough", "pass-through", "true"]]) {
-      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { [String(option)]: /** @type {any} */ (value) }), { message: new RegExp(`^the ${name} option must be true or false: `) });
+    for (const [option, name, value] of [["answer", "reflexerAnswer", 0], ["answer", "reflexerAnswer", "false"], ["store", "reflexerStore", 1], ["store", "reflexerStore", null], ["passThrough", "reflexerPassThrough", "true"]]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { [String(option)]: /** @type {any} */ (value) }), { message: new RegExp(`^${name} must be true or false: `) });
     }
-    for (const value of [0, -1, 1.5, "100", true, false]) {
-      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { timeoutMs: /** @type {any} */ (value) }), { message: /^the timeout option must be a whole number of milliseconds from 1: / });
+    for (const value of [0, -1, 1.5, 1e21, "100", true, false]) {
+      assert.throws(() => new reflexer.Reflexer(KEY, WIRE, { timeoutMs: /** @type {any} */ (value) }), { message: /^reflexerTimeoutMs must be a whole number of milliseconds from 1: / });
     }
     new reflexer.Reflexer(KEY, WIRE, { timeoutMs: 1 });
+  });
+
+  test("the old pass-through header value points to the skip, as Python's does", () => {
+    const message = "the Reflexer-Pass-Through header must be true or false: true asks reflexer to forward the call to the provider and never answer itself; to skip reflexer, use Reflexer-Skip: true";
+    assert.throws(() => reflexer.checked(new Headers({ "Reflexer-Pass-Through": "1" })), { message });
   });
 
   test("a call's option header is read as the skip is, and a wrong value throws", () => {

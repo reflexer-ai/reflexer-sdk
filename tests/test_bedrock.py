@@ -852,6 +852,20 @@ class Promises(Case):
                     self.assertEqual([str(each) for each in raised][-1:], [reflexer.NOT_A_SKIP], repr(outcome.error))
                     self.assertEqual(made.reflexer.seen + made.provider.seen, [])
 
+    def test_an_option_header_repeated_on_botocore_raises_as_its_values_joined_do_and_none_leaves(self):
+        """An option's header botocore holds twice, as the skip's above: every value read, so two raise, as httpx's do."""
+        for lib in ("boto3", "aiobotocore"):
+            for header, values in (("Reflexer-Answer", ("true", "false")), ("Reflexer-Timeout-Ms", ("100", "200"))):
+                with self.subTest(lib=lib, header=header):
+                    made, calls = world(lib)
+                    client = calls.client()
+                    client.meta.events.register("before-sign.bedrock-runtime.*", lambda request, header=header, values=values, **_: [
+                        request.headers.__setitem__(header, value) for value in values])
+                    outcome = calls.call(client)
+                    raised = [each for each in reflexer.bedrock.chain(outcome.error) if isinstance(each, ValueError)]
+                    self.assertRegex(" ".join(str(each) for each in raised), f"the {header} header must be", repr(outcome.error))
+                    self.assertEqual(made.reflexer.seen + made.provider.seen, [])
+
     def test_the_skip_argument_true_skips_false_does_not_another_value_raises_and_none_leaves(self):
         """`ReflexerSkip` on a keyed call through the botocore family: True goes straight, False goes to reflexer, anything
         but a boolean ("false" included) raises before anything is sent."""

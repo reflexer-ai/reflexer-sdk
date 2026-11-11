@@ -125,7 +125,7 @@ describe("Headers", () => {
           [[true, Object.values(sent)], [false, [null, null, null, null]]], `${client.constructor.name}${copied ? ", a copy" : ""}`);
       }
     }
-    assert.throws(() => new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, reflexerAnswer: /** @type {any} */ ("false") }), { message: /^the answer option must be true or false/ });
+    assert.throws(() => new sdk.openai.OpenAI({ apiKey: "made-up", reflexerKey: key, reflexerAnswer: /** @type {any} */ ("false") }), { message: /^reflexerAnswer must be true or false/ });
   });
 
   test("the skip header with another value throws, and nothing is sent", async () => {

@@ -14,7 +14,7 @@ What the lines share: `keyed`, `signed`, `straight`, the botocore family's per-c
 transport (`Keyed`, `setup_http_client`).
 """
 import copy, inspect, re
-from . import BASE, OURS, OPTION_HEADERS, SKIP, Reflexer, ReplayNotTaken, checked, is_replay, skips
+from . import BASE, OURS, OPTION_HEADERS, SKIP, Reflexer, ReplayNotTaken, checked, is_replay, skips, text
 from .transport import STRAIGHT, Through, body_of
 
 BEDROCK = {
@@ -73,9 +73,9 @@ def skip_taken(event_name, kwargs, before):
     if not before and event_name.startswith("before-sign."):
         request = kwargs["request"]
         request.context[SIGNER] = (kwargs.get("request_signer"), kwargs.get("operation_name"))
-        headers = lower(request.headers)
-        checked({name: value for name, value in headers.items() if name != SKIP})  # a wrong value raises, before anything is sent
-        request.context[GIVEN_HERE] = {name: value for name, value in headers.items() if name in OPTION_HEADERS}  # for reflexer's leg only
+        ours = {name: ", ".join(text(each) for each in values) for name in OPTION_HEADERS if (values := request.headers.get_all(name))}  # every value, as the skip's
+        checked(ours)  # a wrong value raises, two values too, before anything is sent
+        request.context[GIVEN_HERE] = ours  # for reflexer's leg only
         for name in request.context[GIVEN_HERE]:
             del request.headers[name]
         given = request.headers.get_all(SKIP)  # every value, as a header held twice: read together, as httpx joins them

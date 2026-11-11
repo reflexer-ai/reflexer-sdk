@@ -270,7 +270,7 @@ class Copies(unittest.TestCase):
                                  [("api.reflexer.ai", sent),
                                   ("api.openai.com" if module is reflexer.openai else "api.anthropic.com", dict.fromkeys(sent))],
                                  module.__name__)
-            with self.assertRaisesRegex(ValueError, "^the answer option must be true or false"):
+            with self.assertRaisesRegex(ValueError, "^reflexer_answer must be true or false"):
                 cls(api_key="made-up", reflexer_key=KEY, reflexer_answer="false")
 
     def test_the_lines_namespace_reaches_reflexer_alone_and_a_copy_keeps_it(self):

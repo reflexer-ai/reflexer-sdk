@@ -301,7 +301,7 @@ The SDK sends the namespace only to reflexer, never to your provider. To use ano
 
 Four options tell reflexer what to do with your calls. You give them next to your key. If you do not give an option, the SDK sends nothing for it, and reflexer uses its default.
 
-- `reflexer_answer` (TypeScript: `reflexerAnswer`), default `True`. With `False`, reflexer does not answer: it asks no model and no provider, and it returns an empty reply (HTTP 204). Your provider SDK receives this empty reply. What it returns depends on the library: for example, OpenAI's Python `create()` returns an empty string, and some libraries raise their own error.
+- `reflexer_answer` (TypeScript: `reflexerAnswer`), default `True`. With `False`, reflexer does not answer: it asks no model and no provider, and it returns an empty answer in your provider's format, so your code gets a reply with no text instead of an error. Reflexer's team tested this with the OpenAI and Anthropic SDKs, whole and streamed.
 - `reflexer_store` (`reflexerStore`), default `True`. With `False`, reflexer keeps no copy of the call.
 - `reflexer_pass_through` (`reflexerPassThrough`), default `False`. With `True`, reflexer never answers itself: it forwards the call to your provider (for a replay, it returns the replay's answer).
 - `reflexer_timeout_ms` (`reflexerTimeoutMs`), default none. A whole number of milliseconds, from 1. reflexer waits at most this long for its own answer, then it forwards the call to your provider. This option can only make reflexer's own limit shorter: for a value above that limit, reflexer returns an error (HTTP 400).

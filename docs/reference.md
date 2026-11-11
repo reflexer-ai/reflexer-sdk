@@ -12,7 +12,7 @@ Use this page to look up a name. Every public name of the SDK takes the same few
 
 **`reflexer_namespace`** · **`reflexerNamespace`** · **`namespace`**: `str`, optional. A name for a group of your calls. reflexer keeps each group separate from your other calls. For example, use one namespace per product or per environment. If you give no namespace, your calls are in your default namespace. Allowed characters: ASCII letters, digits and signs, and single spaces between them. For any other value, the SDK raises `ValueError` (TypeScript: `Error`) when you create the client. Functions name this argument `namespace`, as they do for `base`. [Advanced](advanced.md#keep-calls-apart-a-namespace).
 
-**`reflexer_answer`** · **`reflexerAnswer`** · **`answer`**: `bool`, optional, default `True`. With `False`, reflexer does not answer, and it returns an empty reply (HTTP 204). [Advanced](advanced.md#tell-reflexer-what-to-do-with-your-calls).
+**`reflexer_answer`** · **`reflexerAnswer`** · **`answer`**: `bool`, optional, default `True`. With `False`, reflexer does not answer: it returns an empty answer in your provider's format. [Advanced](advanced.md#tell-reflexer-what-to-do-with-your-calls).
 
 **`reflexer_store`** · **`reflexerStore`** · **`store`**: `bool`, optional, default `True`. With `False`, reflexer keeps no copy of the call.
 

@@ -11,7 +11,7 @@ from reflexer.transport import setup_http_client
 
 CHAT = "https://api.openai.com/v1/chat/completions"
 WIRE = {"reflexer_path": "/openai", "provider": "https://api.openai.com", "calls": r"/v1/chat/completions$"}
-SERVED = {"reflexer-request-id": "made-up", "reflexer-answered-by": "reflexer", "reflexer-cost": "12000", "reflexer-status-origin": "reflexer"}
+SERVED = {"reflexer-request-id": "made-up", "reflexer-answered-by": "reflexer", "reflexer-cost-nano-usd": "12000", "reflexer-status-origin": "reflexer"}
 BODY = {"id": "made-up", "usage": {"in": 1}}
 SECRET = "rfx1_aaaaakq_" + "a" * 52
 KEY = f"{SECRET}_{reflexer.checksum(SECRET)}"  # made up, of the form

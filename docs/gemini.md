@@ -85,7 +85,7 @@ console.log(reply.sdkHttpResponse.headers["reflexer-answered-by"]);
 reflexer
 ```
 
-A reply from reflexer has a `model_version` (TypeScript `modelVersion`) that ends in `-reflexer`. Gemini's reply has no field for a price, so reflexer puts the price, in nano USD, in the `Reflexer-Cost` header.
+A reply from reflexer has a `model_version` (TypeScript `modelVersion`) that ends in `-reflexer`. Gemini's reply has no field for a price, so reflexer puts the price in the `Reflexer-Cost-Nano-Usd` header.
 
 ## Behavior
 

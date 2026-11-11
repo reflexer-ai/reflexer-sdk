@@ -7,7 +7,7 @@ const headers = (/** @type {Record<string, string>} */ given) => new Headers(giv
 
 describe("Judge", () => {
   test("a sound served answer passes", () => {
-    assert.deepEqual(check.judge(headers({ "reflexer-answered-by": "reflexer", "reflexer-cost": "12000", "reflexer-request-id": "x" }),
+    assert.deepEqual(check.judge(headers({ "reflexer-answered-by": "reflexer", "reflexer-cost-nano-usd": "12000", "reflexer-request-id": "x" }),
       "frontier-x-reflexer", 1.2e-05), []);
   });
 
@@ -16,7 +16,7 @@ describe("Judge", () => {
   });
 
   test("a pass through priced by reflexer fails", () => {
-    assert.ok(check.judge(headers({ "reflexer-answered-by": "provider", "reflexer-cost": "5" }), "frontier-x", 0.5).length);
+    assert.ok(check.judge(headers({ "reflexer-answered-by": "provider", "reflexer-cost-nano-usd": "5" }), "frontier-x", 0.5).length);
   });
 
   test("a straight call passes", () => {

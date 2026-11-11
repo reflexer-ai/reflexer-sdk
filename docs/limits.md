@@ -27,7 +27,7 @@ This page is for cases where reflexer does less than the library pages say. Each
 | LangChain's TCP keepalive (`http_socket_options`) | Reflexer's classes do not apply it | Set it on your own HTTP client, and pass that client as `http_client` |
 | LangChain's `dumpd`, then `loads` | The result is LangChain's own class, without reflexer | Make the model again with reflexer's class |
 | Pydantic AI on Python 3.10 | Its last release for 3.10 fails Anthropic's calls, also without reflexer | Use Python 3.11 or later |
-| Gemini's automatic function calling (google-genai; `@google/genai` given a `CallableTool`) | One SDK call can make several HTTP calls. The reply shows only the price of the last HTTP call (`Reflexer-Cost`). Your bill counts all of them | Run the tool loop yourself: then each call's reply shows its own price |
+| Gemini's automatic function calling (google-genai; `@google/genai` given a `CallableTool`) | One SDK call can make several HTTP calls. The reply shows only the price of the last HTTP call (`Reflexer-Cost-Nano-Usd`). Your bill counts all of them | Run the tool loop yourself: then each call's reply shows its own price |
 | The AI SDK on Gemini | It reports the model that you asked for, not the model in the reply | Read `result.response.headers["reflexer-answered-by"]` |
 | LiteLLM | Only its Bedrock calls go through reflexer | Use the provider's own client for the other calls |
 

@@ -75,12 +75,12 @@ export function judge(headers, model, cost) {
   if (answered === "reflexer") {
     return /** @type {[string, boolean][]} */ ([
       [`a served answer's model is ${model}, not ending in -reflexer`, !String(model).endsWith("-reflexer")],
-      ["a served answer with no Reflexer-Cost", headers.get("reflexer-cost") === null],
+      ["a served answer with no Reflexer-Cost-Nano-Usd", headers.get("reflexer-cost-nano-usd") === null],
       ["a served answer with no request id", headers.get("reflexer-request-id") === null],
     ]).filter(([, broken]) => broken).map(([problem]) => problem);
   }
   if (answered === "provider") {
-    return cost != null && ![null, "0"].includes(headers.get("reflexer-cost")) ? ["a pass through with a price written by reflexer"] : [];
+    return cost != null && ![null, "0"].includes(headers.get("reflexer-cost-nano-usd")) ? ["a pass through with a price written by reflexer"] : [];
   }
   return []; // no header of reflexer's: the call went straight, which the SDK allows
 }
@@ -120,7 +120,7 @@ export async function main(sdks) {
     for (const [way, streamed] of /** @type {[string, boolean][]} */ ([["replay", false], ["replay, streamed", true]])) {
       const [headers, text] = await replayed(key, base, streamed);
       console.log(`${way}: answered by ${headers.get("reflexer-answered-by") ?? "its field"}, text ${JSON.stringify(text)}, `
-        + `Reflexer-Cost ${headers.get("reflexer-cost")}, id ${headers.get("reflexer-request-id")}`);
+        + `Reflexer-Cost-Nano-Usd ${headers.get("reflexer-cost-nano-usd")}, id ${headers.get("reflexer-request-id")}`);
       if (replayBroken(headers, text)) {
         console.error("  broken: a replay answered by someone else than reflexer or its field");
         failed = true;
@@ -130,7 +130,7 @@ export async function main(sdks) {
   for (const sdk of sdks.filter((sdk) => sdk !== "replay")) {
     const [headers, model, cost] = /** @type {[Headers, unknown, unknown]} */ (await call(sdk, key, base));
     console.log(`${sdk}: answered by ${headers.get("reflexer-answered-by") ?? "the provider, straight"}, model ${model}, `
-      + `Reflexer-Cost ${headers.get("reflexer-cost")}, usage.cost ${cost}, id ${headers.get("reflexer-request-id")}`);
+      + `Reflexer-Cost-Nano-Usd ${headers.get("reflexer-cost-nano-usd")}, usage.cost ${cost}, id ${headers.get("reflexer-request-id")}`);
     for (const problem of judge(headers, model, cost)) {
       console.error(`  broken: ${problem}`);
       failed = true;

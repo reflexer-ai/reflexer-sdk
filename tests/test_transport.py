@@ -453,6 +453,21 @@ class GeminiClosing(unittest.TestCase):
             time.sleep(0.05)
         self.assertTrue(len(made) == 2 and all(through.inner.is_closed for through in made), "a loop's client was left open")
 
+    def test_async_a_stopped_event_loops_client_is_dropped_as_an_ended_ones(self):
+        """A loop stopped but not closed (`run_until_complete` done) runs nothing sent to it: its client is dropped, as stock
+        drops its sessions of a loop that does not run, with no close left there never awaited."""
+        import gc, warnings
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        client, url = httpx.AsyncClient(transport=both), f"http://127.0.0.1:{self.server.server_port}/"
+        stopped = asyncio.new_event_loop()
+        self.assertEqual(stopped.run_until_complete(client.post(url, content=b"{}")).status_code, 200)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            asyncio.run(client.aclose())
+            stopped.close()
+            gc.collect()
+        self.assertEqual([str(each.message) for each in caught if issubclass(each.category, RuntimeWarning)], [])
+
     def test_async_shared_arguments_closed_in_a_later_event_loop_as_stock(self):
         both = reflexer.gemini.client_args(KEY)["transport"]
         client = httpx.AsyncClient(transport=both)
@@ -621,6 +636,38 @@ class SharedArguments(unittest.TestCase):
             return bool(shared) and all(made.inner.is_closed for made in shared)
         self.assertTrue(asyncio.run(run()), "a dropped body kept a retired client open")
 
+
+    def test_async_a_retired_client_of_a_running_loop_closes_in_that_loop(self):
+        """A body dropped in one running loop leaves its retired client due: another loop's next call sends its close there,
+        as `aclose` does, and does not close it in its own."""
+        import gc, threading
+        self.go_on.set()
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        one, other = httpx.AsyncClient(transport=both), httpx.AsyncClient(transport=both)
+        running, closed_in = asyncio.new_event_loop(), []
+        threading.Thread(target=running.run_forever, daemon=True).start()
+        self.addCleanup(running.call_soon_threadsafe, running.stop)
+
+        async def drop_and_close():
+            answer = await one.send(one.build_request("GET", self.url), stream=True)
+            for through in both.made[True].values():
+                real = through.inner.aclose
+
+                async def recorded(real=real):
+                    closed_in.append(asyncio.get_running_loop())
+                    await real()
+                through.inner.aclose = recorded
+            await other.aclose()
+            del answer
+            gc.collect()
+        asyncio.run_coroutine_threadsafe(drop_and_close(), running).result(10)
+        self.assertEqual(len(both.overdue), 1)
+
+        async def next_call():
+            return (await one.get(self.url)).content
+        self.assertEqual(asyncio.run(next_call()), b"made-up!")
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0.1), running).result(10)  # what was sent there has run
+        self.assertEqual(closed_in, [running], "a running loop's client was closed elsewhere, or not at all")
 
     def test_async_a_retired_client_of_a_finished_loop_does_not_fail_the_next_call(self):
         """Its close comes due in a loop that ended: what fails closing it is no call's of the next loop."""

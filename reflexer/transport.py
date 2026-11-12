@@ -75,6 +75,18 @@ def body_of(request):
         return None
 
 
+def forget_sent(step, info):
+    """The `trace` extension on reflexer's request: once it has left, httpcore's copy of its headers is emptied, so
+    the answer's stream, which keeps that request until it is closed, holds none of ours when handed to the client."""
+    if step.endswith("receive_response_headers.started"):  # httpcore's step after the request, its body included, left
+        info["request"].headers.clear()
+
+
+async def aforget_sent(step, info):
+    """`forget_sent`, for an async client, whose `trace` extension httpcore awaits."""
+    forget_sent(step, info)
+
+
 def to_reflexer(reflexer, request):
     """The request as it goes to reflexer, or None. The client's own stays whole, for an auth round to send again."""
     body = body_of(request)
@@ -128,6 +140,7 @@ class Through:
             try:
                 ours = to_reflexer(self.reflexer, request)
                 if ours is not None:
+                    ours.extensions = {"trace": forget_sent} | ours.extensions  # what it kept of the client's (`KEPT`), no trace
                     answer = self.send(ours)
                     if not self.reflexer.goes_straight(answer.status_code, answer.headers):
                         return without_its_cookie(answer)
@@ -145,6 +158,7 @@ class Through:
             try:
                 ours = to_reflexer(self.reflexer, request)
                 if ours is not None:
+                    ours.extensions = {"trace": aforget_sent} | ours.extensions
                     answer = await self.send(ours)
                     if not self.reflexer.goes_straight(answer.status_code, answer.headers):
                         return without_its_cookie(answer)

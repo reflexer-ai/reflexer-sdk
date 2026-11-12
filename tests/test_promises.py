@@ -111,10 +111,12 @@ def a_plain_http_address_for_reflexer_was_taken():
 
 
 def extensions_sent_to_reflexer(is_async=False):
-    """What of the client's request extensions reach the request for reflexer, where a callback would see the key."""
+    """What of the client's request extensions reach the request for reflexer, where a callback would see the key: all
+    but the SDK's own `trace`, which forgets its headers once sent."""
     client, seen = through(busy, is_async)
     post(client, CHAT, content=b"{}", extensions={"trace": lambda name, info: None})
-    return sorted(set().union(*(request.extensions for request in seen if request.url.host == REFLEXER)))
+    own = (reflexer.transport.forget_sent, reflexer.transport.aforget_sent)
+    return sorted({name for request in seen if request.url.host == REFLEXER for name, value in request.extensions.items() if value not in own})
 
 
 def each_sdk(answer):

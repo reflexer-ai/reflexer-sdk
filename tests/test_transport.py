@@ -1,7 +1,7 @@
 """The transport, offline on the HTTP library's own mock transport; all values made up.
 Run: python -m unittest tests.test_transport
 """
-import asyncio, os, sys, unittest
+import asyncio, json, os, sys, unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -336,6 +336,63 @@ class GeminiWithAiohttp(unittest.TestCase):
         made = lambda handler: genai.Client(api_key="made-up", http_options={
             "httpx_client": reflexer.gemini.http_client(KEY, own=httpx.Client(transport=httpx.MockTransport(handler)))})
         self.assertEqual(self.calls_reach(made), ["aiohttp, past reflexer"])
+
+
+class GeminiContinuation(unittest.TestCase):
+    """google-genai's automatic continuation, on by default: a reply ending in `CONTINUATION` with a token makes the
+    library call again. Pins what the client reads of each call's headers (docs/limits.md); each hop answered
+    with its own price, model and text."""
+
+    def client(self, seen):
+        def handler(request):
+            hop = len(seen)
+            seen.append(request.url.host)
+            last = hop == 1
+            candidate = {"content": {"role": "model", "parts": [{"text": f"part{hop} "}]},
+                         "finishReason": "STOP" if last else "CONTINUATION"} | ({} if last else {"continuationToken": "bWFkZS11cA=="})
+            body = {"candidates": [candidate], "modelVersion": f"m{hop}-reflexer",
+                    "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": hop + 1, "totalTokenCount": 11 + hop}}
+            headers = {"reflexer-cost-nano-usd": str(1000 * (hop + 1)), "reflexer-request-id": f"made-up-{hop}",
+                       "reflexer-answered-by": "reflexer", "reflexer-status-origin": "reflexer"}
+            if "alt=sse" in str(request.url):
+                return httpx.Response(200, headers=headers | {"content-type": "text/event-stream"},
+                                      content=f"data: {json.dumps(body)}\n\n".encode())
+            return httpx.Response(200, headers=headers, json=body)
+
+        return reflexer.gemini.Client(api_key="made-up", reflexer_key=KEY, http_options={
+            "httpx_client": httpx.Client(transport=httpx.MockTransport(handler)),
+            "httpx_async_client": httpx.AsyncClient(transport=httpx.MockTransport(handler))})
+
+    @staticmethod
+    def read(reply):
+        headers = reply.sdk_http_response.headers
+        return (reply.text, headers["reflexer-cost-nano-usd"], headers["reflexer-request-id"], reply.model_version,
+                reply.usage_metadata.total_token_count)
+
+    def test_one_call_not_streamed_shows_only_the_last_http_calls_price_and_model_and_the_usage_summed(self):
+        for name, call in (("sync", lambda c: c.models.generate_content(model="m", contents="x")),
+                           ("async", lambda c: asyncio.run(c.aio.models.generate_content(model="m", contents="x")))):
+            seen = []
+            self.assertEqual(self.read(call(self.client(seen))), ("part0 part1 ", "2000", "made-up-1", "m1-reflexer", 23), name)
+            self.assertEqual(seen, ["api.reflexer.ai"] * 2, name)
+
+    def test_streamed_each_chunk_shows_its_own_http_calls_price_and_the_usage_so_far(self):
+        async def chunks(client):
+            return [chunk async for chunk in await client.aio.models.generate_content_stream(model="m", contents="x")]
+
+        for name, call in (("sync", lambda c: list(c.models.generate_content_stream(model="m", contents="x"))),
+                           ("async", lambda c: asyncio.run(chunks(c)))):
+            seen = []
+            self.assertEqual([self.read(chunk) for chunk in call(self.client(seen))],
+                             [("part0 ", "1000", "made-up-0", "m0-reflexer", 11), ("part1 ", "2000", "made-up-1", "m1-reflexer", 23)], name)
+            self.assertEqual(seen, ["api.reflexer.ai"] * 2, name)
+
+    def test_turned_off_one_call_is_one_http_call_with_its_own_price(self):
+        seen = []
+        reply = self.client(seen).models.generate_content(model="m", contents="x", config={"automatic_continuation": False})
+        self.assertEqual(self.read(reply), ("part0 ", "1000", "made-up-0", "m0-reflexer", 11))
+        self.assertEqual(reply.candidates[0].continuation_token, b"made-up")
+        self.assertEqual(seen, ["api.reflexer.ai"])
 
 
 class GeminisArguments(unittest.TestCase):

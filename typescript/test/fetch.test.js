@@ -431,3 +431,48 @@ describe("Majors", () => {
     assert.deepEqual(hosts(seen), [check.REFLEXER]);
   });
 });
+
+describe("Gemini's automatic continuation", () => {
+  // On by default: a reply ending in `CONTINUATION` with a token makes @google/genai call again. Pins what the client
+  // reads of each call's headers (docs/limits.md); each hop answered with its own price, model and text.
+  /** @param {boolean} stream */
+  function client(stream) {
+    let hop = 0;
+    const own = check.mock(() => {
+      const n = hop++;
+      const last = n === 1;
+      const body = { candidates: [{ content: { role: "model", parts: [{ text: `part${n} ` }] }, finishReason: last ? "STOP" : "CONTINUATION",
+        ...(last ? {} : { continuationToken: "bWFkZS11cA==" }) }], modelVersion: `m${n}-reflexer`,
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: n + 1, totalTokenCount: 11 + n } };
+      const headers = { "reflexer-cost-nano-usd": String(1000 * (n + 1)), "reflexer-request-id": `made-up-${n}`,
+        "reflexer-answered-by": "reflexer", "reflexer-status-origin": "reflexer" };
+      return stream ? new Response(`data: ${JSON.stringify(body)}\n\n`, { headers: { ...headers, "content-type": "text/event-stream" } })
+        : new Response(JSON.stringify(body), { headers: { ...headers, "content-type": "application/json" } });
+    });
+    return { client: new sdk.gemini.GoogleGenAI({ apiKey: "made-up", reflexerKey: key, httpOptions: { fetch: own.fetch } }), seen: own.seen };
+  }
+  /** @param {any} reply */
+  const read = (reply) => [reply.text, reply.sdkHttpResponse.headers["reflexer-cost-nano-usd"],
+    reply.sdkHttpResponse.headers["reflexer-request-id"], reply.modelVersion, reply.usageMetadata.totalTokenCount];
+
+  test("one call not streamed shows only the last HTTP call's price and model, and the usage summed", async () => {
+    const { client: gemini, seen } = client(false);
+    assert.deepEqual(read(await gemini.models.generateContent({ model: "m", contents: "x" })), ["part0 part1 ", "2000", "made-up-1", "m1-reflexer", 23]);
+    assert.deepEqual(hosts(seen), [check.REFLEXER, check.REFLEXER]);
+  });
+
+  test("streamed, each chunk shows its own HTTP call's price, and the usage so far", async () => {
+    const { client: gemini, seen } = client(true);
+    const chunks = [];
+    for await (const chunk of await gemini.models.generateContentStream({ model: "m", contents: "x" })) chunks.push(read(chunk));
+    assert.deepEqual(chunks, [["part0 ", "1000", "made-up-0", "m0-reflexer", 11], ["part1 ", "2000", "made-up-1", "m1-reflexer", 23]]);
+    assert.deepEqual(hosts(seen), [check.REFLEXER, check.REFLEXER]);
+  });
+
+  test("turned off, one call is one HTTP call with its own price", async () => {
+    const { client: gemini, seen } = client(false);
+    const reply = await gemini.models.generateContent({ model: "m", contents: "x", config: { automaticContinuation: false } });
+    assert.deepEqual(read(reply), ["part0 ", "1000", "made-up-0", "m0-reflexer", 11]);
+    assert.deepEqual(hosts(seen), [check.REFLEXER]);
+  });
+});

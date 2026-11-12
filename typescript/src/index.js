@@ -24,6 +24,7 @@ export const WIRES = {
     calls: /\/v1(alpha|beta)?\/models\/[^/]+:(stream)?[gG]enerateContent$/ },
 };
 
+const STREAMED = /(:streamGenerateContent|\/invoke-with-response-stream|\/converse-stream)$/; // a streamed call's last path segment: Gemini's, Bedrock's; the others say `"stream": true` in their body
 const KEPT = ["method", "signal", "dispatcher"]; // of a client's request options, what reflexer's request keeps
 export const HEADERS_TIMEOUT = 300_000; // ms reflexer's leg waits for its answer to start: undici's own default, provisional
 const WAYS = new WeakMap(); // each fetch made here, and its way, for an SDK's copy of a client
@@ -44,6 +45,8 @@ function through(wire, way) {
   async function routed(input, init = {}) {
     tested(new Headers(init.headers));
     checked(new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))); // a wrong value throws here, before anything is sent
+    const streamed = STREAMED.test(String(input).split(/[?#]/)[0]) || /"stream":\s*true/.test(textOf(init.body) ?? ""); // after a timeout, its caller has ended it already
+    const began = init.signal?.aborted || streamed ? null : performance.now(); // the client's own signal, still live as reflexer's leg starts
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {
@@ -54,7 +57,8 @@ function through(wire, way) {
     } catch (failure) {
       reflexer.failed(failure);
     }
-    return send(...staysStraight(input, init));
+    const signal = afresh(init.signal, began);
+    return send(...staysStraight(input, signal === init.signal ? init : { ...init, signal })); // no `signal` key added: it would drop a `Request`'s own
   }
 
   WAYS.set(routed, way);
@@ -74,6 +78,16 @@ async function bounded(send, [url, init], ms) {
   } finally {
     clearTimeout(clock);
   }
+}
+
+/**
+ * The client's own signal, or, when it ended by a timeout (`TimeoutError`: `AbortSignal.timeout`'s, the AI SDK's) after
+ * `began`, during reflexer's leg, a timeout as long as it ran since: the call reaches the provider, and can take up to twice
+ * the client's timeout. Any other abort is a cancel, kept. A cancel of the client's can no longer reach the new timeout's call.
+ * @param {AbortSignal | null | undefined} signal @param {number | null} began
+ */
+export function afresh(signal, began) {
+  return began !== null && signal?.reason?.name === "TimeoutError" ? AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) : signal;
 }
 
 /**

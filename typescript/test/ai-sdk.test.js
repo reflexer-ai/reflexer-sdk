@@ -10,6 +10,7 @@ import { generateText, streamText } from "ai";
 import * as check from "./checks.js";
 
 const { key, index } = await check.load();
+const TIMEOUT = 150; // ms, the call's own
 const USAGE = { input_tokens: 3, output_tokens: 1, total_tokens: 4, cost: 1.2e-05 };
 const ANSWERS = {
   "/v1/chat/completions": { id: "rfx-made-up", object: "chat.completion", created: 1, model: "frontier-x-reflexer",
@@ -67,6 +68,23 @@ describe("The AI SDK", { skip: tooOld }, () => {
       assert.equal((await generateText({ model: model(own.fetch), prompt: "Hi", maxRetries: 0 })).text, "made up");
       assert.equal(hosts(own.seen).length, 2, "it never fell back");
       assert.deepEqual(hosts(own.seen.filter(({ headers }) => [...headers.values()].some((value) => value.includes(key)))), [check.REFLEXER]);
+    });
+
+    test(`${name}: the call's timeout ends during reflexer's leg, the call goes to the provider; a stream's does not`, async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const own = check.mock(answering());
+      const stalled = async (/** @type {any} */ input, /** @type {any} */ init) => {
+        if (new URL(input).host !== check.REFLEXER) return own.fetch(input, init);
+        own.seen.push({ url: new URL(input), headers: new Headers(init.headers), init });
+        return check.stalled(init.signal);
+      };
+      assert.equal((await generateText({ model: model(stalled), prompt: "Hi", maxRetries: 0, timeout: TIMEOUT })).text, "made up");
+      assert.equal(hosts(own.seen).length, 2, "it never reached the provider");
+      own.seen.length = 0;
+      const streamed = streamText({ model: model(stalled), prompt: "Hi", maxRetries: 0, timeout: TIMEOUT, onError: () => {} });
+      await assert.rejects(streamed.text);
+      await new Promise((done) => setTimeout(done, TIMEOUT)); // a call to the provider would be sent by now
+      assert.deepEqual(hosts(own.seen), [check.REFLEXER]);
     });
   }
 

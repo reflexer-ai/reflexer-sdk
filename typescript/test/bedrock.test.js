@@ -251,7 +251,7 @@ function headerOnEachCall(client, headers) {
 /** @param {any} client @param {string} op @param {any} extra */
 async function awsCall(client, op, extra) {
   const id = headerOnEachCall(client, extra.headers);
-  const options = "argument" in extra ? { reflexerSkip: extra.argument } : undefined;
+  const options = "argument" in extra ? { reflexerSkip: extra.argument } : extra.abortSignal && { abortSignal: extra.abortSignal };
   try {
     if (op === "converse") return (await client.send(new ConverseCommand({ modelId: MODEL, messages: HI }), options)).output.message.content[0].text;
     if (op === "converse-stream") {
@@ -576,6 +576,33 @@ describe("Timeouts", () => {
     assert.deepEqual(hosts(seen), [check.REFLEXER]);
   });
 
+  test("aws-js: a timeout of the client's (TimeoutError) during reflexer's leg sends the call to Bedrock, streamed too", async () => {
+    const aws = /** @type {any} */ (LINES.find(([name]) => name === "aws-js"))[2];
+    for (const op of ["converse", "converse-stream"]) {
+      const { result, seen } = await called(aws, true, op, "stall", { abortSignal: AbortSignal.timeout(TIMEOUT) });
+      assert.equal(result, FROM.bedrock, op);
+      assert.deepEqual(hosts(seen), [check.REFLEXER, BEDROCK], op);
+    }
+  });
+
+  test("aws-js: an abortSignal that timed out before the call sends nothing to Bedrock", async () => {
+    const aws = /** @type {any} */ (LINES.find(([name]) => name === "aws-js"))[2];
+    const abortSignal = AbortSignal.timeout(0);
+    await new Promise((done) => setTimeout(done, 5));
+    const { result, seen } = await called(aws, true, "converse", "stall", { abortSignal });
+    assert.ok(result instanceof Error, String(result));
+    assert.ok(!hosts(seen).includes(BEDROCK), JSON.stringify(hosts(seen)));
+  });
+
+  test("aws-js: the client's cancel during reflexer's leg cancels both calls", async () => {
+    const aws = /** @type {any} */ (LINES.find(([name]) => name === "aws-js"))[2];
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), TIMEOUT);
+    const { result, seen } = await called(aws, true, "converse", "stall", { abortSignal: cancel.signal });
+    assert.ok(result instanceof Error, String(result));
+    assert.deepEqual(hosts(seen), [check.REFLEXER]);
+  });
+
   test("ai-sdk: reflexer stalled past the call's timeout, a call not streamed goes straight", { skip: tooOld }, async () => {
     const make = /** @type {any} */ (LINES.find(([name]) => name === "ai-sdk"))[2];
     const { result, seen } = await called(make, true, "converse", "stall", { signal: AbortSignal.timeout(TIMEOUT) });
@@ -846,8 +873,8 @@ async function windowCuts(faulty) {
 
 describe("Broken", () => {
   test("the key on the client's own request turns it red", async () => {
-    await check.planted("bedrock.js", ": smithyStaysStraight(request), given);\n    },",
-      ": { ...smithyStaysStraight(request), headers: { ...request.headers, \"reflexer-key\": key } }, given);\n    },",
+    await check.planted("bedrock.js", ": smithyStaysStraight(request), straight);\n    },",
+      ": { ...smithyStaysStraight(request), headers: { ...request.headers, \"reflexer-key\": key } }, straight);\n    },",
       async (faulty) => {
         const given = await hostsGiven((one) => one.key, true, faulty);
         assert.ok(given["aws-js"].includes(BEDROCK), JSON.stringify(given));

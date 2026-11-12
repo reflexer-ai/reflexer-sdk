@@ -44,7 +44,7 @@ describe("Promises", () => {
 
 describe("Broken", () => {
   test("the key on the client's own request turns it red", async () => {
-    await check.planted("index.js", "return send(...staysStraight(input, init));",
+    await check.planted("index.js", "return send(...staysStraight(input, signal === init.signal ? init : { ...init, signal }));",
       "return send(input, { ...init, headers: { ...init.headers, \"reflexer-key\": way.key } });", async (faulty) => {
         assert.notDeepEqual(await check.hostsGivenTheKey(faulty), [check.REFLEXER]);
         const reached = Object.values(await check.throughEachSdk(faulty)).flat();
@@ -65,7 +65,7 @@ describe("Broken", () => {
   });
 
   test("no fallback turns it red", async () => {
-    await check.planted("index.js", "return send(...staysStraight(input, init));", 'throw new Error("made up");', async (faulty) => {
+    await check.planted("index.js", "return send(...staysStraight(input, signal === init.signal ? init : { ...init, signal }));", 'throw new Error("made up");', async (faulty) => {
       assert.ok(!(await check.aCallReflexerCouldNotTakeReachedTheProvider(faulty)));
     });
   });

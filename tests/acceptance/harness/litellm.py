@@ -6,7 +6,7 @@ import asyncio, time
 from . import AZURE_ENDPOINT, AZURE_VERSION, MESSAGES, PROVIDER_KEY
 from .bedrock import Outcome
 
-CALLS = {  # each provider's call, with its own key; Gemini's model one LiteLLM calls at `v1beta` (Gemini 3's go to `v1alpha`)
+CALLS = {  # each provider's call, with its own key; Gemini's model one LiteLLM calls at `v1beta`
     "litellm-openai": dict(model="openai/frontier-x", api_key=PROVIDER_KEY["openai"]),
     "litellm-azure": dict(model="azure/frontier-d", api_key=PROVIDER_KEY["azure"], api_base=AZURE_ENDPOINT, api_version=AZURE_VERSION),
     "litellm-anthropic": dict(model="anthropic/frontier-y", api_key=PROVIDER_KEY["anthropic"], max_tokens=8),

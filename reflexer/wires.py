@@ -22,5 +22,5 @@ MESSAGES = {  # anthropic's
 GENERATE = {  # google-genai's
     "reflexer_path": "/gemini",
     "provider":      "https://generativelanguage.googleapis.com",
-    "calls":         r"/v1(beta)?/models/[^/]+:(stream)?[gG]enerateContent$",
+    "calls":         r"/v1(alpha|beta)?/models/[^/]+:(stream)?[gG]enerateContent$",
 }

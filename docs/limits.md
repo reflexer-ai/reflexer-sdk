@@ -37,7 +37,6 @@ This page is for cases where reflexer does less than the library pages say. Each
 | LiteLLM: async calls to Anthropic, Gemini or Bedrock other than `acompletion` (for example `litellm.anthropic.messages.acreate`) | LiteLLM sends them directly to your provider, as before | Use `acompletion` |
 | LiteLLM: an OpenAI call given `shared_session=` | The SDK sends the call through reflexer by the line's HTTP client, not by your session | Set your session as `litellm.aclient_session` before the line |
 | LiteLLM: a call given its own `client=`, an Anthropic, Gemini or Bedrock call given `shared_session=`, and the async calls that LiteLLM sends by its Responses API (`openai/responses/...` models, and chat calls that LiteLLM routes there) | LiteLLM sends them directly to your provider, as before | Leave out `client=` and `shared_session=` |
-| LiteLLM on Gemini 3 models | LiteLLM sends these calls to `v1alpha`, which reflexer does not take. LiteLLM sends them directly to Gemini | Nothing yet |
 
 ## Amazon Bedrock
 

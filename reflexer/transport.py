@@ -140,7 +140,7 @@ class Through:
             try:
                 ours = to_reflexer(self.reflexer, request)
                 if ours is not None:
-                    ours.extensions = {"trace": forget_sent} | ours.extensions  # what it kept of the client's (`KEPT`), no trace
+                    ours.extensions = ours.extensions | {"trace": forget_sent}  # what it kept of the client's (`KEPT`), and our trace
                     answer = self.send(ours)
                     if not self.reflexer.goes_straight(answer.status_code, answer.headers):
                         return without_its_cookie(answer)
@@ -158,7 +158,7 @@ class Through:
             try:
                 ours = to_reflexer(self.reflexer, request)
                 if ours is not None:
-                    ours.extensions = {"trace": aforget_sent} | ours.extensions
+                    ours.extensions = ours.extensions | {"trace": aforget_sent}
                     answer = await self.send(ours)
                     if not self.reflexer.goes_straight(answer.status_code, answer.headers):
                         return without_its_cookie(answer)

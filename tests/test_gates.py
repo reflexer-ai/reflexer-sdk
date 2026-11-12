@@ -20,7 +20,7 @@ STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib
                "time", "urllib.parse", "weakref"}
 ALLOWED = {  # what each file may import: the standard library, and the provider SDK the client already has, in its own file
     "__init__.py": STDLIB_CORE,
-    "transport.py": STDLIB_CORE,
+    "transport.py": STDLIB_CORE | {"asyncio.get_running_loop"},  # the event loop a call runs in: an async client for each, as Gemini's stock keeps
     "wires.py": set(),  # data only
     "openai.py": {"openai"},
     "anthropic.py": {"anthropic"},

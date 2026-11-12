@@ -6,6 +6,7 @@ its proxies, TLS and connections hold. No private name is read, no class of the 
 answer's bytes are touched.
 """
 import copy, functools, threading, weakref
+from asyncio import get_running_loop
 from . import BASE, OURS, Reflexer, ReplayNotTaken, checked, is_replay, log
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
@@ -250,12 +251,15 @@ class Both:
 
     def through(self, request, is_async=False):
         library = self.library_of(request)
+        key = (library, get_running_loop()) if is_async else library  # async: one for each event loop, as stock's sessions
         with self.lock:  # one closing hands its clients out under this lock: a call never gets one handed out
             made = self.made[is_async]
-            if library not in made:
-                made[library] = self.makers[is_async](library)
-            made[library].due(+1)
-            return made[library]
+            for ended in [each for each in made if is_async and each[1].is_closed()]:
+                del made[ended]  # none can use it again, nor await it closed: dropped, as stock drops its own of such a loop
+            if key not in made:
+                made[key] = self.makers[is_async](library)
+            made[key].due(+1)
+            return made[key]
 
     def handle_request(self, request):
         through = self.through(request)
@@ -289,17 +293,25 @@ class Both:
 
     def out(self, is_async):
         with self.lock:
-            out, self.made[is_async] = list(self.made[is_async].values()), {}
+            out, self.made[is_async] = self.made[is_async], {}
         return out
 
     def close(self):
-        for through in self.out(False):
+        for through in self.out(False).values():
             through.close()
 
     async def aclose(self):
+        """Each event loop's client closed in its own loop, as stock closes its sessions; one of a loop that has ended is left."""
         await self.close_overdue()
-        for through in self.out(True):
-            await closed_unless_its_loop_ended(through)
+        here = get_running_loop()
+        for (_, loop), through in self.out(True).items():
+            if loop is here:
+                await closed_unless_its_loop_ended(through)
+            elif not loop.is_closed():
+                try:
+                    loop.call_soon_threadsafe(loop.create_task, through.aclose())
+                except RuntimeError:  # its loop closed meanwhile
+                    pass
 
     def __repr__(self):  # what holds it may build a cache's key from its text
         return "reflexer.Both"

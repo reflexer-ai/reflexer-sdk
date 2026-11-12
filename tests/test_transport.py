@@ -412,6 +412,47 @@ class GeminiClosing(unittest.TestCase):
         self.assertEqual(asyncio.run(client.aio.models.generate_content(model="m", contents="x")).text, "made up")
         asyncio.run(client.aio.aclose())  # raises nothing
 
+    def test_async_calls_in_one_event_loop_then_another_as_stock(self):
+        """Two `asyncio.run`s on one client: stock keeps an HTTP session for each event loop, so the second loop's call
+        never meets a connection of the first's. Reflexer's client, `client_args` given to stock's, and LangChain's."""
+        from google import genai
+        from reflexer.langchain_gemini import ChatGoogleGenerativeAI
+        local = f"http://127.0.0.1:{self.server.server_port}"
+        gemini = reflexer.gemini.Client(api_key="made-up", reflexer_key=KEY, reflexer_base=local, http_options={"base_url": local})
+        shared = reflexer.gemini.client_args(KEY, base=local)
+        stock = genai.Client(api_key="made-up", http_options={"base_url": local, "client_args": shared, "async_client_args": shared})
+        chat = ChatGoogleGenerativeAI(model="m", api_key="made-up", retries=1, reflexer_key=KEY, reflexer_base=local, base_url=local)
+        for name, call in (("gemini", lambda: gemini.aio.models.generate_content(model="m", contents="x")),
+                           ("client_args", lambda: stock.aio.models.generate_content(model="m", contents="x")),
+                           ("langchain", lambda: chat.ainvoke("x"))):
+            with self.subTest(name):
+                for _ in range(2):
+                    self.assertIn("made up", str(asyncio.run(call())))
+
+    def test_async_each_event_loops_client_closes_in_its_own_loop_as_stock(self):
+        """As stock closes its sessions: an ended loop's is dropped, this loop's closed here, a running loop's in that loop."""
+        import threading, time
+        both = reflexer.gemini.client_args(KEY)["transport"]
+        client, url = httpx.AsyncClient(transport=both), f"http://127.0.0.1:{self.server.server_port}/"
+        asyncio.run(client.post(url, content=b"{}"))
+        other = asyncio.new_event_loop()
+        threading.Thread(target=other.run_forever, daemon=True).start()
+        self.addCleanup(other.call_soon_threadsafe, other.stop)
+        self.assertEqual(asyncio.run_coroutine_threadsafe(client.post(url, content=b"{}"), other).result(10).status_code, 200)
+        self.assertEqual(len(both.made[True]), 1, "an ended loop's client was kept")
+        made = []
+
+        async def close_here():
+            await client.post(url, content=b"{}")
+            made.extend(both.made[True].values())  # the running loop's and this one's
+            await client.aclose()
+        asyncio.run(close_here())
+        for _ in range(100):
+            if all(through.inner.is_closed for through in made):
+                break
+            time.sleep(0.05)
+        self.assertTrue(len(made) == 2 and all(through.inner.is_closed for through in made), "a loop's client was left open")
+
     def test_async_shared_arguments_closed_in_a_later_event_loop_as_stock(self):
         both = reflexer.gemini.client_args(KEY)["transport"]
         client = httpx.AsyncClient(transport=both)

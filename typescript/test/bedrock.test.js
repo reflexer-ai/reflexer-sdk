@@ -585,6 +585,15 @@ describe("Timeouts", () => {
     }
   });
 
+  test("aws-js: an abortSignal that timed out before the call sends nothing to Bedrock", async () => {
+    const aws = /** @type {any} */ (LINES.find(([name]) => name === "aws-js"))[2];
+    const abortSignal = AbortSignal.timeout(0);
+    await new Promise((done) => setTimeout(done, 5));
+    const { result, seen } = await called(aws, true, "converse", "stall", { abortSignal });
+    assert.ok(result instanceof Error, String(result));
+    assert.ok(!hosts(seen).includes(BEDROCK), JSON.stringify(hosts(seen)));
+  });
+
   test("aws-js: the client's cancel during reflexer's leg cancels both calls", async () => {
     const aws = /** @type {any} */ (LINES.find(([name]) => name === "aws-js"))[2];
     const cancel = new AbortController();

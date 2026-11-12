@@ -24,6 +24,7 @@ export const WIRES = {
     calls: /\/v1(alpha|beta)?\/models\/[^/]+:(stream)?[gG]enerateContent$/ },
 };
 
+const STREAMED = /(:streamGenerateContent|\/invoke-with-response-stream|\/converse-stream)$/; // a streamed call's last path segment: Gemini's, Bedrock's; the others say `"stream": true` in their body
 const KEPT = ["method", "signal", "dispatcher"]; // of a client's request options, what reflexer's request keeps
 export const HEADERS_TIMEOUT = 300_000; // ms reflexer's leg waits for its answer to start: undici's own default, provisional
 const WAYS = new WeakMap(); // each fetch made here, and its way, for an SDK's copy of a client
@@ -44,7 +45,7 @@ function through(wire, way) {
   async function routed(input, init = {}) {
     tested(new Headers(init.headers));
     checked(new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))); // a wrong value throws here, before anything is sent
-    const streamed = /stream/i.test(String(input)) || /"stream":\s*true/.test(textOf(init.body) ?? ""); // after a timeout, its caller has ended it already
+    const streamed = STREAMED.test(String(input).split(/[?#]/)[0]) || /"stream":\s*true/.test(textOf(init.body) ?? ""); // after a timeout, its caller has ended it already
     const began = init.signal?.aborted || streamed ? null : performance.now(); // the client's own signal, still live as reflexer's leg starts
     try {
       const ours = toReflexer(reflexer, input, init);
@@ -56,7 +57,8 @@ function through(wire, way) {
     } catch (failure) {
       reflexer.failed(failure);
     }
-    return send(...staysStraight(input, { ...init, signal: afresh(init.signal, began) }));
+    const signal = afresh(init.signal, began);
+    return send(...staysStraight(input, signal === init.signal ? init : { ...init, signal })); // no `signal` key added: it would drop a `Request`'s own
   }
 
   WAYS.set(routed, way);

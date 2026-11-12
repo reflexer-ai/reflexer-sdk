@@ -333,6 +333,67 @@ describe("Failures", () => {
   });
 });
 
+describe("The client's own timeout at reflexer", () => {
+  const TIMEOUT = 150; // ms, the client's own
+  /** A client's `fetch`: reflexer takes the call and never answers; the provider answers, or stalls too. */
+  function stalledAtReflexer(provider = "answers") {
+    const own = check.mock(check.providers); // its `seen`: each leg sent with its signal still live
+    const fetch = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+      if (new URL(input).host !== check.REFLEXER && provider === "answers") return own.fetch(input, init);
+      init.signal?.throwIfAborted();
+      own.seen.push({ url: new URL(input), headers: new Headers(init.headers), init });
+      return check.stalled(init.signal);
+    };
+    return { fetch: index.openai.fetch(key, { fetch }), seen: own.seen };
+  }
+
+  test("a timeout (TimeoutError) during reflexer's leg sends the call to the provider", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledAtReflexer();
+    const answer = await fetch(check.CHAT, { method: "POST", body: "{}", signal: AbortSignal.timeout(TIMEOUT) });
+    assert.equal((await answer.json()).from, "provider");
+    assert.deepEqual(hosts(seen), [check.REFLEXER, "api.openai.com"]);
+  });
+
+  test("the call to the provider then has a timeout as long again: up to twice the client's timeout in all", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledAtReflexer("stalls");
+    const began = performance.now();
+    const failure = await fetch(check.CHAT, { method: "POST", body: "{}", signal: AbortSignal.timeout(TIMEOUT) }).catch((error) => error);
+    const took = performance.now() - began;
+    assert.equal(failure.name, "TimeoutError");
+    assert.deepEqual(hosts(seen), [check.REFLEXER, "api.openai.com"]);
+    assert.ok(took >= 2 * TIMEOUT - 20 && took < 4 * TIMEOUT, `took ${took}ms`);
+  });
+
+  test("the client's cancel (any abort but a timeout) during reflexer's leg cancels both calls", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledAtReflexer();
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), TIMEOUT);
+    const failure = await fetch(check.CHAT, { method: "POST", body: "{}", signal: cancel.signal }).catch((error) => error);
+    assert.equal(failure.name, "AbortError");
+    assert.deepEqual(hosts(seen), [check.REFLEXER]);
+  });
+
+  test("a stream whose timeout ends during reflexer's leg is not sent to the provider: its caller has ended it", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledAtReflexer();
+    const failure = await fetch(check.CHAT, { method: "POST", body: '{"stream":true}', signal: AbortSignal.timeout(TIMEOUT) }).catch((error) => error);
+    assert.equal(failure.name, "TimeoutError");
+    assert.deepEqual(hosts(seen), [check.REFLEXER]);
+  });
+
+  test("a signal that timed out before the call goes as given", async () => {
+    const { fetch, seen } = stalledAtReflexer();
+    const signal = AbortSignal.timeout(0);
+    await new Promise((done) => setTimeout(done, 5));
+    const failure = await fetch(check.CHAT, { method: "POST", body: "{}", signal }).catch((error) => error);
+    assert.equal(failure.name, "TimeoutError");
+    assert.deepEqual(seen, []);
+  });
+});
+
 describe("Real sockets", () => {
 
   test("a redirect from reflexer is followed by neither fetch nor a dispatcher of the client's", async (t) => {

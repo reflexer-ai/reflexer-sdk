@@ -44,6 +44,8 @@ function through(wire, way) {
   async function routed(input, init = {}) {
     tested(new Headers(init.headers));
     checked(new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))); // a wrong value throws here, before anything is sent
+    const streamed = /stream/i.test(String(input)) || /"stream":\s*true/.test(textOf(init.body) ?? ""); // after a timeout, its caller has ended it already
+    const began = init.signal?.aborted || streamed ? null : performance.now(); // the client's own signal, still live as reflexer's leg starts
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {
@@ -54,7 +56,7 @@ function through(wire, way) {
     } catch (failure) {
       reflexer.failed(failure);
     }
-    return send(...staysStraight(input, init));
+    return send(...staysStraight(input, { ...init, signal: afresh(init.signal, began) }));
   }
 
   WAYS.set(routed, way);
@@ -74,6 +76,16 @@ async function bounded(send, [url, init], ms) {
   } finally {
     clearTimeout(clock);
   }
+}
+
+/**
+ * The client's own signal, or, when it ended by a timeout (`TimeoutError`: `AbortSignal.timeout`'s, the AI SDK's) after
+ * `began`, during reflexer's leg, a timeout as long as it ran since: the call reaches the provider, and can take up to twice
+ * the client's timeout. Any other abort is a cancel, kept. A cancel of the client's can no longer reach the new timeout's call.
+ * @param {AbortSignal | null | undefined} signal @param {number | null} began
+ */
+export function afresh(signal, began) {
+  return began !== null && signal?.reason?.name === "TimeoutError" ? AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) : signal;
 }
 
 /**

@@ -8,11 +8,10 @@
  * around the client's own.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { HEADERS_TIMEOUT, provider, textOf } from "./index.js";
+import { HEADERS_TIMEOUT, afresh, provider, textOf } from "./index.js";
 import { BASE, OPTION_HEADERS, OURS, Reflexer, ReplayNotTaken, SKIP, checked, isReplay, skips, skipsByOption } from "./logic.js";
 
 export const WIRE = { reflexerPath: "/bedrock", calls: /\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/ };
-const STREAMED = /\/(invoke-with-response-stream|converse-stream)$/; // the wire's streamed calls
 const call = new AsyncLocalStorage(); // a call's own, set around it by our middleware: { skipped, seen, again, given }
 
 /**
@@ -113,16 +112,9 @@ export function fetch(key, options = {}) {
     if (store?.skipped || !(keyed(headers) || (signed(headers) && (store?.again || options.signed)))) return straight(own, input, init);
     const toReflexer = store?.given ? { ...init, headers: { ...Object.fromEntries(headers), ...store.given } } : init; // the middleware's, unsigned
     if (init.signal?.aborted) return routed(input, toReflexer); // the client's own signal ended before reflexer's leg: as shipped
-    const seen = store?.seen ?? {};
-    const began = performance.now();
-    try {
-      const again = signed(headers) ? store?.again : undefined; // a keyed call falls back here
-      if (again) again.init = init;
-      return await call.run({ ...store, seen, again }, () => routed(input, toReflexer));
-    } catch (failure) {
-      if (/** @type {any} */ (seen).cut?.name !== "TimeoutError" || STREAMED.test(new URL(String(input)).pathname)) throw failure;
-      return straight(own, input, { ...init, signal: AbortSignal.timeout(Math.max(Math.ceil(performance.now() - began), 1)) });
-    }
+    const again = signed(headers) ? store?.again : undefined; // a keyed call falls back here
+    if (again) again.init = init;
+    return call.run({ ...store, again }, () => routed(input, toReflexer)); // after a timeout of the client's, straight with as long again (`afresh`)
   };
 }
 
@@ -169,10 +161,12 @@ export function requestHandler(key, { handler, signer, ...options }) {
       const headers = tested(new Headers(plain(request.headers)));
       checked(headers); // a wrong value throws here, before anything is sent
       skipsByOption(reflexerSkip, NOT_A_SKIP_OPTION); // as does a wrong option
+      const began = given.abortSignal?.aborted ? null : performance.now();
       if (!keyed(headers) && !(signer && signed(headers))) return handler.handle(smithyStaysStraight(request), given);
       const { response, sent } = reflexerSkip ? { response: null, sent: false } : await ask(request, given);
       if (response) return { response };
-      return handler.handle(sent && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request)) : smithyStaysStraight(request), given);
+      const straight = { ...given, abortSignal: afresh(given.abortSignal, began) }; // its caller waits, streamed too
+      return handler.handle(sent && signed(headers) ? await signedAnew(signer, smithyStaysStraight(request)) : smithyStaysStraight(request), straight);
     },
     /** @param {any} name @param {any} value */
     updateHttpClientConfig: (name, value) => handler.updateHttpClientConfig(name, value),

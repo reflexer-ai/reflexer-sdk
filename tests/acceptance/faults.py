@@ -429,6 +429,26 @@ def signed_over_what_its_handlers_set(real):
     return taken
 
 
+class Untimed(reflexer.litellm.Handler):
+    """LiteLLM's handler, as the line gives one to an async call, made without the call's timeout."""
+
+    def __init__(self, *args, timeout=None, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
+async def passed_on(self, kwargs, call_type):
+    """LiteLLM's callback, giving each call nothing: its async calls on LiteLLM's own handlers made as stock makes them."""
+    return kwargs
+
+
+def carrying_the_key(real):
+    """LiteLLM's callback, carrying the key to our handler in the call's own metadata, which every callback is handed."""
+    async def carried(self, kwargs, call_type):
+        key = self.transport.reflexers[0][0].key
+        return await real(self, kwargs | {"metadata": {"reflexer": key}}, call_type)
+    return carried
+
+
 real_botocore_route, real_read_served, real_aread_served = bedrock.botocore_route, reflexer.boto3.read_served, reflexer.aiobotocore.read_served
 
 
@@ -518,7 +538,7 @@ FAULTS = {
                                      on_bedrock("aagain_if_refused", lambda send: send())()),
     "bedrock_skip_not_taken": on_bedrock("skip_taken", lambda event_name, kwargs, before: None),
     "bedrock_no_replay_guard": lambda: (setattr(bedrock, "is_replay", lambda body: False), setattr(transport, "is_replay", lambda body: False)),
-    "bedrock_timeout_not_read": setter(reflexer.litellm, "asked", lambda timeout, logging_obj: timeout),
+    "bedrock_timeout_not_read": setter(reflexer.litellm, "Handler", Untimed),
     "bedrock_handlers_answer_ignored": on_bedrock("answered", lambda responses: False),
     "bedrock_copy_is_stock": lambda: [setattr(cls, name, getattr(cls.__mro__[2], "copy")) for cls in
                                       (reflexer.anthropic_bedrock.AnthropicBedrock, reflexer.anthropic_bedrock.AnthropicBedrockMantle)
@@ -527,6 +547,10 @@ FAULTS = {
     "bedrock_own_session": setter(reflexer.boto3, "through", a_session_of_its_own(reflexer.boto3.through, own_botocore_session)),
     "bedrock_first_loops_session": setter(reflexer.aiobotocore, "through", a_session_of_its_own(reflexer.aiobotocore.through, first_aiohttp_session)),
     "bedrock_route_logs_its_headers": setter(reflexer.Reflexer, "route", route_logging_its_headers),
+    # LiteLLM's line, on every provider
+    "litellm_stock": setter(lines, "litellm_line", lambda world: None),
+    "litellm_no_hook": setter(reflexer.litellm.Hook, "async_pre_call_deployment_hook", passed_on),
+    "litellm_key_in_a_calls_metadata": setter(reflexer.litellm.Hook, "async_pre_call_deployment_hook", carrying_the_key(reflexer.litellm.Hook.async_pre_call_deployment_hook)),
 }
 
 
@@ -595,6 +619,7 @@ FREEZES = {
     "stall_reflexer_stalled_provider_at_six_tenths":           (holding(), 2.0),
     "stall_slow_pass_through_at_seven_tenths":                 (answering("reflexer"), 0.6),  # its slow answer, made later
     "bedrock_the_clients_timeout_holds_on_reflexers_leg":      (holding(), 2.0),
+    "bedrock_litellm_async_the_clients_timeout_holds_on_reflexers_leg": (holding(), 2.0),
 }
 
 

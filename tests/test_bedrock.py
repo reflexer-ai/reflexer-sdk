@@ -48,11 +48,11 @@ def tearDownModule():
 
 def world(lib):
     """A world of stand-ins of its own, as each acceptance case's process has. LiteLLM keeps its HTTP clients across
-    calls, connected to the last world's stand-ins: dropped, as a process of its own would start with none. The last
+    calls, connected to the last world's stand-ins, and its line is the process's: both dropped, as a process of its own
+    would start with neither. The last
     world's stand-ins are closed, as a case's process ends with them: a process holding every world's sockets passes
     the descriptor numbers a stand-in's `select` takes."""
-    import litellm
-    litellm.in_memory_llm_clients_cache.flush_cache()
+    bedrock.without_litellms_line()
     for standin in SAVED.pop("standins", ()):
         standin._cut_connections()
         standin._close()
@@ -291,7 +291,7 @@ def litellm_leg(seconds=LITELLM_WINDOW, margin=0.5, is_async=False):
     with mock.patch.dict(reflexer.litellm.WINDOW, seconds=seconds, margin=margin):
         began = time.monotonic()
         if is_async:
-            given = calls.client(keyed=False, timeout=10 * seconds, line=False) | {"client": reflexer.litellm.async_client(made.key)}
+            given = calls.client(keyed=False, timeout=10 * seconds)
             try:
                 text = asyncio.run(litellm.acompletion(model=f"bedrock/converse/{bedrock.MODEL}", messages=[{"role": "user", "content": "Hi"}],
                                                        max_tokens=8, **given)).choices[0].message.content
@@ -533,10 +533,12 @@ def on_httpx(lib, key, keyed, is_async, http2):
     message, prefix = [{"role": "user", "content": bedrock.TEXT}], "Async" if is_async else ""
     if lib == "litellm":
         os.environ["LITELLM_HTTP2"] = str(http2)
-        handler = (reflexer.litellm.async_client if is_async else reflexer.litellm.client)(key)
+        reflexer.litellm.through(key)  # after the setting: LiteLLM's clients under the line are made by it
         given = dict(model=f"bedrock/converse/{bedrock.MODEL}", messages=message, max_tokens=8, aws_region_name=bedrock.REGION,
-                     api_key=bedrock.BEARER, num_retries=0, timeout=LONG, client=handler)
-        return closing(lambda: (litellm.acompletion if is_async else litellm.completion)(**given), handler.close, is_async)
+                     api_key=bedrock.BEARER, num_retries=0, timeout=LONG)
+        async def undone():
+            bedrock.without_litellms_line()
+        return closing(lambda: (litellm.acompletion if is_async else litellm.completion)(**given), undone if is_async else bedrock.without_litellms_line, is_async)
     if lib == "gemini":
         own = {f"httpx{'_async' if is_async else ''}_client": getattr(httpx, f"{prefix}Client")(http2=True)} if http2 else {}
         client = reflexer.gemini.Client(api_key="made-up", reflexer_key=key, http_options=own)
@@ -1061,18 +1063,6 @@ class Promises(Case):
             asyncio.run(made(aiobotocore.config.AioConfig(http_session_cls=Own)))
         with mock.patch.object(reflexer.aiobotocore, "get_referents", lambda held: []), self.assertRaises(TypeError):
             asyncio.run(made())
-
-    def test_litellm_a_timeout_moved_fails_the_call_never_drops_it(self):
-        """LiteLLM's converse route hands `post` no timeout: the line reads the call's own, and a release that moves it
-        fails the call loudly, never sends it with LiteLLM's default of minutes."""
-        given = types.SimpleNamespace(model_call_details={"litellm_params": {"timeout": 1.5}})
-        self.assertEqual(reflexer.litellm.asked(None, given).read, 1.5)
-        self.assertEqual(reflexer.litellm.asked(2.0, given), 2.0)
-        for moved in (types.SimpleNamespace(), types.SimpleNamespace(model_call_details={}),
-                      types.SimpleNamespace(model_call_details={"litellm_params": {}})):
-            with self.subTest(moved=moved), self.assertRaises((AttributeError, KeyError)):
-                reflexer.litellm.asked(None, moved)
-
 
 class Broken(Case):
     """Each check above, red with one fault planted in the SDK."""

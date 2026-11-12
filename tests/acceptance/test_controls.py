@@ -52,7 +52,7 @@ CONTROLS = {
                          ("new_provider_a_message_call_reaches_reflexer_with_its_fields", "acme"), ("gzip_a_served_answer_with_its_fields", "*")],
     "straight_dressed_as_served": [("fields_an_answer_that_went_straight_carries_none", "*")],
     "prices_a_pass_through": [("fields_a_pass_through_keeps_the_providers_cost", "*")],  # gemini's object takes no price: `stock` shows it
-    "flag_not_read": [("skip_goes_straight_and_its_flag_stays_here", "*"), ("new_provider_skip_goes_straight", "acme"),
+    "flag_not_read": [("skip_goes_straight_and_its_flag_stays_here", "*"), ("litellm_skip_goes_straight_and_its_flag_stays_here", "*"), ("new_provider_skip_goes_straight", "acme"),
                       ("bedrock_skip_as_a_header_goes_straight", "litellm"),
                       ("async_skip_goes_straight", "*"), ("stream_skip_goes_straight", "*")],
     "skip_sticks": [("skip_holds_for_one_call_only", "*")],
@@ -75,7 +75,7 @@ CONTROLS = {
                               ("redirect_on_bedrock_relayed_by_reflexer_goes_straight", "*")],
     "balancer_is_an_answer": [("no_harm_balancers_own_answer", "*"), ("redirect_with_none_of_our_headers_goes_straight", "*"),
                               ("no_harm_on_bedrock_balancers_own_answer", "*"), ("no_harm_on_bedrock_signed_balancers_own_answer", "*")],
-    "busy_is_an_answer": [("no_harm_reflexer_busy", "*"), ("no_harm_reflexer_500", "*"), ("no_harm_reflexer_429", "*"),
+    "busy_is_an_answer": [("no_harm_reflexer_busy", "*"), ("litellm_reflexer_busy_goes_straight", "*"), ("no_harm_reflexer_500", "*"), ("no_harm_reflexer_429", "*"),
                           ("no_harm_on_bedrock_reflexer_busy", "*"), ("no_harm_on_bedrock_a_key_bedrock_refuses_is_the_clients_error_sent_once", "*"), ("no_harm_on_bedrock_reflexer_500", "*"),
                           ("no_harm_on_bedrock_signed_reflexer_busy", "*"), ("no_harm_on_bedrock_signed_reflexer_500", "*"),
                           ("new_provider_busy_goes_straight", "acme"), ("routing_the_body_is_the_clients_on_both_legs", "*")],
@@ -142,7 +142,7 @@ CONTROLS = {
     "bedrock_skip_not_taken": [("bedrock_skip_as_an_argument_goes_straight", "*"), ("bedrock_skip_as_an_argument_on_a_signed_call_goes_straight", "*"),
                                ("bedrock_skip_on_a_signed_call_leaves_no_flag_and_the_signature_holds", "boto3")],
     "bedrock_share_ignored": [("sampling_on_bedrock_none_sends_all_straight", "*")],
-    "bedrock_no_fallback": [("no_harm_on_bedrock_reflexer_dead", "*"), ("no_harm_on_bedrock_connection_reset", "*"), ("no_harm_on_bedrock_answer_dropped", "*"),
+    "bedrock_no_fallback": [("no_harm_on_bedrock_reflexer_dead", "*"), ("litellm_reflexer_dead_goes_straight", "*"), ("no_harm_on_bedrock_connection_reset", "*"), ("no_harm_on_bedrock_answer_dropped", "*"),
                             ("no_harm_on_bedrock_answer_not_http", "*"), ("no_harm_on_bedrock_certificate_not_trusted", "*"),
                             ("no_harm_on_bedrock_signed_reflexer_dead", "*"), ("no_harm_on_bedrock_signed_connection_reset", "*"),
                             ("no_harm_on_bedrock_signed_answer_dropped", "*"), ("no_harm_on_bedrock_signed_answer_not_http", "*"),
@@ -153,18 +153,24 @@ CONTROLS = {
     "bedrock_cut_sent_again": [("no_harm_on_bedrock_an_answer_cut_is_an_error_never_sent_twice", "aiobotocore")],
     "bedrock_no_tls_retry": [("no_harm_on_bedrock_a_handshake_refused_once_is_tried_again", "*")],
     "bedrock_no_replay_guard": [("bedrock_a_replay_reflexer_does_not_take_never_reaches_bedrock", "*")],
-    "bedrock_timeout_not_read": [("bedrock_the_clients_timeout_holds_on_reflexers_leg", "litellm")],
+    "bedrock_timeout_not_read": [("bedrock_litellm_async_the_clients_timeout_holds_on_reflexers_leg", "litellm")],
     "bedrock_handlers_answer_ignored": [("bedrock_a_handler_of_the_clients_that_answers_is_the_answer", "*")],
     "bedrock_copy_is_stock": [("bedrock_the_sdks_own_copy_stays_on_reflexer", "*")],
     "bedrock_key_on_the_clients_request": [("no_harm_on_bedrock_reflexer_busy", "boto3"), ("no_harm_on_bedrock_reflexer_busy", "aiobotocore")],
     "bedrock_own_session": [("bedrock_a_closed_client_leaves_no_connection_to_reflexer", "boto3")],
     "bedrock_first_loops_session": [("bedrock_aiobotocore_a_client_entered_in_a_second_event_loop_is_served", "aiobotocore")],
     "bedrock_route_logs_its_headers": [("bedrock_the_key_stays_out_of_what_the_client_can_log", "*")],
+    # LiteLLM's line, on every provider
+    "litellm_stock": [("litellm_a_call_reaches_reflexer_with_both_keys", "*"), ("litellm_each_way_is_served_async_and_streamed", "*"),
+                      ("litellm_the_key_stays_out_of_what_the_client_can_log", "*")],
+    "litellm_no_hook": [("litellm_each_way_is_served_async_and_streamed", "litellm-anthropic"),
+                        ("litellm_each_way_is_served_async_and_streamed", "litellm-gemini")],
+    "litellm_key_in_a_calls_metadata": [("litellm_the_key_stays_out_of_what_the_client_can_log", "*")],
 }
 # A slow machine's moment of faults.py's CONDITIONS -> the cases it must leave green: a busy machine turns none red.
 SLOW_MACHINE = {
     "late_notice": ["timeout_the_clients_holds_on_reflexers_leg", "async_the_clients_timeout_holds_on_reflexers_leg",
-                    "bedrock_the_clients_timeout_holds_on_reflexers_leg"],
+                    "bedrock_the_clients_timeout_holds_on_reflexers_leg", "bedrock_litellm_async_the_clients_timeout_holds_on_reflexers_leg"],
     "a_stall_on_the_return": ["breaker_outage_trace_at_the_full_share", "breaker_outage_trace_at_the_one_percent_share"],
     "a_freeze": sorted(faults.FREEZES),  # each `steady` case, frozen where it breaks
 }

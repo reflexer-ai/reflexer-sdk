@@ -14,7 +14,7 @@ KEPT = ("timeout",)  # of a client's request extensions, what reflexer's request
 
 def setup_http_client(stock, wire):
     """What a provider file exports: a function making the HTTP client to give the SDK. `stock`, the SDK's own HTTP
-    client when the client has none; `wire`, the provider file's data: see `Reflexer`."""
+    client when the client has none; `wire`, its data (`wires.py`): see `Reflexer`."""
 
     def http_client(key, own=None, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
         own = own or stock()

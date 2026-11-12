@@ -137,6 +137,8 @@ class Docs(unittest.TestCase):
         finally:
             faulthandler.cancel_dump_traceback_later()
             logging.getLogger("reflexer").removeHandler(logged)
+            if "reflexer.litellm" in sys.modules:  # LiteLLM's line is the process's: no block's reaches the next, nor another test
+                bedrock.without_litellms_line()
         printed, reached, provided = out.getvalue(), world.reflexer.message_arrivals(), world.provider.message_arrivals()
         if outcome == "raises":
             self.assertIsNotNone(raised, "the block did not raise")

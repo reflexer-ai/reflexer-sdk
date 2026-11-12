@@ -138,7 +138,7 @@ Change `AsyncAnthropicBedrock`, `AnthropicBedrockMantle` and `AsyncAnthropicBedr
 
 ### LiteLLM
 
-LiteLLM takes reflexer's HTTP client as an argument of each call. Create the client once, and give it to every call.
+Run one line, once, before your first call. From then on, the SDK sends LiteLLM's Bedrock calls through reflexer, and its calls to the other providers that reflexer takes ([LiteLLM](litellm.md)).
 
 <!-- example: served python bedrock -->
 ```diff
@@ -146,9 +146,8 @@ LiteLLM takes reflexer's HTTP client as an argument of each call. Create the cli
   import litellm
 + import reflexer.litellm
 
-+ bedrock = reflexer.litellm.client(os.environ["REFLEXER_KEY"])
-- reply = litellm.completion(model="bedrock/converse/frontier-x", messages=[{"role": "user", "content": "Hi"}])
-+ reply = litellm.completion(model="bedrock/converse/frontier-x", messages=[{"role": "user", "content": "Hi"}], client=bedrock)
++ reflexer.litellm.through(os.environ["REFLEXER_KEY"])
+  reply = litellm.completion(model="bedrock/converse/frontier-x", messages=[{"role": "user", "content": "Hi"}])
   print(reply.choices[0].message.content)
 ```
 
@@ -156,7 +155,7 @@ LiteLLM takes reflexer's HTTP client as an argument of each call. Create the cli
 Hello! How can I help you today?
 ```
 
-For `acompletion`, use `reflexer.litellm.async_client`.
+The same line covers `acompletion` and `stream=True`.
 
 ### The AWS SDK for JavaScript, and LangChain.js on it
 
@@ -302,7 +301,7 @@ Every case, with what to do: [When reflexer fails](when-reflexer-fails.md). Ever
   - The AI SDK: `providerOptions: { reflexer: { skip: true } }`.
   - Anthropic's clients, LiteLLM: `extra_headers={"Reflexer-Skip": "true"}`; AnthropicBedrock (TypeScript): `{ headers: { "Reflexer-Skip": "true" } }` as the call's second argument.
 - A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer): you give reflexer your Bedrock answer, and neither the SDK nor reflexer sends the call to Bedrock. Put `replay_response` at the top level of an `InvokeModel` body. On Anthropic's clients, use `extra_body={"replay_response": answer}` (AnthropicBedrock in TypeScript: `replay_response: answer` among the call's parameters, cast to `any` in a `.ts` file).
-- Reflexer's address, if reflexer gave you another one: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on `through` and `litellm.client` (TypeScript `{ base }`).
+- Reflexer's address, if reflexer gave you another one: `reflexer_base=` on `reflexer.boto3.client` and Anthropic's classes, `base=` on the `through` functions (TypeScript `{ base }`).
 
 All options: [Advanced](advanced.md).
 

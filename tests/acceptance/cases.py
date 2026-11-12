@@ -925,9 +925,13 @@ def fields_leave_geminis_object_what_it_was(t):
 
 @case("kept", sdks=("gemini",))
 def kept_geminis_own_options_as_stock_takes_them(t):
-    """`client_args` as stock takes them, and `with` closing what it opened."""
-    client = t.client(gemini_options={"client_args": {"follow_redirects": False}, "async_client_args": {"ssl": False}})
-    t.served(t.ask(client))
+    """`client_args` and `async_client_args` as stock takes them, each on its own calls, and `with` closing what it opened."""
+    options = {"client_args": {"follow_redirects": False}, "async_client_args": {"ssl": False}}
+    t.served(t.ask(t.client(gemini_options=options)))
+
+    async def asked():
+        t.served(await t.ask_async(t.client(is_async=True, gemini_options=options)))
+    t.run_async(asked)
     with t.client() as closing:
         t.ask(closing)
     t.check(closing._api_client._httpx_client.is_closed, "`with` left its HTTP client open")

@@ -6,6 +6,7 @@ its proxies, TLS and connections hold. No private name is read, no class of the 
 answer's bytes are touched.
 """
 import copy, functools, threading, weakref
+from asyncio import get_running_loop, run_coroutine_threadsafe
 from . import BASE, OURS, Reflexer, ReplayNotTaken, checked, is_replay, log
 
 STRAIGHT = "reflexer_straight"  # in a request's extensions: this call is the provider's, whatever it turns into
@@ -194,11 +195,11 @@ class Through:
 @functools.cache
 def landing(library):
     """An answer's body as it came, of the library's own kind. Its call lands on its `Through` once the body is closed,
-    or dropped unclosed; an async client's close it makes due is awaited by `Both` (`close_overdue`)."""
+    or dropped unclosed; an async client's close it makes due is left to `Both` (`close_overdue`), with its event loop."""
     class Landing(library.SyncByteStream, library.AsyncByteStream):
-        def __init__(self, stream, through, overdue):
+        def __init__(self, stream, through, overdue, loop):
             self.stream, self.through = stream, through
-            self.dropped = weakref.finalize(self, dropped, through, overdue)
+            self.dropped = weakref.finalize(self, dropped, through, overdue, loop)
 
         def __iter__(self):
             return iter(self.stream)
@@ -222,12 +223,12 @@ def landing(library):
     return Landing
 
 
-def dropped(through, overdue):
-    """A body dropped unclosed: its call landed. An async client's close, due then, is left for `Both` to await."""
+def dropped(through, overdue, loop):
+    """A body dropped unclosed: its call landed. An async client's close, due then, is left for `Both`, in its `loop`."""
     if not through.due():
         return
     if hasattr(through.inner, "aclose"):
-        overdue.append(through.inner)
+        overdue.append((through.inner, loop))
     else:
         through.inner.close()
 
@@ -244,6 +245,21 @@ async def closed_unless_its_loop_ended(client):
         log.info("the SDK did not close a client whose event loop has ended")
 
 
+async def closed_in_its_loop(client, loop):
+    """`client.aclose()` in `loop`, the event loop it was made in, as google-genai closes its sessions: here, awaited; in
+    another loop that runs, sent there; one of a loop that does not run (ended, or stopped) is dropped unclosed."""
+    if loop is get_running_loop():
+        return await closed_unless_its_loop_ended(client)
+    if loop.is_running():
+        close = client.aclose()
+        try:
+            run_coroutine_threadsafe(close, loop)
+            return
+        except RuntimeError:  # its loop closed meanwhile
+            close.close()
+    log.info("the SDK did not close a client whose event loop is not running")
+
+
 def without_its_cookie(answer):
     """Reflexer's answer. The outer client would file its cookie under the provider's name, and send it there."""
     answer.headers.pop("set-cookie", None)
@@ -255,21 +271,26 @@ class Both:
     Its HTTP clients are made on first use, of the HTTP library the request is of: the SDK picks it, not this.
     `library_of(request)`, that library; `make(library)` and `make_async(library)`, a `Through` over a client of it.
     SDK clients made from one set of arguments share it: one closing closes its HTTP clients for the next call, each
-    once its calls in flight land, so no client cuts another's call, as stock none would."""
+    once its calls in flight land, so no client cuts another's call, as stock none would. An async client of an event
+    loop that does not run any more is dropped unclosed: its connections' sockets stay open until garbage collection
+    (a ResourceWarning for each), as stock leaves its own sessions of such a loop."""
 
     def __init__(self, library_of, make, make_async):
         self.library_of, self.makers, self.made = library_of, {False: make, True: make_async}, {False: {}, True: {}}
         self.lock = threading.Lock()  # threads at first use share one client
-        self.overdue = []  # async clients whose close came due in a finalizer, which cannot await it
+        self.overdue = []  # async clients whose close came due in a finalizer, which cannot await it, each with its loop
 
     def through(self, request, is_async=False):
         library = self.library_of(request)
+        key = (library, get_running_loop()) if is_async else library  # async: one for each event loop, as stock's sessions
         with self.lock:  # one closing hands its clients out under this lock: a call never gets one handed out
             made = self.made[is_async]
-            if library not in made:
-                made[library] = self.makers[is_async](library)
-            made[library].due(+1)
-            return made[library]
+            for ended in [each for each in made if is_async and each[1].is_closed()]:
+                del made[ended]  # none can use it again, nor await it closed: dropped, as stock drops its own of such a loop
+            if key not in made:
+                made[key] = self.makers[is_async](library)
+            made[key].due(+1)
+            return made[key]
 
     def handle_request(self, request):
         through = self.through(request)
@@ -278,7 +299,7 @@ class Both:
         except BaseException:
             through.land()
             raise
-        answer.stream = landing(self.library_of(request))(answer.stream, through, self.overdue)
+        answer.stream = landing(self.library_of(request))(answer.stream, through, self.overdue, None)
         return answer
 
     async def handle_async_request(self, request):
@@ -289,31 +310,32 @@ class Both:
         except BaseException:
             await through.aland()
             raise
-        answer.stream = landing(self.library_of(request))(answer.stream, through, self.overdue)
+        answer.stream = landing(self.library_of(request))(answer.stream, through, self.overdue, get_running_loop())
         return answer
 
     async def close_overdue(self):
         """The retired async clients a dropped body left due: closed at this client's next call or close, as stock its
-        own pool would be. One whose loop has ended fails to close, and that is no failure of this call."""
+        own pool would be, each in its own event loop (`closed_in_its_loop`). A failure to close one is no failure of this call."""
         while self.overdue:
             try:
-                await self.overdue.pop().aclose()
-            except Exception as failure:  # nothing of a call's: a finished loop's connections, which none can use again
-                log.info("closing an unused client whose event loop has ended failed (%s)", type(failure).__name__)
+                await closed_in_its_loop(*self.overdue.pop())
+            except Exception as failure:  # nothing of a call's: an unused client
+                log.info("closing an unused client failed (%s)", type(failure).__name__)
 
     def out(self, is_async):
         with self.lock:
-            out, self.made[is_async] = list(self.made[is_async].values()), {}
+            out, self.made[is_async] = self.made[is_async], {}
         return out
 
     def close(self):
-        for through in self.out(False):
+        for through in self.out(False).values():
             through.close()
 
     async def aclose(self):
+        """Each event loop's client closed in its own loop, as stock closes its sessions (`closed_in_its_loop`)."""
         await self.close_overdue()
-        for through in self.out(True):
-            await closed_unless_its_loop_ended(through)
+        for (_, loop), through in self.out(True).items():
+            await closed_in_its_loop(through, loop)
 
     def __repr__(self):  # what holds it may build a cache's key from its text
         return "reflexer.Both"

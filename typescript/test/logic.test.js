@@ -96,6 +96,17 @@ describe("Route", () => {
     assert.equal(headers?.["reflexer-upstream"], "https://router.example");
   });
 
+  test("a Gemini call at v1, v1beta or v1alpha goes to reflexer", () => {
+    const way = new reflexer.Reflexer(KEY, reflexer.WIRES.gemini);
+    for (const version of ["v1", "v1beta", "v1alpha"]) {
+      for (const call of ["generateContent", "streamGenerateContent"]) {
+        const [url] = way.route(`https://generativelanguage.googleapis.com/${version}/models/m:${call}`, {}) ?? [];
+        assert.equal(url, `https://api.reflexer.ai/gemini/${version}/models/m:${call}`);
+      }
+    }
+    assert.equal(way.route("https://generativelanguage.googleapis.com/v1gamma/models/m:generateContent", {}), null);
+  });
+
   test("the query goes with the call, and the client's reflexer headers but the namespace stay behind", () => {
     const [url, headers] = new reflexer.Reflexer(KEY, reflexer.WIRES.gemini)
       .route("https://generativelanguage.googleapis.com/v1beta/models/m:streamGenerateContent?alt=sse",

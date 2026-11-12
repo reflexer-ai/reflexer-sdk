@@ -53,7 +53,8 @@ class Client(genai.Client):
         self.reflexer_http = http_client(reflexer_key, own_client(httpx.Client, options.httpx_client, options.client_args), **way)
         self.reflexer_built = options.httpx_client is None
         self.reflexer_async_built = options.httpx_async_client is None
-        self.reflexer_async_http = async_http_client(reflexer_key, own_client(httpx.AsyncClient, options.httpx_async_client, options.async_client_args), **way)
+        self.reflexer_async_http = async_http_client(reflexer_key, options.httpx_async_client, **way) if options.httpx_async_client is not None \
+            else httpx.AsyncClient(**client_args(reflexer_key, options.async_client_args, **way))  # one for each event loop, as stock's own
         super().__init__(http_options=options.model_copy(update={
             "httpx_client": self.reflexer_http, "httpx_async_client": self.reflexer_async_http,
         }), **config)

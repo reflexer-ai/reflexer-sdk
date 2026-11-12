@@ -47,7 +47,7 @@ def tearDownModule():
 
 
 def world(lib):
-    """A world of stand-ins of its own, as each acceptance case's process has. LiteLLM keeps its HTTP clients across
+    """A world of stand-ins of its own, and its case (`harness.Test`) for a provider SDK, or its `bedrock.Calls`, as each acceptance case's process has. LiteLLM keeps its HTTP clients across
     calls, connected to the last world's stand-ins, and its line is the process's: both dropped, as a process of its own
     would start with neither. The last
     world's stand-ins are closed, as a case's process ends with them: a process holding every world's sockets passes
@@ -63,7 +63,7 @@ def world(lib):
     test = harness.Test(lines, lib, made)
     import logging
     logging.getLogger().removeHandler(test.logs)
-    return made, bedrock.Calls(test)
+    return made, (test if lib in harness.MODEL else bedrock.Calls(test))
 
 
 SCENES = {"served": lambda w: w.reflexer.set("ok"), "busy": lambda w: w.reflexer.set("busy"), "dead": lambda w: w.reflexer.set("dead"),
@@ -369,13 +369,14 @@ SDK = os.path.join(os.path.abspath(ROOT), "reflexer") + os.sep  # the SDK's own 
 TESTS = os.path.join(os.path.abspath(ROOT), "tests") + os.sep
 
 
-def holders(roots, secret, most=500000):
+def holders(roots, secret, most=500000, beside=()):
     """The paths by which `secret` is reached from `roots`, following every object reference (`gc.get_referents`): a
     bound method's object, a function's closure, defaults and attributes (`__wrapped__` among them), and the locals of the SDK's own frames, a traceback's
-    among them; not into modules, classes, code, a function's globals or another's frames, which are the program's own.
-    Past `most` objects it fails: a walk cut short proves nothing."""
+    among them; not into modules, classes, code, a function's globals or another's frames, which are the program's own,
+    nor into `beside`: what the client made with the key, which holds it as given. Past `most` objects it fails: a walk
+    cut short proves nothing."""
     import gc
-    seen, pending, found = set(), [(root, "root") for root in roots], []
+    seen, pending, found = {id(each) for each in beside}, [(root, "root") for root in roots], []
     while pending:
         if len(seen) >= most:
             raise AssertionError(f"the walk passed {most} objects, unfinished")
@@ -781,6 +782,53 @@ def what_the_client_is_handed():
     return found
 
 
+HTTPX_LINES = (("openai", False), ("openai", True), ("anthropic", False), ("anthropic", True), ("gemini", False), ("gemini", True),
+               ("anthropic-bedrock", False))
+
+
+def what_an_httpx_line_hands_the_client():
+    """{(sdk, is_async): (where the reflexer key is held in what a served call hands the client, the text it then reads)},
+    on each line over the HTTP library: the answer, and the streamed one before its body is read, with the response and
+    its request, body stream and extensions within; and each response a response hook of the client's receives. The
+    SDK client, its HTTP clients and its `Reflexer`, which the client made with the key, are not walked into."""
+    import gc, httpx, httpx2
+    found = {}
+    for sdk, is_async in HTTPX_LINES:
+        hooked, out = [], {}
+
+        async def ahook(response):
+            hooked.append(response)
+        http = {"event_hooks": {"response": [ahook if is_async else hooked.append]}}
+        made, t = world(sdk)
+        if sdk == "anthropic-bedrock":
+            client = reflexer.anthropic_bedrock.AnthropicBedrock(aws_region=bedrock.REGION, api_key=bedrock.BEARER, max_retries=0, reflexer_key=made.key,
+                                                                 http_client=reflexer.anthropic_bedrock.anthropic.DefaultHttpxClient(**http))
+            t = types.SimpleNamespace(sdk="anthropic")
+        else:
+            client = t.client(is_async, http=http)
+        made.reflexer.set("ok")
+
+        async def answered():
+            out["answer"] = await harness.request(t.sdk, client, True, False, {})
+            out["stream"] = await harness.request(t.sdk, client, True, True, {})
+        if is_async:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(answered())
+        else:
+            out["answer"] = harness.request(t.sdk, client, False, False, {})
+            out["stream"] = harness.request(t.sdk, client, False, True, {})
+        ours = (reflexer.Reflexer, httpx.Client, httpx.AsyncClient, httpx2.Client, httpx2.AsyncClient)
+        beside = [client] + [each for each in gc.get_objects() if issubclass(type(each), ours)]  # by type: a dead weak proxy raises on isinstance
+        where = holders([hooked, out], made.key, beside=beside)
+        async def streamed():
+            return [chunk async for chunk in out["stream"]]
+        chunks = loop.run_until_complete(streamed()) if is_async else list(out["stream"])
+        if is_async:
+            loop.close()
+        found[(sdk, is_async)] = (where, bool(harness.text_of(t.sdk, out["answer"])) and bool(chunks))
+    return found
+
+
 def straight_within(seconds):
     """{lib: whether a call whose own read timeout (`read_timeout` in its context, set by a handler of the client's)
     is `seconds` went straight within twice it, reflexer stalled and the client's config allowing minutes}."""
@@ -991,6 +1039,11 @@ class Promises(Case):
         for lib, where in what_the_client_is_handed().items():
             with self.subTest(lib=lib):
                 self.assertEqual(where, [])
+
+    def test_nothing_a_served_call_on_an_httpx_line_hands_the_client_holds_the_key(self):
+        for line, (where, read) in what_an_httpx_line_hands_the_client().items():
+            with self.subTest(line=line):
+                self.assertEqual((where, read), ([], True))
 
     def test_the_frame_check_reads_a_local_holding_itself(self):
         made = {}  # a frame of the line's file, as a library's frame may hold a dict that holds itself
@@ -1345,6 +1398,16 @@ class Broken(Case):
                                          release=made.release, hook=hook)
         with mock.patch.object(reflexer.aiobotocore, "forgotten", keeping):
             self.assertTrue(what_the_client_is_handed()["aiobotocore"])
+
+    def test_reflexers_request_kept_whole_under_its_answer_turns_it_red(self):
+        def kept(step, info):
+            return None
+
+        async def akept(step, info):
+            return None
+        with mock.patch.object(reflexer.transport, "forget_sent", kept), mock.patch.object(reflexer.transport, "aforget_sent", akept):
+            found = what_an_httpx_line_hands_the_client()
+        self.assertTrue(all(where for where, _ in found.values()), found)
 
     def test_reflexers_own_answer_handed_on_turns_it_red(self):
         with mock.patch.object(reflexer.aiobotocore, "forgotten", lambda response: response):

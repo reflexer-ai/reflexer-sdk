@@ -110,11 +110,16 @@ def a_plain_http_address_for_reflexer_was_taken():
         return False
 
 
-def extensions_sent_to_reflexer(is_async=False):
-    """What of the client's request extensions reach the request for reflexer, where a callback would see the key."""
+def the_clients_callback_on_reflexers_request(is_async=False):
+    """The names under which the client's own `trace` callback, told by identity, rides the request for reflexer, where
+    it would see the key. The SDK sets its own `trace` there, which forgets its headers once sent, so the name proves nothing."""
+    theirs = lambda name, info: None
     client, seen = through(busy, is_async)
-    post(client, CHAT, content=b"{}", extensions={"trace": lambda name, info: None})
-    return sorted(set().union(*(request.extensions for request in seen if request.url.host == REFLEXER)))
+    post(client, CHAT, content=b"{}", extensions={"trace": theirs})
+    sent = [request for request in seen if request.url.host == REFLEXER]
+    if not sent:
+        raise AssertionError("no request reached reflexer: nothing checked")
+    return sorted({name for request in sent for name, value in request.extensions.items() if value is theirs})
 
 
 def each_sdk(answer):
@@ -160,7 +165,7 @@ class Promises(unittest.TestCase):
     def test_no_callback_of_the_clients_sees_reflexers_request(self):
         for is_async in (False, True):
             with self.subTest(is_async=is_async):
-                self.assertEqual(extensions_sent_to_reflexer(is_async), ["timeout"])
+                self.assertEqual(the_clients_callback_on_reflexers_request(is_async), [])
 
     def test_a_replay_never_reaches_the_provider(self):
         for is_async in (False, True):
@@ -220,9 +225,23 @@ class Broken(unittest.TestCase):
             self.assertIn("a hook", hosts_given_the_key())
 
     def test_the_clients_callbacks_on_reflexers_request_turns_it_red(self):
-        with mock.patch.object(reflexer.transport, "KEPT", ("timeout", "trace")):
+        """The client's `trace` kept (`KEPT`), and winning over the SDK's own where both are set."""
+        real = reflexer.transport.to_reflexer
+
+        class TheirsWin(dict):
+            def __or__(self, ours):
+                return dict(ours) | dict(self)
+
+        def keeps_theirs(*args):
+            request = real(*args)
+            if request is not None:
+                request.extensions = TheirsWin(request.extensions)
+            return request
+
+        with mock.patch.object(reflexer.transport, "KEPT", ("timeout", "trace")), \
+                mock.patch.object(reflexer.transport, "to_reflexer", keeps_theirs):
             for is_async in (False, True):
-                self.assertIn("trace", extensions_sent_to_reflexer(is_async), is_async)
+                self.assertEqual(the_clients_callback_on_reflexers_request(is_async), ["trace"], is_async)
 
     def test_no_replay_guard_turns_it_red(self):
         with mock.patch.object(reflexer.transport, "is_replay", lambda body: False):

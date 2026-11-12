@@ -21,7 +21,7 @@ export const WIRES = {
   azure: { reflexerPath: "/azure", calls: /\/openai\/((deployments\/[^/]+|v1)\/(chat\/completions|responses)|responses)$/ }, // its own host, always named; the last, Azure's dated Responses
   anthropic: { reflexerPath: "/anthropic", provider: "https://api.anthropic.com", calls: /\/v1\/messages$/ },
   gemini: { reflexerPath: "/gemini", provider: "https://generativelanguage.googleapis.com",
-    calls: /\/v1(beta)?\/models\/[^/]+:(stream)?[gG]enerateContent$/ },
+    calls: /\/v1(alpha|beta)?\/models\/[^/]+:(stream)?[gG]enerateContent$/ },
 };
 
 const KEPT = ["method", "signal", "dispatcher"]; // of a client's request options, what reflexer's request keeps

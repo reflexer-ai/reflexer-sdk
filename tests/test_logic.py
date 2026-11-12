@@ -4,6 +4,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import reflexer
+from reflexer import wires
 from reflexer import ANSWER, ASKED, FAILED, GRACE
 
 secret = "rfx1_aaaaakq_" + "a" * 52
@@ -38,6 +39,14 @@ class Clock:
 class Route(unittest.TestCase):
     def setUp(self):
         self.reflexer = reflexer.Reflexer(KEY, WIRE)
+
+    def test_a_gemini_call_at_v1_v1beta_or_v1alpha_goes_to_reflexer(self):
+        way = reflexer.Reflexer(KEY, wires.GENERATE)
+        for version in ("v1", "v1beta", "v1alpha"):
+            for call in ("generateContent", "streamGenerateContent"):
+                made, _ = way.route(f"https://generativelanguage.googleapis.com/{version}/models/m:{call}", {})
+                self.assertEqual(made, f"https://api.reflexer.ai/gemini/{version}/models/m:{call}")
+        self.assertIsNone(way.route("https://generativelanguage.googleapis.com/v1gamma/models/m:generateContent", {}))
 
     def test_a_message_call_goes_to_reflexer_with_the_key(self):
         url, headers = self.reflexer.route(CHAT, {"authorization": "Bearer sk-made-up"})

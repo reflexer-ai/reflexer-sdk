@@ -8,6 +8,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, test } from "node:test";
 import { PACKAGE, scratch } from "./checks.js";
 
@@ -259,7 +260,8 @@ describe("A run killed", () => {
   const POLL_MS = 5; // Broken runs in a fraction of a second: its folder is looked for often
 
   /** `node --test` on Broken, in the temp directory `tmp` and a process group of its own, sent `signal` as soon as its new
-   * reflexer-sdk-test-ts-gates- folder is there: that folder, and how the run ended. */
+   * reflexer-sdk-test-ts-gates- folder is there: that folder, once the test process that made it (its pid in the name) has
+   * ended too. At SIGHUP the runner ends at once, before its test process. */
   async function killedOnceMade(/** @type {string} */ tmp, /** @type {Set<string>} */ seen, /** @type {NodeJS.Signals} */ signal) {
     const env = { ...process.env, TMPDIR: tmp };
     delete env.NODE_TEST_CONTEXT; // set by the runner around this file: a run of its own drops it
@@ -280,8 +282,36 @@ describe("A run killed", () => {
     const [code, end] = await ended;
     assert.ok(folder && sent, `no folder within ${APPEARS_WITHIN_MS} ms, or the run ended before the signal: ${code ?? end}`);
     assert.notEqual(code, 0, `a run sent ${signal} ends with a failure`);
+    const maker = Number(/-([0-9]+)-[A-Za-z0-9]{6}$/.exec(folder)?.[1]);
+    while (Date.now() < deadline && running(maker)) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    assert.ok(!running(maker), `the test process ${maker} still runs`);
     return folder;
   }
+
+  const running = (/** @type {number} */ pid) => {
+    try {
+      return process.kill(pid, 0);
+    } catch {
+      return false;
+    }
+  };
+
+  test("by an uncaught exception removes its folder", async () => {
+    const tmp = scratch("killed");
+    try {
+      const code = `const { scratch } = await import(${JSON.stringify(pathToFileURL(join(PACKAGE, "test", "checks.js")).href)});
+        console.log(scratch("thrown")); setTimeout(() => { throw new Error("made up"); });`;
+      const run = spawn(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, TMPDIR: tmp }, stdio: ["ignore", "pipe", "ignore"] });
+      let printed = "";
+      run.stdout.on("data", (chunk) => { printed += chunk; });
+      const status = await new Promise((resolve) => run.on("exit", resolve));
+      assert.notEqual(status, 0);
+      assert.ok(printed.trim().startsWith(tmp), printed);
+      assert.ok(!existsSync(printed.trim()), "the folder is still there after the exception");
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
+  });
 
   test("by SIGTERM or SIGHUP removes its folder", async () => {
     const tmp = scratch("killed");

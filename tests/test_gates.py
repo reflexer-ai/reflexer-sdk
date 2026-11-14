@@ -374,16 +374,17 @@ def local_paths(root):
     return [name for name in names if name and (root / name).is_file() and LOCAL.search((root / name).read_text(errors="replace"))]
 
 
-TEMP_MAKERS = re.compile(r"\b(mkdtemp|mkdtempSync|TemporaryDirectory|mktemp)\b")
-TEMP_HELPERS = {"tests/acceptance/scratch.py", "typescript/test/checks.js", "tests/test_gates.py"}  # the two helpers; this file names them
+TEMP_MAKERS = re.compile(r"\b(mkdtemp|mkdtempSync|mkstemp|TemporaryDirectory|NamedTemporaryFile|mktemp)\b")  # the gate's own line
+TEMP_HELPERS = {"tests/acceptance/scratch.py", "typescript/test/checks.js"}  # the two helpers
 
 
 def temp_makers(root):
-    """Every test or tool file, but the two helpers, that makes a temp folder its own way: a run ended by a signal would
-    leave it behind."""
-    return sorted(str(path.relative_to(root)) for folder in ("tests", "tools", "typescript/test") if (root / folder).is_dir()
+    """Every test or tool file, but the two helpers, that makes a temp file or folder its own way: a run ended by a signal
+    would leave it behind. A line ending "the gate's own line" names them to find them, and is passed."""
+    return sorted(str(path.relative_to(root)) for folder in ("tests", "tools", "typescript/test", "typescript/tools") if (root / folder).is_dir()
                   for path in (root / folder).rglob("*") if path.suffix in (".py", ".js", ".sh") and path.is_file()
-                  and str(path.relative_to(root)) not in TEMP_HELPERS and TEMP_MAKERS.search(path.read_text(errors="replace")))
+                  and str(path.relative_to(root)) not in TEMP_HELPERS
+                  and any(TEMP_MAKERS.search(line) for line in path.read_text(errors="replace").split("\n") if not line.endswith("the gate's own line")))
 
 
 def licenses_differ(root):
@@ -459,8 +460,10 @@ class Broken(unittest.TestCase):
         self.assertNotEqual(semgrep(self.root), 0, text)
 
     def test_a_temp_folder_made_its_own_way_turns_it_red(self):
-        self.plant("made_up.py", "import tempfile\nwork = tempfile.mkdtemp()", package="tools")
-        self.assertEqual(temp_makers(self.root), ["tools/made_up.py"])
+        for maker in ("mkdtemp()", "mkstemp()", "NamedTemporaryFile(delete=False)"):  # the gate's own line
+            self.plant("made_up.py", f"import tempfile\nwork = tempfile.{maker}", package="tools")
+            self.assertEqual(temp_makers(self.root), ["tools/made_up.py"], maker)
+            (self.root / "tools" / "made_up.py").unlink()
 
     def test_a_dependency_turns_it_red(self):
         path = self.root / "pyproject.toml"

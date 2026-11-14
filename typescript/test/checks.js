@@ -10,11 +10,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
 
 const NAMESPACE = "reflexer-sdk-test-";
+// Every folder of the namespace, by either helper: its name, its pid, and the random part mkdtemp or Python's tempfile adds
+const FORM = /^reflexer-sdk-test-[a-z][a-z0-9-]*-([1-9][0-9]{0,9})-(?:[A-Za-z0-9]{6}|[a-z0-9_]{8})$/;
 const SIGNALS = /** @type {const} */ (["SIGTERM", "SIGHUP", "SIGINT"]);
-/** @type {Map<string, number>} */
-const MADE = new Map(); // folder: the pid of the process that made it
+/** @type {Set<string>} */
+const MADE = new Set(); // the folders this process made
 
-/** True only when no process has this id: an id that is not one, or a process of another user, is not gone. */
+/** True only when no process has this id: a process of another user is not gone. */
 function gone(/** @type {number} */ pid) {
   try {
     process.kill(pid, 0);
@@ -24,33 +26,41 @@ function gone(/** @type {number} */ pid) {
   }
 }
 
+function removeMade() {
+  for (const path of MADE) rmSync(path, { recursive: true, force: true });
+}
+
 /** @param {NodeJS.Signals} signal */
 function onSignal(signal) {
-  for (const [path, pid] of MADE) if (pid === process.pid) rmSync(path, { recursive: true, force: true });
+  removeMade();
   process.removeListener(signal, onSignal);
   if (process.listenerCount(signal) === 0) process.kill(process.pid, signal); // the default now: the run ends with this signal
 }
 
 /**
  * A new folder `reflexer-sdk-test-<name>-<pid>-<random>` in `root` (the temp directory by default), <pid> this process.
- * The code that asks for it removes it at a normal end or a failure. At SIGTERM, SIGHUP or SIGINT a listener, set with the
- * first folder, removes the folders this process made, then lets the signal end the run. At SIGKILL, which no listener
- * sees, the folder stays until the next run that asks for a folder of the same name: it first removes those whose
- * process is gone, only names of exactly this form, real folders of this user (commons testing/GUIDE.md, Resources).
- * As tests/acceptance/scratch.py does for the Python suites.
+ * The code that asks for it removes it at a normal end or a failure; at any exit of the process (an uncaught exception
+ * included) a listener on `exit`, first of all, removes what is left. At SIGTERM, SIGHUP or SIGINT a listener, set with
+ * the first folder, removes the folders this process made, then lets the signal end the run. At SIGKILL, which no
+ * listener sees, the folder stays until the next run that asks for a folder: it first removes every folder of the
+ * namespace whose process is gone, only names of exactly this form, real folders of this user (commons testing/GUIDE.md,
+ * Resources). As tests/acceptance/scratch.py does for the Python suites.
  * @param {string} name @param {string} [root]
  */
 export function scratch(name, root = tmpdir()) {
-  const prefix = `${NAMESPACE}${name}-`;
+  assert.match(name, /^[a-z][a-z0-9-]*$/, "a folder's name is lower-case letters, digits and dashes");
   for (const entry of readdirSync(root)) {
-    const pid = entry.startsWith(prefix) && /^([1-9][0-9]{0,9})-[A-Za-z0-9]{6}$/.exec(entry.slice(prefix.length))?.[1];
+    const pid = FORM.exec(entry)?.[1];
     if (!pid) continue;
     const held = lstatSync(join(root, entry), { throwIfNoEntry: false });
     if (held?.isDirectory() && held.uid === process.getuid?.() && gone(Number(pid))) rmSync(join(root, entry), { recursive: true, force: true });
   }
-  if (!process.listeners("SIGTERM").includes(onSignal)) for (const signal of SIGNALS) process.on(signal, onSignal); // before the folder is made
-  const path = mkdtempSync(join(root, `${prefix}${process.pid}-`));
-  MADE.set(path, process.pid);
+  if (!process.listeners("exit").includes(removeMade)) { // before the folder is made
+    process.prependListener("exit", removeMade); // first: another listener that throws (the test runner's, its parent gone) stops the rest
+    for (const signal of SIGNALS) process.on(signal, onSignal);
+  }
+  const path = mkdtempSync(join(root, `${NAMESPACE}${name}-${process.pid}-`));
+  MADE.add(path);
   return path;
 }
 

@@ -4,32 +4,22 @@ A folder goes on each way a run ends:
 - a normal end or a failure: the code that asked for the folder removes it (a `finally`, `tearDown`, `addCleanup`);
 - SIGTERM, SIGHUP or SIGINT: a handler, set once with the first folder, removes the folders this process made, then
   lets the signal end the run as it would have (its status stays the signal's); a forked child removes none of them;
-- SIGKILL, which no handler sees: the next run that asks for a folder of the same name removes the folders whose
-  process is gone (commons testing/GUIDE.md, Resources).
-The sweep removes only names of exactly this form, real folders of this user, whose process is gone.
+- SIGKILL, which no handler sees: the next run that asks for a folder removes every folder of the namespace whose
+  process is gone (commons testing/GUIDE.md, Resources): only names of exactly this form, real folders of this user.
 
 Command line, for tools/ci.sh: `python3 scratch.py NAME PID` prints a new folder named with PID; no handler is set."""
 import os, re, shutil, signal, stat, sys, tempfile, threading
 
 NAMESPACE = "reflexer-sdk-test-"
-RANDOM = "[a-z0-9_]{8}"  # what tempfile adds to a name
+# Every folder of the namespace, by either helper: its name, its pid, and the random part tempfile or Node's mkdtemp adds
+FORM = re.compile(re.escape(NAMESPACE) + r"[a-z][a-z0-9-]*-([1-9][0-9]{0,9})-(?:[a-z0-9_]{8}|[A-Za-z0-9]{6})")
 SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 MADE = {}  # folder: the pid of the process that made it
 BEFORE = {}  # signal: its handler before this module's
 
 
-def pid_max():
-    try:
-        with open("/proc/sys/kernel/pid_max") as file:
-            return int(file.read())
-    except (OSError, ValueError):
-        return 2 ** 22  # Linux's largest; other systems' are smaller
-
-
 def gone(pid):
     """True only when no process has this id; False for a live one, or an id that is not one."""
-    if pid > pid_max():
-        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -39,9 +29,9 @@ def gone(pid):
     return False
 
 
-def sweep(root, prefix):
+def sweep(root):
     for name in os.listdir(root):
-        found = re.fullmatch(re.escape(prefix) + r"([1-9][0-9]{0,9})-" + RANDOM, name)
+        found = FORM.fullmatch(name)
         if not found:
             continue
         path = os.path.join(root, name)
@@ -77,8 +67,10 @@ def hook():
 def folder(name, pid=None):
     """A new folder `reflexer-sdk-test-<name>-<pid>-<random>` in the temp directory, after the sweep of that name. The
     code that asks for it removes it at a normal end or a failure; a signal's handler is set unless `pid` is given."""
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+        raise ValueError(f"a folder's name is lower-case letters, digits and dashes: {name!r}")
     root, prefix = tempfile.gettempdir(), f"{NAMESPACE}{name}-"
-    sweep(root, prefix)
+    sweep(root)
     if pid is None:
         hook()  # before the folder is made: a signal on the way finds the handler set
     path = tempfile.mkdtemp(prefix=f"{prefix}{pid or os.getpid()}-", dir=root)

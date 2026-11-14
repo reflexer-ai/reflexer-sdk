@@ -115,9 +115,27 @@ def write_result(result, out_path):
     os.replace(out_path + ".part", out_path)
 
 
+RUNNING = {}  # each case's process running, by pid: its own process group, which a signal to the run does not reach
+
+
+def killing_the_cases(handler, owner):
+    """`handler`, run after each running case is killed with what it started: a case still writing in the run's folder
+    would keep it from being removed, and would run on to its limit. Only in the run's own process, not in a case's."""
+    def on_signal(number, frame):
+        if os.getpid() == owner:
+            for pid in list(RUNNING):
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+                except (ProcessLookupError, ChildProcessError, PermissionError):
+                    pass
+        return handler(number, frame)
+    return on_signal
+
+
 def run_jobs(jobs, fault, condition, contexts, tmp, parallel):
     """Forks up to `parallel` at a time. A case past its limit is killed with what it started; none stops the run."""
-    results, waiting, running = [], list(enumerate(jobs)), {}
+    results, waiting, running = [], list(enumerate(jobs)), RUNNING
     while waiting or running:
         while waiting and len(running) < parallel:
             index, job = waiting.pop(0)
@@ -210,6 +228,9 @@ def main():
         parser.error(f"no such condition: {arguments.condition}")
     harness.resolver.install()
     tmp = scratch.folder("acceptance")
+    for number in scratch.SIGNALS:
+        if callable(signal.getsignal(number)):  # scratch's handler, which removes the folder
+            signal.signal(number, killing_the_cases(signal.getsignal(number), os.getpid()))
     try:
         authority = certs.Certs(tmp, harness.NAMES)
         os.environ["SSL_CERT_FILE"] = os.environ["AWS_CA_BUNDLE"] = authority.ca  # AWS_CA_BUNDLE: botocore's own trust

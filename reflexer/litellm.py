@@ -25,7 +25,7 @@ one LiteLLM signs by: so the fallback reaches Bedrock while its signature holds.
 A call's timeout: LiteLLM posts by a given client with no `timeout` on some routes (Bedrock's converse, Gemini's context
 caching), where stock builds its client with it; so the handler the hook gives each call is made with the call's own.
 """
-import asyncio, contextvars, copy, datetime, functools, inspect, re, threading, time
+import asyncio, atexit, contextvars, copy, datetime, functools, inspect, re, threading, time
 import httpx, litellm
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.litellm_core_utils.completion_timeout import CompletionTimeout
@@ -230,6 +230,7 @@ def provider(kwargs):
         return None
 
 
+DROPPED = []  # the closes of the async clients the line dropped from LiteLLM's cache, each held till the process exits
 PROBE = "reflexer-probe://line/"  # a scheme no HTTP transport or proxy takes: a client not sending by the probe fails, sending nothing
 
 
@@ -248,6 +249,33 @@ def session(kind, transport, own, way):
     outer = kind(transport=transport, follow_redirects=True) if own is None else split(own, way)
     outer.reflexer_own = own
     return outer
+
+
+def dropped():
+    """The clients LiteLLM made before the line, kept for reuse, dropped, so the next call makes them anew, by the line: those
+    of its cache, its `module_level_client`, and its own `module_level_aclient` (one the client set stays). The async ones
+    are held till the process exits, then closed by `closed_at_exit`, as LiteLLM closes at exit those it keeps: dropped open,
+    each would log "Unclosed client session" when collected; closed now, one could be in use by a call in flight."""
+    kept = list(litellm.in_memory_llm_clients_cache.cache_dict.values())
+    closes = [getattr(client, "aclose", None) or getattr(client, "close", None) for client in kept]
+    DROPPED.extend(close for close in closes if inspect.iscoroutinefunction(close))
+    litellm.in_memory_llm_clients_cache.flush_cache()
+    litellm.module_level_client = HTTPHandler(timeout=litellm.request_timeout)  # as LiteLLM makes it
+    if getattr(litellm, "module_level_aclient", None) in kept:
+        del litellm.module_level_aclient  # LiteLLM makes it anew on its next use, in its cache
+
+
+@atexit.register
+def closed_at_exit():
+    """The async clients the line dropped, closed on an event loop of their own, as LiteLLM's own close at exit closes those
+    it keeps (`register_async_client_cleanup`), every one of them."""
+    async def closed():
+        for close in DROPPED:
+            try:
+                await close()
+            except Exception as failure:  # passed over, as LiteLLM's own close at exit passes over it
+                log.info("the SDK did not close a LiteLLM client it dropped: %s", type(failure).__name__)
+    asyncio.run(closed())
 
 
 def through(reflexer_key, base=BASE, sample=1.0, namespace=None, answer=True, store=True, pass_through=False, timeout_ms=None):
@@ -274,5 +302,4 @@ def through(reflexer_key, base=BASE, sample=1.0, namespace=None, answer=True, st
     litellm.client_session, litellm.aclient_session = session(httpx.Client, sync, own["client_session"], way), session(Kept, aio, own["aclient_session"], way)
     litellm.input_callback[:] = [each for each in litellm.input_callback if not isinstance(each, Hook)]  # where LiteLLM filed the last
     litellm.callbacks[:] = [each for each in litellm.callbacks if not isinstance(each, Hook)] + [Hook(aio)]
-    litellm.in_memory_llm_clients_cache.flush_cache()  # the clients LiteLLM made before, kept for reuse: made anew, by the line
-    litellm.module_level_client = HTTPHandler(timeout=litellm.request_timeout)  # its one kept apart, made anew as LiteLLM makes it
+    dropped()

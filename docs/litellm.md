@@ -2,7 +2,7 @@
 
 Send LiteLLM's calls to OpenAI, Azure OpenAI, Anthropic, Gemini and Bedrock through reflexer: add one line. The line covers `litellm.completion` and `acompletion`, streamed or not, from your code or from a framework built on LiteLLM. LiteLLM sends its calls to other providers, or to another host (a router or a gateway given as `api_base`), as before, except for a call's own `ssl_verify` ([Known limits](limits.md#libraries)). A [dry run](advanced.md#a-dry-run-give-reflexer-your-providers-answer) (`replay_response`) is the exception: the SDK sends it only to reflexer. The line does not cover LiteLLM's Proxy.
 
-**Before you begin:** you need LiteLLM 1 on Python 3.10 or later, and the environment variable `REFLEXER_KEY` set to the reflexer key you got at onboarding. LiteLLM reads your provider keys where it read them before.
+**Before you begin:** you need LiteLLM 1.108 or later, below 2, on Python 3.10 or later, and the environment variable `REFLEXER_KEY` set to the reflexer key you got at onboarding. LiteLLM reads your provider keys where it read them before.
 
 ## 1. Install
 
@@ -76,6 +76,6 @@ All options: [Advanced](advanced.md).
 
 ## Supported versions
 
-LiteLLM 1 on Python 3.10 or later. With another major version of LiteLLM, `import reflexer.litellm` raises an error.
+LiteLLM 1.108 or later, below 2, on Python 3.10 or later. With another major version of LiteLLM, `import reflexer.litellm` raises an error.
 
 Next: [When reflexer fails](when-reflexer-fails.md) · [Advanced](advanced.md) · [Reference](reference.md)

@@ -197,7 +197,7 @@ async function afterTimeout(request, next, ctx) {
     return await next(request);
   } catch (failure) {
     const { signal, timeout } = ctx?.options ?? {};
-    if (!CUT.has(request.signal) || signal?.aborted || !timeout) throw failure;
+    if (!CUT.has(request.signal) || !timeout) throw failure;
     const headers = new Headers(request.headers);
     headers.set(SKIP, "true"); // straight: the line takes it off
     return bounded((cut) => next({ ...request, headers, signal: cut }), signal, timeout);

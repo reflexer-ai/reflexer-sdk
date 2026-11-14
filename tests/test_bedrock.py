@@ -823,7 +823,8 @@ def what_an_httpx_line_hands_the_client():
         async def streamed():
             return [chunk async for chunk in out["stream"]]
         chunks = loop.run_until_complete(streamed()) if is_async else list(out["stream"])
-        if is_async:
+        if is_async:  # a stream's generator left suspended is closed by a task of the loop: run it before closing, as asyncio.run does
+            loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
         found[(sdk, is_async)] = (where, bool(harness.text_of(t.sdk, out["answer"])) and bool(chunks))
     return found
@@ -1041,7 +1042,12 @@ class Promises(Case):
                 self.assertEqual(where, [])
 
     def test_nothing_a_served_call_on_an_httpx_line_hands_the_client_holds_the_key(self):
-        for line, (where, read) in what_an_httpx_line_hands_the_client().items():
+        import gc
+        gc.collect()  # what earlier tests left is collected here, outside the check
+        with self.assertNoLogs("asyncio", level="ERROR"):  # no task of a stream left pending when its loop closed
+            found = what_an_httpx_line_hands_the_client()
+            gc.collect()
+        for line, (where, read) in found.items():
             with self.subTest(line=line):
                 self.assertEqual((where, read), ([], True))
 

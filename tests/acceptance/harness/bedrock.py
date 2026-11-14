@@ -323,12 +323,11 @@ class PydanticAi(Lib):
 def without_litellms_line():
     """LiteLLM as stock in this process: what reflexer's line set, undone, and the clients LiteLLM made under it dropped."""
     import litellm
-    from litellm.llms.custom_httpx.http_handler import HTTPHandler
+    import reflexer.litellm
     for name in ("client_session", "aclient_session", "sync_transport"):
         setattr(litellm, name, getattr(getattr(litellm, name, None), "reflexer_own", getattr(litellm, name, None)))
     litellm.callbacks[:] = [each for each in litellm.callbacks if type(each).__module__ != "reflexer.litellm"]
-    litellm.in_memory_llm_clients_cache.flush_cache()
-    litellm.module_level_client = HTTPHandler(timeout=litellm.request_timeout)
+    reflexer.litellm.dropped()
 
 
 class Litellm(Lib):

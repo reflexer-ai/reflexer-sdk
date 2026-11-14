@@ -2,7 +2,7 @@
 LiteLLM's real library over the acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this
 machine only), sync and async, streamed and not; and each check shown red under a planted fault.
 Offline, every key and answer made up. Run: python -m unittest tests.test_litellm"""
-import asyncio, contextlib, json, os, socket, sys, shutil, threading, time, unittest
+import asyncio, contextlib, json, os, socket, subprocess, sys, shutil, threading, time, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -67,9 +67,8 @@ class World(unittest.TestCase):
         self.addCleanup(self.close)
         saved = {name: getattr(litellm, name, None) for name in (*GLOBALS, "module_level_client")}
         lists = {name: list(getattr(litellm, name)) for name in CALLBACK_LISTS}
-        self.addCleanup(lambda: ([setattr(litellm, name, value) for name, value in saved.items()],
-                                 [getattr(litellm, name).__setitem__(slice(None), value) for name, value in lists.items()],
-                                 litellm.in_memory_llm_clients_cache.flush_cache()))
+        self.addCleanup(lambda: (reflexer.litellm.dropped(), [setattr(litellm, name, value) for name, value in saved.items()],
+                                 [getattr(litellm, name).__setitem__(slice(None), value) for name, value in lists.items()]))
         bedrock.without_litellms_line()  # a line another test of this process ran, as the docs' examples do
 
     def close(self):
@@ -333,6 +332,76 @@ class Line(World):
             for is_async, stream in WAYS:
                 with self.subTest(provider=provider, is_async=is_async, stream=stream):
                     self.assertEqual(self.ask(provider, is_async, stream), standins.SERVED_TEXT)
+
+    def test_the_async_clients_dropped_by_the_line_are_closed_by_exit(self):
+        """An async call before the line, by `module_level_aclient` as a streamed call's, its connection kept alive by the
+        server; the line run after its event loop ended, or in it, with no yield after; then the process exits: every aiohttp
+        session LiteLLM made before the line is closed by then, none is logged unclosed at exit, where LiteLLM's filter on
+        asyncio's log fails ("sys.meta_path is None"), and no close is left undone in an event loop."""
+        script = """import asyncio, atexit, sys, threading, aiohttp, litellm
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+made = []
+atexit.register(lambda: print("open", sum(not session.closed for session in made)))  # run after the line's close at exit
+import reflexer.litellm
+class Kept(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"  # the connection kept alive, in aiohttp's pool
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("content-length", 0)))
+        self.send_response(200)
+        self.send_header("content-length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
+    def log_message(self, *args):
+        pass
+server = ThreadingHTTPServer(("127.0.0.1", 0), Kept)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+def sessions():
+    handlers = [*litellm.in_memory_llm_clients_cache.cache_dict.values(), litellm.module_level_aclient]
+    found = [getattr(getattr(getattr(handler, "client", None), "_transport", None), "client", None) for handler in handlers]
+    return [session for session in found if isinstance(session, aiohttp.ClientSession)]
+async def asked(line):
+    await litellm.module_level_aclient.post(f"http://127.0.0.1:{server.server_port}", json={})
+    if line:
+        made.extend(sessions())
+        reflexer.litellm.through(sys.argv[2])
+asyncio.run(asked(sys.argv[1] == "in its loop"))
+if sys.argv[1] == "after its loop":
+    made.extend(sessions())
+    reflexer.litellm.through(sys.argv[2])
+"""
+        for where in ("after its loop", "in its loop"):
+            done = subprocess.run([sys.executable, "-c", script, where, self.world.key], capture_output=True, text=True,
+                                  timeout=60, cwd=ROOT, env=os.environ | {"PYTHONPATH": ROOT})
+            self.assertEqual((done.returncode, done.stdout.split()[-2:]), (0, ["open", "0"]), (where, done.stdout, done.stderr))
+            for logged in ("Unclosed client session", "sys.meta_path is None", "Task was destroyed", "was never awaited"):
+                self.assertNotIn(logged, done.stderr, where)
+
+    def test_the_clients_own_async_session_stays_open(self):
+        """The line drops LiteLLM's client made around the client's own `aclient_session`, and leaves that session open."""
+        theirs = litellm.aclient_session = __import__("httpx").AsyncClient()
+        self.assertEqual(self.ask("openai", True), standins.STRAIGHT_TEXT)
+        reflexer.litellm.through(self.world.key)
+        self.assertFalse(theirs.is_closed)
+
+    def test_litellms_clients_the_line_does_not_drop_stay_open(self):
+        """LiteLLM's aiohttp handler for `aiohttp_openai/` models, which the line neither drops nor makes anew, stays open:
+        a call made before the line is made again after it, in the same event loop (its session is of one loop), as before."""
+        given = dict(model="aiohttp_openai/frontier-x", api_key=harness.PROVIDER_KEY["openai"], messages=MESSAGES, num_retries=0)
+
+        async def twice():
+            before = (await litellm.acompletion(**given)).choices[0].message.content
+            reflexer.litellm.through(self.world.key)
+            return before, (await litellm.acompletion(**given)).choices[0].message.content
+        self.assertEqual(asyncio.run(twice()), (standins.STRAIGHT_TEXT, standins.STRAIGHT_TEXT))
+
+    def test_litellms_module_level_aclient_is_made_anew_and_the_clients_own_stays(self):
+        litellms = litellm.module_level_aclient  # made by LiteLLM, in its cache
+        reflexer.litellm.through(self.world.key)
+        self.assertIsNot(litellm.module_level_aclient, litellms)
+        theirs = litellm.module_level_aclient = AsyncHTTPHandler()
+        self.addCleanup(delattr, litellm, "module_level_aclient")
+        reflexer.litellm.through(self.world.key)
+        self.assertIs(litellm.module_level_aclient, theirs)
 
     def test_another_providers_call_never_reaches_reflexer(self):
         """Calls on a wire reflexer takes, at a host not the provider's: other providers of LiteLLM's, and Bedrock's Mantle,

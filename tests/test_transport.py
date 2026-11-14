@@ -16,6 +16,7 @@ BODY = {"id": "made-up", "usage": {"in": 1}}
 SECRET = "rfx1_aaaaakq_" + "a" * 52
 KEY = f"{SECRET}_{reflexer.checksum(SECRET)}"  # made up, of the form
 LONG = 10**6  # seconds: past every wait
+HUNG_UP_WITHIN = 5  # seconds the stand-in is given to see a cancelled call's socket close
 
 
 def wrapped(answer, library=httpx2, **settings):
@@ -559,30 +560,43 @@ class SharedArguments(unittest.TestCase):
     def setUp(self):
         import http.server, threading
         self.go_on = threading.Event()
-        go_on = self.go_on
+        self.hung_up = threading.Event()
+        go_on, hung_up = self.go_on, self.hung_up
 
         class Slow(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path == "/hold":  # no headers until let go
+                try:
+                    if self.path == "/hold":  # no headers until let go
+                        go_on.wait(10)
+                    self.send_response(200)
+                    self.send_header("content-length", "8")
+                    self.end_headers()
+                    self.wfile.write(b"made")
+                    self.wfile.flush()
                     go_on.wait(10)
-                self.send_response(200)
-                self.send_header("content-length", "8")
-                self.end_headers()
-                self.wfile.write(b"made")
-                self.wfile.flush()
-                go_on.wait(10)
-                self.wfile.write(b"-up!")
+                    self.wfile.write(b"-up!")
+                except (BrokenPipeError, ConnectionResetError):
+                    if self.path != "/hold":
+                        raise
+                    hung_up.set()  # the client closed its socket: what a cancelled call does
 
             def log_message(self, *_):
                 pass
 
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        class Recording(http.server.ThreadingHTTPServer):
+            def handle_error(self, request, client_address):  # the default prints the traceback to stderr
+                self.errors.append(sys.exc_info()[1])
+
+        self.server = Recording(("127.0.0.1", 0), Slow)
+        self.server.errors = []
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_port}/slow"  # no message call: it goes straight, by our clients
 
     def tearDown(self):
         self.go_on.set()
         self.server.shutdown()
+        self.server.server_close()
+        self.assertEqual(self.server.errors, [], "the stand-in's handler raised")
 
     def test_one_closing_leaves_the_others_call_in_flight_whole(self):
         both = reflexer.gemini.client_args(KEY)["transport"]
@@ -632,12 +646,18 @@ class SharedArguments(unittest.TestCase):
 
     def test_a_cancelled_call_stays_cancelled(self):
         async def run():
-            task = asyncio.ensure_future(httpx.AsyncClient(transport=reflexer.gemini.client_args(KEY)["transport"]).get(self.url.replace("/slow", "/hold")))
+            client = httpx.AsyncClient(transport=reflexer.gemini.client_args(KEY)["transport"])
+            task = asyncio.ensure_future(client.get(self.url.replace("/slow", "/hold")))
             await asyncio.sleep(0.2)
             task.cancel()
-            await task
+            try:
+                await task
+            finally:
+                await client.aclose()
         with self.assertRaises(asyncio.CancelledError):
             asyncio.run(run())
+        self.go_on.set()  # the stand-in writes to the closed socket
+        self.assertTrue(self.hung_up.wait(HUNG_UP_WITHIN), "the client never hung up")
 
     def test_a_call_racing_a_close_is_sent_on_an_open_client(self):
         import threading

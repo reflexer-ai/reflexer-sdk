@@ -11,6 +11,7 @@ GROUPS_ALL="--group dev --group test --group frameworks --group bedrock"
 GROUPS_PY="--no-default-groups --group test --group frameworks --group bedrock"
 work=$(mktemp -d)
 trap 'rm -r "$work"' EXIT
+trap 'exit 1' INT TERM HUP  # dash runs no EXIT trap on a signal: this turns one into an exit, which runs it
 
 job_check() {
   uv sync --locked $GROUPS_ALL

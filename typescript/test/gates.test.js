@@ -3,11 +3,13 @@ import * as acorn from "acorn";
 import * as walk from "acorn-walk";
 import * as scope from "eslint-scope";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { PACKAGE } from "./checks.js";
+import { PACKAGE, scratch } from "./checks.js";
 
 /** What each file may import: Node's built-ins that open no socket and run no process, and a provider's SDK in its own file. */
 const ALLOWED = {
@@ -157,8 +159,8 @@ describe("Gates", () => {
 describe("Broken", () => {
   let root = "";
   const FAULTS = join(tmpdir(), "reflexer-gates-");
-  before(async () => {
-    root = await mkdtemp(FAULTS);
+  before(() => {
+    root = scratch("reflexer-gates-");
   });
   after(async () => {
     assert.ok(root.startsWith(FAULTS), root); // only the folder made above
@@ -249,5 +251,45 @@ describe("Broken", () => {
     const copy = await plant("src/logic.js", "export const made = (/** @type {any} */ other) => other._madeUpPrivate;");
     assert.deepEqual((await measure(copy)).privateNames, ["_madeUpPrivate"]);
     assert.deepEqual(await overBudget(copy), ["privateNames: 1, budget 0"]);
+  });
+});
+
+describe("A run killed", () => {
+  const APPEARS_WITHIN_MS = 60_000; // a run is given this long to make its folder, at most: Node's start, on a loaded machine
+  const POLL_MS = 5; // Broken runs in a fraction of a second: its folder is looked for often
+
+  /** `node --test` on Broken, in the temp directory `tmp` and a process group of its own, sent SIGTERM as soon as its new
+   * reflexer-gates- folder is there: that folder, and how the run ended. */
+  async function killedOnceMade(/** @type {string} */ tmp, /** @type {Set<string>} */ seen) {
+    const env = { ...process.env, TMPDIR: tmp };
+    delete env.NODE_TEST_CONTEXT; // set by the runner around this file: a run of its own drops it
+    const run = spawn(process.execPath, ["--test", "--test-name-pattern=Broken", "test/gates.test.js"],
+      { cwd: PACKAGE, env, detached: true, stdio: "ignore" });
+    /** @type {Promise<[number | null, string | null]>} */
+    const ended = new Promise((resolve) => run.on("exit", (code, signal) => resolve([code, signal])));
+    let exited = false;
+    ended.then(() => { exited = true; });
+    const deadline = Date.now() + APPEARS_WITHIN_MS;
+    let folder;
+    while (!folder && !exited && Date.now() < deadline) {
+      folder = readdirSync(tmp).find((name) => name.startsWith("reflexer-gates-") && !seen.has(name));
+      if (!folder) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+    if (!exited) process.kill(-(/** @type {number} */ (run.pid)), "SIGTERM");
+    const [code, signal] = await ended;
+    assert.ok(folder, `no folder within ${APPEARS_WITHIN_MS} ms; the run ended with ${code ?? signal}`);
+    return { folder, code, signal };
+  }
+
+  test("leaves its folder to the next run, which removes it", async () => {
+    const tmp = scratch("scratch-killed-");
+    try {
+      const first = await killedOnceMade(tmp, new Set());
+      assert.notEqual(first.code, 0, "a run sent SIGTERM ends with a failure");
+      await killedOnceMade(tmp, new Set([first.folder]));
+      assert.ok(!existsSync(join(tmp, first.folder)), "the folder of the run killed is still there after the next run started");
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
   });
 });

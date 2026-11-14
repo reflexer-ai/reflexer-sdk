@@ -1,10 +1,10 @@
 """The suite's own test: each fault planted in the SDK turns its cases red, and every judged case is turned red by some
 fault, so a green run means something. Offline. Run: python -m unittest tests.acceptance.test_controls (a few minutes)."""
-import concurrent.futures, errno, json, os, re, shutil, socket, subprocess, sys, tempfile, unittest
+import concurrent.futures, errno, json, os, re, shutil, socket, subprocess, sys, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import faults  # noqa: E402 the faults and conditions the controls plant
+import faults, scratch  # noqa: E402 the faults and conditions the controls plant; temp folders
 CONTROL_JOBS = 4  # cases at a time within one control
 PARALLEL_CONTROLS = 6
 RUN_LIMIT = 300  # seconds a control's run may take
@@ -210,7 +210,7 @@ def run_suite(fault, only, work, condition=None, more=()):
 
 class Controls(unittest.TestCase):
     def test_each_fault_turns_its_cases_red_and_every_judged_case_is_turned_red(self):
-        work = tempfile.mkdtemp(prefix="acceptance-controls-")
+        work = scratch.folder("acceptance-controls-")
         self.addCleanup(shutil.rmtree, work, True)
 
         def run_one(fault):
@@ -236,7 +236,7 @@ class Controls(unittest.TestCase):
 
     def test_the_sdk_as_it_is_is_green_where_the_faults_are_red(self):
         """So that red is the fault's doing, not the case's."""
-        work = tempfile.mkdtemp(prefix="acceptance-clean-")
+        work = scratch.folder("acceptance-clean-")
         self.addCleanup(shutil.rmtree, work, True)
         rows = run_suite(None, ["routing_the_key_never", "no_harm_reflexer_dead", "fields_on_a_served"], work)
         self.assertEqual({row["status"] for row in rows}, {"pass"}, rows)
@@ -245,7 +245,7 @@ class Controls(unittest.TestCase):
         """So each case that discards a stalled try is seen to need it, and its freeze to land where it breaks it."""
         import cases
         self.assertEqual(sorted(case["name"] for case in cases.CASES if case["tries"] > 1), sorted(faults.FREEZES))
-        work = tempfile.mkdtemp(prefix="acceptance-frozen-")
+        work = scratch.folder("acceptance-frozen-")
         self.addCleanup(shutil.rmtree, work, True)
         rows = [row for row in run_suite(None, sorted(faults.FREEZES), work, "a_freeze", ("--tries", "1")) if row["status"] != "cannot"]
         self.assertEqual(sorted({row["case"] for row in rows}), sorted(faults.FREEZES))
@@ -253,7 +253,7 @@ class Controls(unittest.TestCase):
         self.assertEqual(green, [], "\n".join(green))
 
     def test_a_slow_machines_moment_turns_no_case_red(self):
-        work = tempfile.mkdtemp(prefix="acceptance-slow-")
+        work = scratch.folder("acceptance-slow-")
         self.addCleanup(shutil.rmtree, work, True)
         with concurrent.futures.ThreadPoolExecutor(PARALLEL_CONTROLS) as pool:
             ran = list(pool.map(lambda condition: (condition, run_suite(None, SLOW_MACHINE[condition], work, condition)), SLOW_MACHINE))

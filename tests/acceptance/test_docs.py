@@ -17,13 +17,13 @@ the reader's code, runs as it reads after the change, in the language its commen
 A `python`, `js` or `diff` block with no such comment fails, and so does a code block of any other language but `sh`
 and an output's `text`, a word the comment does not know, or a fence of tildes, which no check reads.
 """
-import contextlib, faulthandler, glob, io, logging, os, re, shutil, sys, tempfile, unittest, warnings
+import contextlib, faulthandler, glob, io, logging, os, re, shutil, sys, unittest, warnings
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path[:0] = [HERE, ROOT]
-import harness  # noqa: E402
+import harness, scratch  # noqa: E402
 from harness import bedrock, certs, standins  # noqa: E402
 from run import AMBIENT  # noqa: E402
 
@@ -59,7 +59,7 @@ def blocks():
 class Docs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tmp = tempfile.mkdtemp(prefix="docs-")
+        tmp = scratch.folder("docs-")
         cls.addClassCleanup(shutil.rmtree, tmp)
         authority = certs.Certs(tmp, harness.NAMES)
         environment = mock.patch.dict(os.environ)  # the caller's, given back after

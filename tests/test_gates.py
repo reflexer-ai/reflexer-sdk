@@ -1,20 +1,21 @@
 """The static promises, and a planted fault for each that shows its gate can fail. Offline, no network.
 Run: uv run --group dev python -m unittest tests.test_gates"""
-import ast, builtins, importlib, importlib.util, os, pathlib, re, shutil, subprocess, sys, tempfile, tomllib, types, unittest
+import ast, builtins, importlib, importlib.util, os, pathlib, re, shutil, subprocess, sys, tomllib, types, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")  # the import gate imports the provider SDKs: LiteLLM's prices from its own copy
 
 
-def tool_module(name):
-    """tools/<name>.py, loaded by its path: no module of the same name elsewhere on the path stands in for it."""
-    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
+def tool_module(name, folder="tools"):
+    """<folder>/<name>.py, loaded by its path: no module of the same name elsewhere on the path stands in for it."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / folder / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 budget, majors, promises = tool_module("budget"), tool_module("majors"), tool_module("promises")
+scratch = tool_module("scratch", "tests/acceptance")  # the suites' temp folders
 
 STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata.version", "ipaddress", "json", "logging", "random", "re",
                "time", "urllib.parse", "weakref"}
@@ -426,7 +427,7 @@ class Broken(unittest.TestCase):
     """Each gate above, red on a copy of the tree with one fault planted."""
 
     def setUp(self):
-        self.root = pathlib.Path(tempfile.mkdtemp(prefix="reflexer-gates-"))
+        self.root = pathlib.Path(scratch.folder("reflexer-gates-"))
         self.addCleanup(shutil.rmtree, self.root)
         for name in ("reflexer", "tools", ".github", "typescript/src", "typescript/test"):
             shutil.copytree(ROOT / name, self.root / name)

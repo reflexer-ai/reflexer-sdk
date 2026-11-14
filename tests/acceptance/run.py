@@ -8,7 +8,7 @@ case, and `--condition NAME` a slow machine's moment of its `CONDITIONS`, for `t
 pass: held. fail: broken. cannot: the case cannot apply; it stays in the table with what the client sees. open: a known
 gap, failing on what is not built yet; reported, not failing the run. `-`: that SDK has no such call.
 """
-import argparse, importlib.metadata, json, logging, os, shutil, signal, sys, tempfile, time, traceback
+import argparse, importlib.metadata, json, logging, os, shutil, signal, sys, time, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -202,14 +202,14 @@ def main():
 
     for name in AMBIENT:
         os.environ.pop(name, None)
-    import faults, harness, lines  # noqa: F401 lines: the SDKs, imported once before the forks
+    import faults, harness, lines, scratch  # noqa: F401 lines: the SDKs, imported once before the forks
     from harness import certs
     if arguments.fault and arguments.fault not in faults.FAULTS:
         parser.error(f"no such fault: {arguments.fault}")
     if arguments.condition and arguments.condition not in faults.CONDITIONS:
         parser.error(f"no such condition: {arguments.condition}")
     harness.resolver.install()
-    tmp = tempfile.mkdtemp(prefix="acceptance-")
+    tmp = scratch.folder("acceptance-")
     try:
         authority = certs.Certs(tmp, harness.NAMES)
         os.environ["SSL_CERT_FILE"] = os.environ["AWS_CA_BUNDLE"] = authority.ca  # AWS_CA_BUNDLE: botocore's own trust

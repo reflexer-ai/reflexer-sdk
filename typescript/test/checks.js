@@ -1,11 +1,35 @@
 // What the promise tests check, on the package as loaded from a folder: the source, or a copy with one fault planted.
 // Offline: every call ends at a mock `fetch`, which follows redirects as `fetch` does. Every value made up.
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
+
+/**
+ * A new folder `<prefix><pid>-<random>` in the temp directory, its caller removing it. First removes the folders named so
+ * with `prefix` whose process is gone: only those, never another name. A run killed by a signal runs no `after` or
+ * `finally`, and its folder stays until the next run (commons testing/GUIDE.md, Resources). No signal is handled here.
+ * @param {string} prefix
+ */
+export function scratch(prefix) {
+  const root = tmpdir();
+  const alive = (/** @type {number} */ pid) => {
+    try {
+      return process.kill(pid, 0);
+    } catch (error) {
+      return /** @type {NodeJS.ErrnoException} */ (error).code === "EPERM"; // another user's process
+    }
+  };
+  for (const name of readdirSync(root)) {
+    const pid = name.startsWith(prefix) && /^([1-9][0-9]*)-[^/]+$/.exec(name.slice(prefix.length))?.[1];
+    if (pid && !alive(Number(pid))) rmSync(join(root, name), { recursive: true, force: true }); // a link: removed, not followed
+  }
+  return mkdtempSync(join(root, `${prefix}${process.pid}-`));
+}
 
 // Offline: a call to anywhere but this machine fails, so a provider SDK that ignores the `fetch` it is given reaches no one
 const realFetch = globalThis.fetch;

@@ -257,6 +257,7 @@ describe("Broken", () => {
 
 describe("A run killed", () => {
   const APPEARS_WITHIN_MS = 60_000; // a run is given this long to make its folder, at most: Node's start, on a loaded machine
+  const HELD_MS = 300; // how long a made-up test holds its folder: past its runner's end
   const POLL_MS = 5; // Broken runs in a fraction of a second: its folder is looked for often
 
   /** `node --test` on Broken, in the temp directory `tmp` and a process group of its own, sent `signal` as soon as its new
@@ -308,6 +309,34 @@ describe("A run killed", () => {
       assert.notEqual(status, 0);
       assert.ok(printed.trim().startsWith(tmp), printed);
       assert.ok(!existsSync(printed.trim()), "the folder is still there after the exception");
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
+  });
+
+  test("whose runner ends first removes its folder", async () => {
+    const tmp = scratch("killed");
+    try {
+      const file = join(tmp, "held.test.mjs");
+      await writeFile(file, `import { test } from "node:test";
+import { scratch } from ${JSON.stringify(pathToFileURL(join(PACKAGE, "test", "checks.js")).href)};
+test("holds", async () => { scratch("held"); await new Promise((resolve) => setTimeout(resolve, ${HELD_MS})); });
+`);
+      const env = { ...process.env, TMPDIR: tmp };
+      delete env.NODE_TEST_CONTEXT;
+      const run = spawn(process.execPath, ["--test", file], { env, stdio: "ignore" });
+      const deadline = Date.now() + APPEARS_WITHIN_MS;
+      let folder;
+      while (!folder && Date.now() < deadline) {
+        folder = readdirSync(tmp).find((name) => name.startsWith("reflexer-sdk-test-held-"));
+        if (!folder) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      }
+      assert.ok(folder, "no folder");
+      run.kill("SIGKILL"); // the runner only: its test process writes its result to a pipe no one reads
+      const maker = Number(/-([0-9]+)-[A-Za-z0-9]{6}$/.exec(folder)?.[1]);
+      while (Date.now() < deadline && running(maker)) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      assert.ok(!running(maker), `the test process ${maker} still runs`);
+      assert.ok(!existsSync(join(tmp, folder)), "the folder is still there after its test process ended");
     } finally {
       await rm(tmp, { recursive: true });
     }

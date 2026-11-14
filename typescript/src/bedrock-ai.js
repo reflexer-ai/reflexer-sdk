@@ -7,7 +7,7 @@
  * (this machine's, uncorrected), so the fallback reaches Bedrock while its signature holds.
  */
 import { fetch as bedrockFetch, skipped } from "./bedrock.js";
-import { BASE, OURS, SKIP, skips, skipsByOption } from "./logic.js";
+import { BASE, OURS, SKIP, bounded, skips, skipsByOption } from "./logic.js";
 
 const NOT_A_SKIP_OPTION = "the providerOptions.reflexer.skip option must be true or false: true sends the call directly to the provider, false lets the call go through reflexer";
 
@@ -35,13 +35,7 @@ export function fetch(key, options = {}) {
   const windowed = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
     const time = String(input).startsWith(base) ? left(new Headers(init.headers)) : null;
     if (time === null) return own(input, init);
-    const late = new AbortController();
-    const clock = setTimeout(() => late.abort(new DOMException("reflexer's answer did not start while the signature holds", "TimeoutError")), time);
-    try {
-      return await own(input, { ...init, signal: init.signal ? AbortSignal.any([init.signal, late.signal]) : late.signal });
-    } finally {
-      clearTimeout(clock);
-    }
+    return bounded((signal) => own(input, { ...init, signal }), init.signal, time, "reflexer's answer did not start while the signature holds");
   };
   const through = bedrockFetch(key, { ...options, fetch: windowed, signed: true });
   return (/** @type {any} */ input, /** @type {any} */ init = {}) => {

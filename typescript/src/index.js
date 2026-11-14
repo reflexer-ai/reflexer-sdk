@@ -3,7 +3,7 @@
  * client's own `fetch`, so its proxy, TLS and connections hold. Whatever fails on the way to reflexer, the client's own call
  * still goes. No answer is touched.
  */
-import { BASE, OURS, Reflexer, ReplayNotTaken, checked, isReplay } from "./logic.js";
+import { BASE, OURS, Reflexer, ReplayNotTaken, SKIP, bounded, checked, isReplay } from "./logic.js";
 
 export * from "./logic.js";
 
@@ -28,6 +28,8 @@ const STREAMED = /(:streamGenerateContent|\/invoke-with-response-stream|\/conver
 const KEPT = ["method", "signal", "dispatcher"]; // of a client's request options, what reflexer's request keeps
 export const HEADERS_TIMEOUT = 300_000; // ms reflexer's leg waits for its answer to start: undici's own default, provisional
 const WAYS = new WeakMap(); // each fetch made here, and its way, for an SDK's copy of a client
+const CUT = new WeakMap(); // each client's signal that ended during reflexer's leg, as a key
+
 
 /**
  * A `fetch` that sends a provider's calls through reflexer: give it as the provider SDK's `fetch` option.
@@ -46,15 +48,17 @@ function through(wire, way) {
     tested(new Headers(init.headers));
     checked(new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))); // a wrong value throws here, before anything is sent
     const streamed = STREAMED.test(String(input).split(/[?#]/)[0]) || /"stream":\s*true/.test(textOf(init.body) ?? ""); // after a timeout, its caller has ended it already
-    const began = init.signal?.aborted || streamed ? null : performance.now(); // the client's own signal, still live as reflexer's leg starts
+    const live = !init.signal?.aborted; // the client's own signal, still live as reflexer's leg starts
+    const began = live && !streamed ? performance.now() : null;
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {
-        const answer = await bounded(send, ours, way.headersTimeout ?? HEADERS_TIMEOUT);
+        const answer = await bounded((signal) => send(ours[0], { ...ours[1], signal }), ours[1].signal, way.headersTimeout ?? HEADERS_TIMEOUT, "reflexer's answer did not start in time"); // a reflexer that hangs still falls back, whatever the client's own timeout
         if (!reflexer.goesStraight(answer.status, answer.headers)) return answer;
         await answer.body?.cancel();
       }
     } catch (failure) {
+      if (live && init.signal?.aborted) CUT.set(init.signal, true);
       reflexer.failed(failure);
     }
     const signal = afresh(init.signal, began);
@@ -63,21 +67,6 @@ function through(wire, way) {
 
   WAYS.set(routed, way);
   return routed;
-}
-
-/**
- * Reflexer's leg, failing when its answer has not started within `ms`: a reflexer that hangs still falls back, whatever
- * the client's own timeout. Once the answer starts, it runs as the client's would.
- * @param {Fetch} send @param {[string, RequestInit]} ours @param {number} ms
- */
-async function bounded(send, [url, init], ms) {
-  const late = new AbortController();
-  const clock = setTimeout(() => late.abort(new DOMException("reflexer's answer did not start in time", "TimeoutError")), ms);
-  try {
-    return await send(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, late.signal]) : late.signal });
-  } finally {
-    clearTimeout(clock);
-  }
 }
 
 /**
@@ -195,6 +184,27 @@ export function tested(headers) {
 }
 
 /**
+ * The middleware `client` adds for an SDK that arms its timeout around each inner fetch and cuts with no reason, as a
+ * cancel does (@anthropic-ai/sdk). Above that timer it sees the client's own signal (`ctx.options.signal`): reflexer's leg
+ * cut while that signal is live was cut by the timer, so `next` again, straight, with the client's whole timeout to the
+ * answer's start, as the SDK's own timer, and its cancel joined. Its caller waits, streamed too. A middleware of the
+ * client's that swaps `request.signal` for one of its own and aborts it reads here as a timeout; a per-request one, inside
+ * this, that swaps it makes the check miss: the call fails as before.
+ * @param {any} request @param {any} next @param {any} ctx
+ */
+async function afterTimeout(request, next, ctx) {
+  try {
+    return await next(request);
+  } catch (failure) {
+    const { signal, timeout } = ctx?.options ?? {};
+    if (!CUT.has(request.signal) || !timeout) throw failure;
+    const headers = new Headers(request.headers);
+    headers.set(SKIP, "true"); // straight: the line takes it off
+    return bounded((cut) => next({ ...request, headers, signal: cut }), signal, timeout);
+  }
+}
+
+/**
  * @template {abstract new (...args: any) => any} C
  * @typedef {(new (options?: ConstructorParameters<C>[0] & { reflexerKey?: string, reflexerBase?: string, sample?: number, reflexerNamespace?: string, reflexerAnswer?: boolean, reflexerStore?: boolean, reflexerPassThrough?: boolean, reflexerTimeoutMs?: number }) => InstanceType<C>) & C} Reflexed
  */
@@ -206,9 +216,10 @@ export function tested(headers) {
  * @template {new (options?: any) => { withOptions(options: any): any }} C
  * @param {C} Stock
  * @param {Wire} wire
+ * @param {{ middleware?: boolean }} [options] `middleware`: add `afterTimeout`, after the client's own, for an SDK whose middleware runs above its timer (@anthropic-ai/sdk's)
  * @returns {Reflexed<C>}
  */
-export function client(Stock, wire) {
+export function client(Stock, wire, { middleware = false } = {}) {
   // @ts-ignore: a mixin's constructor takes the stock options, and ours
   class Client extends Stock {
     #way;
@@ -217,7 +228,8 @@ export function client(Stock, wire) {
     constructor({ reflexerKey, reflexerBase = BASE, sample = 1, reflexerNamespace, reflexerAnswer, reflexerStore, reflexerPassThrough, reflexerTimeoutMs, ...config } = {}) {
       const options = { answer: reflexerAnswer, store: reflexerStore, passThrough: reflexerPassThrough, timeoutMs: reflexerTimeoutMs };
       const routed = WAYS.has(config.fetch) ? config.fetch : through(wire, { key: reflexerKey, base: reflexerBase, sample, namespace: reflexerNamespace, ...options, fetch: config.fetch });
-      super({ ...config, fetch: routed });
+      const own = config.middleware ?? [];
+      super({ ...config, fetch: routed, ...(middleware && { middleware: own.includes(afterTimeout) ? own : [...own, afterTimeout] }) }); // a copy is given ours back
       this.#way = WAYS.get(routed);
     }
 

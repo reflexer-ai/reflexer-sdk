@@ -59,7 +59,7 @@ export function scratch(name, root = tmpdir()) {
     process.prependListener("exit", removeMade); // first: another listener that throws (the test runner's, its parent gone) stops the rest
     for (const signal of SIGNALS) process.on(signal, onSignal);
     // Its reader gone (a test runner ended by SIGHUP before its test process), a write to stdout fails: thrown, it ended
-    // the test process (exit code 7) before its SIGHUP listener ran. Kept, the listener runs, or the exit listener.
+    // the test process (exit code 7) before its SIGHUP listener ran. With EPIPE ignored, the SIGHUP listener runs; if none comes, the exit listener removes the folders.
     process.stdout.on("error", (/** @type {NodeJS.ErrnoException} */ error) => {
       if (error.code !== "EPIPE") throw error;
     });

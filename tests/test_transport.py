@@ -566,8 +566,12 @@ class SharedArguments(unittest.TestCase):
         class Slow(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 try:
-                    if self.path == "/hold":  # no headers until let go
+                    if self.path == "/hold":  # no answer until let go; by then a cancelled call has closed its socket
                         go_on.wait(10)
+                        self.connection.settimeout(HUNG_UP_WITHIN)
+                        if self.connection.recv(1) == b"":  # read, not written: a write may land before the close is seen
+                            hung_up.set()
+                        return
                     self.send_response(200)
                     self.send_header("content-length", "8")
                     self.end_headers()

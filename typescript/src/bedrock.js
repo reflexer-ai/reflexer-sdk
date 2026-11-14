@@ -9,7 +9,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { HEADERS_TIMEOUT, afresh, provider, textOf } from "./index.js";
-import { BASE, OPTION_HEADERS, OURS, Reflexer, ReplayNotTaken, SKIP, checked, isReplay, skips, skipsByOption } from "./logic.js";
+import { BASE, OPTION_HEADERS, OURS, Reflexer, ReplayNotTaken, SKIP, bounded, checked, isReplay, skips, skipsByOption } from "./logic.js";
 
 export const WIRE = { reflexerPath: "/bedrock", calls: /\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/ };
 const call = new AsyncLocalStorage(); // a call's own, set around it by our middleware: { skipped, seen, again, given }
@@ -60,22 +60,6 @@ function straight(send, input, init) {
   if (!keyed(headers)) return send(input, init);
   for (const name of [...headers.keys()].filter((name) => name.startsWith(OURS))) headers.delete(name);
   return send(input, { ...init, headers });
-}
-
-/**
- * `start(signal)`, cut when its answer has not started within `ms`; once it starts, it runs as the client's own would.
- * `given`: the client's own signal, joined.
- * @template T @param {(signal: AbortSignal) => Promise<T>} start @param {AbortSignal | null | undefined} given @param {number} ms
- * @returns {Promise<T>}
- */
-async function bounded(start, given, ms) {
-  const late = new AbortController();
-  const clock = setTimeout(() => late.abort(new DOMException("the answer did not start in time", "TimeoutError")), ms);
-  try {
-    return await start(given ? AbortSignal.any([given, late.signal]) : late.signal);
-  } finally {
-    clearTimeout(clock);
-  }
 }
 
 /**

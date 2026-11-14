@@ -262,6 +262,22 @@ export class Breaker {
 }
 
 /**
+ * `start(signal)`, cut when its answer has not started within `ms`; once it starts, it runs as the client's own would.
+ * `given`: the client's own signal, joined.
+ * @template T @param {(signal: AbortSignal) => Promise<T>} start @param {AbortSignal | null | undefined} given @param {number} ms @param {string} [why] the cut's message
+ * @returns {Promise<T>}
+ */
+export async function bounded(start, given, ms, why = "the answer did not start in time") {
+  const late = new AbortController();
+  const clock = setTimeout(() => late.abort(new DOMException(why, "TimeoutError")), ms);
+  try {
+    return await start(given ? AbortSignal.any([given, late.signal]) : late.signal);
+  } finally {
+    clearTimeout(clock);
+  }
+}
+
+/**
  * A header's whole number, or null for a value reflexer did not send, and so ignored.
  * @param {string | null | undefined} value
  */

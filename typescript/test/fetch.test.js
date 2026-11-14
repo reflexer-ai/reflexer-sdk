@@ -460,6 +460,59 @@ describe("The client's own timeout at reflexer", () => {
     assert.deepEqual(seen, [check.REFLEXER]);
   });
 
+  test("the Anthropic class: a fast failure at reflexer, then Anthropic's own timeout, is not sent again", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const seen = /** @type {string[]} */ ([]);
+    const fetch = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+      init.signal?.throwIfAborted();
+      const url = new URL(input);
+      seen.push(url.host);
+      if (url.host === check.REFLEXER) throw new TypeError("fetch failed"); // reflexer unreachable, at once
+      return check.stalled(init.signal);
+    };
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, timeout: TIMEOUT, maxRetries: 0 });
+    const began = performance.now();
+    const failure = await ask(client).catch((error) => error);
+    const took = performance.now() - began;
+    assert.equal(failure.constructor.name, "APIConnectionTimeoutError");
+    assert.deepEqual(seen, [check.REFLEXER, "api.anthropic.com"]);
+    assert.ok(took < 2 * TIMEOUT - 20, `took ${took}ms`);
+  });
+
+  test("the Anthropic class: a cancel of the client's during the call sent to Anthropic after the timeout cancels it", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledOwn("stalls");
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, timeout: TIMEOUT, maxRetries: 0 });
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), 1.5 * TIMEOUT);
+    const began = performance.now();
+    const failure = await ask(client, { signal: cancel.signal }).catch((error) => error);
+    const took = performance.now() - began;
+    assert.equal(failure.constructor.name, "APIUserAbortError");
+    assert.deepEqual(seen, [check.REFLEXER, "api.anthropic.com"]);
+    assert.ok(took < 2 * TIMEOUT - 20, `took ${took}ms`);
+  });
+
+  test("the Anthropic class, a known limit: after the timeout, a stream's `controller.abort()` does not stop the call to Anthropic; the client's signal does", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const legs = /** @type {AbortSignal[]} */ ([]);
+    const fetch = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+      init.signal?.throwIfAborted();
+      legs.push(init.signal);
+      if (new URL(input).host === check.REFLEXER) return check.stalled(init.signal);
+      const body = new ReadableStream({ start: (stream) => init.signal.addEventListener("abort", () => stream.error(init.signal.reason)) }); // an answer that never ends
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    };
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, timeout: TIMEOUT, maxRetries: 0 });
+    const cancel = new AbortController();
+    const stream = await client.messages.create({ model: "m", max_tokens: 1, messages: [], stream: true }, { signal: cancel.signal });
+    assert.equal(legs.length, 2);
+    stream.controller.abort();
+    assert.equal(legs[1].aborted, false, "the stream's own controller reached the call to Anthropic");
+    cancel.abort();
+    assert.equal(legs[1].aborted, true, "the client's own signal did not reach the call to Anthropic");
+  });
+
   test("the Anthropic class keeps the client's own middleware, and a copy holds ours once", () => {
     const own = (/** @type {any} */ request, /** @type {any} */ next) => next(request);
     const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, middleware: [own] });

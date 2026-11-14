@@ -96,7 +96,7 @@
   },
   "reflexer": {
     "budget": {
-      "lines": 382,
+      "lines": 368,
       "ifs": 61,
       "privateNames": 0,
       "bedrock": {
@@ -104,8 +104,8 @@
           "bedrock.js",
           "bedrock-ai.js"
         ],
-        "lines": 232,
-        "ifs": 46,
+        "lines": 217,
+        "ifs": 44,
         "privateNames": 0
       }
     }

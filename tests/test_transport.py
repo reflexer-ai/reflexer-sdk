@@ -17,6 +17,7 @@ SECRET = "rfx1_aaaaakq_" + "a" * 52
 KEY = f"{SECRET}_{reflexer.checksum(SECRET)}"  # made up, of the form
 LONG = 10**6  # seconds: past every wait
 HUNG_UP_WITHIN = 5  # seconds the stand-in is given to see a cancelled call's socket close
+REACHED_WITHIN = 10  # seconds a call is given to reach the stand-in, on a loaded machine
 
 
 def wrapped(answer, library=httpx2, **settings):
@@ -560,13 +561,14 @@ class SharedArguments(unittest.TestCase):
     def setUp(self):
         import http.server, threading
         self.go_on = threading.Event()
-        self.hung_up = threading.Event()
-        go_on, hung_up = self.go_on, self.hung_up
+        self.hung_up, self.held = threading.Event(), threading.Event()
+        go_on, hung_up, held = self.go_on, self.hung_up, self.held
 
         class Slow(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 try:
                     if self.path == "/hold":  # no answer until let go; by then a cancelled call has closed its socket
+                        held.set()
                         go_on.wait(10)
                         self.connection.settimeout(HUNG_UP_WITHIN)
                         if self.connection.recv(1) == b"":  # read, not written: a write may land before the close is seen
@@ -588,6 +590,8 @@ class SharedArguments(unittest.TestCase):
                 pass
 
         class Recording(http.server.ThreadingHTTPServer):
+            daemon_threads = False  # server_close() waits for the handlers, so an error they raise late is still seen
+
             def handle_error(self, request, client_address):  # the default prints the traceback to stderr
                 self.errors.append(sys.exc_info()[1])
 
@@ -652,7 +656,7 @@ class SharedArguments(unittest.TestCase):
         async def run():
             client = httpx.AsyncClient(transport=reflexer.gemini.client_args(KEY)["transport"])
             task = asyncio.ensure_future(client.get(self.url.replace("/slow", "/hold")))
-            await asyncio.sleep(0.2)
+            self.assertTrue(await asyncio.to_thread(self.held.wait, REACHED_WITHIN), "the call never reached the stand-in")
             task.cancel()
             try:
                 await task
@@ -660,7 +664,7 @@ class SharedArguments(unittest.TestCase):
                 await client.aclose()
         with self.assertRaises(asyncio.CancelledError):
             asyncio.run(run())
-        self.go_on.set()  # the stand-in writes to the closed socket
+        self.go_on.set()  # the stand-in reads the closed socket
         self.assertTrue(self.hung_up.wait(HUNG_UP_WITHIN), "the client never hung up")
 
     def test_a_call_racing_a_close_is_sent_on_an_open_client(self):

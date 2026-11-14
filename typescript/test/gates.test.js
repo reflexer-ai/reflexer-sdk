@@ -3,11 +3,14 @@ import * as acorn from "acorn";
 import * as walk from "acorn-walk";
 import * as scope from "eslint-scope";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, test } from "node:test";
-import { PACKAGE } from "./checks.js";
+import { PACKAGE, scratch } from "./checks.js";
 
 /** What each file may import: Node's built-ins that open no socket and run no process, and a provider's SDK in its own file. */
 const ALLOWED = {
@@ -156,9 +159,9 @@ describe("Gates", () => {
 
 describe("Broken", () => {
   let root = "";
-  const FAULTS = join(tmpdir(), "reflexer-gates-");
-  before(async () => {
-    root = await mkdtemp(FAULTS);
+  const FAULTS = join(tmpdir(), "reflexer-sdk-test-ts-gates-");
+  before(() => {
+    root = scratch("ts-gates");
   });
   after(async () => {
     assert.ok(root.startsWith(FAULTS), root); // only the folder made above
@@ -249,5 +252,117 @@ describe("Broken", () => {
     const copy = await plant("src/logic.js", "export const made = (/** @type {any} */ other) => other._madeUpPrivate;");
     assert.deepEqual((await measure(copy)).privateNames, ["_madeUpPrivate"]);
     assert.deepEqual(await overBudget(copy), ["privateNames: 1, budget 0"]);
+  });
+});
+
+describe("A run killed", () => {
+  const APPEARS_WITHIN_MS = 60_000; // a run is given this long to make its folder, at most: Node's start, on a loaded machine
+  const HELD_MS = 300; // how long a made-up test holds its folder: past its runner's end
+  const POLL_MS = 5; // Broken runs in a fraction of a second: its folder is looked for often
+
+  /** `node --test` on Broken, in the temp directory `tmp` and a process group of its own, sent `signal` as soon as its new
+   * reflexer-sdk-test-ts-gates- folder is there: that folder, once the test process that made it (its pid in the name) has
+   * ended too. At SIGHUP the runner ends at once, before its test process. */
+  async function killedOnceMade(/** @type {string} */ tmp, /** @type {Set<string>} */ seen, /** @type {NodeJS.Signals} */ signal) {
+    const env = { ...process.env, TMPDIR: tmp };
+    delete env.NODE_TEST_CONTEXT; // set by the runner around this file: a run of its own drops it
+    const run = spawn(process.execPath, ["--test", "--test-name-pattern=Broken", "test/gates.test.js"],
+      { cwd: PACKAGE, env, detached: true, stdio: "ignore" });
+    /** @type {Promise<[number | null, string | null]>} */
+    const ended = new Promise((resolve) => run.on("exit", (code, end) => resolve([code, end])));
+    let exited = false;
+    ended.then(() => { exited = true; });
+    const deadline = Date.now() + APPEARS_WITHIN_MS;
+    let folder;
+    while (!folder && !exited && Date.now() < deadline) {
+      folder = readdirSync(tmp).find((name) => name.startsWith("reflexer-sdk-test-ts-gates-") && !seen.has(name));
+      if (!folder) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+    const sent = !exited;
+    if (sent) process.kill(-(/** @type {number} */ (run.pid)), signal);
+    const [code, end] = await ended;
+    assert.ok(folder && sent, `no folder within ${APPEARS_WITHIN_MS} ms, or the run ended before the signal: ${code ?? end}`);
+    assert.notEqual(code, 0, `a run sent ${signal} ends with a failure`);
+    const maker = Number(/-([0-9]+)-[A-Za-z0-9]{6}$/.exec(folder)?.[1]);
+    while (Date.now() < deadline && running(maker)) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    assert.ok(!running(maker), `the test process ${maker} still runs`);
+    return folder;
+  }
+
+  const running = (/** @type {number} */ pid) => {
+    try {
+      return process.kill(pid, 0);
+    } catch {
+      return false;
+    }
+  };
+
+  test("by an uncaught exception removes its folder", async () => {
+    const tmp = scratch("killed");
+    try {
+      const code = `const { scratch } = await import(${JSON.stringify(pathToFileURL(join(PACKAGE, "test", "checks.js")).href)});
+        console.log(scratch("thrown")); setTimeout(() => { throw new Error("made up"); });`;
+      const run = spawn(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, TMPDIR: tmp }, stdio: ["ignore", "pipe", "ignore"] });
+      let printed = "";
+      run.stdout.on("data", (chunk) => { printed += chunk; });
+      const status = await new Promise((resolve) => run.on("exit", resolve));
+      assert.notEqual(status, 0);
+      assert.ok(printed.trim().startsWith(tmp), printed);
+      assert.ok(!existsSync(printed.trim()), "the folder is still there after the exception");
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
+  });
+
+  test("whose runner ends first removes its folder", async () => {
+    const tmp = scratch("killed");
+    try {
+      const file = join(tmp, "held.test.mjs");
+      await writeFile(file, `import { test } from "node:test";
+import { scratch } from ${JSON.stringify(pathToFileURL(join(PACKAGE, "test", "checks.js")).href)};
+test("holds", async () => { scratch("held"); await new Promise((resolve) => setTimeout(resolve, ${HELD_MS})); });
+`);
+      const env = { ...process.env, TMPDIR: tmp };
+      delete env.NODE_TEST_CONTEXT;
+      const run = spawn(process.execPath, ["--test", file], { env, stdio: "ignore" });
+      const deadline = Date.now() + APPEARS_WITHIN_MS;
+      let folder;
+      while (!folder && Date.now() < deadline) {
+        folder = readdirSync(tmp).find((name) => name.startsWith("reflexer-sdk-test-held-"));
+        if (!folder) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      }
+      assert.ok(folder, "no folder");
+      run.kill("SIGKILL"); // the runner only: its test process writes its result to a pipe no one reads
+      const maker = Number(/-([0-9]+)-[A-Za-z0-9]{6}$/.exec(folder)?.[1]);
+      while (Date.now() < deadline && running(maker)) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      assert.ok(!running(maker), `the test process ${maker} still runs`);
+      assert.ok(!existsSync(join(tmp, folder)), "the folder is still there after its test process ended");
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
+  });
+
+  test("by SIGTERM or SIGHUP removes its folder", async () => {
+    const tmp = scratch("killed");
+    try {
+      for (const signal of /** @type {const} */ (["SIGTERM", "SIGHUP"])) {
+        const folder = await killedOnceMade(tmp, new Set(), signal);
+        assert.ok(!existsSync(join(tmp, folder)), `the folder is still there after ${signal}`);
+      }
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
+  });
+
+  test("by SIGKILL leaves its folder to the next run, which removes it", async () => {
+    const tmp = scratch("killed");
+    try {
+      const folder = await killedOnceMade(tmp, new Set(), "SIGKILL");
+      assert.ok(existsSync(join(tmp, folder)), "SIGKILL leaves the folder: no listener sees it");
+      await killedOnceMade(tmp, new Set([folder]), "SIGKILL");
+      assert.ok(!existsSync(join(tmp, folder)), "the folder of the run killed is still there after the next run started");
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
   });
 });

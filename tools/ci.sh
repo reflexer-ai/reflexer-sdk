@@ -9,8 +9,13 @@ NODES=${NODES:-20 22 24}
 JOBS=${*:-check python typescript}
 GROUPS_ALL="--group dev --group test --group frameworks --group bedrock"
 GROUPS_PY="--no-default-groups --group test --group frameworks --group bedrock"
-work=$(mktemp -d)
-trap 'rm -r "$work"' EXIT
+work=""
+remove_work() { [ -z "$work" ] || rm -r "$work"; work=""; }
+trap remove_work EXIT
+for signal in INT TERM HUP; do  # dash runs no EXIT trap on a signal: each removes the folder, then ends the run by its signal
+  trap "remove_work; trap - $signal; kill -$signal \$\$" "$signal"
+done
+work=$(python3 tests/acceptance/scratch.py ci $$)  # named with this shell's pid: a run killed by SIGKILL leaves it to the next run to remove
 
 job_check() {
   uv sync --locked $GROUPS_ALL

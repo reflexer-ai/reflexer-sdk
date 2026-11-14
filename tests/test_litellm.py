@@ -2,12 +2,12 @@
 LiteLLM's real library over the acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this
 machine only), sync and async, streamed and not; and each check shown red under a planted fault.
 Offline, every key and answer made up. Run: python -m unittest tests.test_litellm"""
-import asyncio, contextlib, json, os, socket, sys, tempfile, shutil, threading, time, unittest
+import asyncio, contextlib, json, os, socket, sys, shutil, threading, time, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [os.path.join(ROOT, "tests", "acceptance"), ROOT]
-import harness  # noqa: E402 the acceptance suite's stand-ins
+import harness, scratch  # noqa: E402 the acceptance suite's stand-ins and temp folders
 from harness import bedrock, certs, standins  # noqa: E402
 import litellm  # noqa: E402
 from litellm.integrations.custom_logger import CustomLogger  # noqa: E402
@@ -43,7 +43,7 @@ LOGGED_WAIT, LOGGED_POLL = 5.0, 0.01  # seconds a callback is waited on, at most
 
 def setUpModule():
     SAVED.update(socket=(socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex), env=dict(os.environ))
-    SAVED["folder"] = tempfile.mkdtemp(prefix="reflexer-litellm-")
+    SAVED["folder"] = scratch.folder("litellm")
     SAVED["certs"] = certs.Certs(SAVED["folder"], harness.NAMES)
     for name in bedrock.AMBIENT:
         os.environ.pop(name, None)

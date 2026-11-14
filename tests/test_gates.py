@@ -1,6 +1,6 @@
 """The static promises, and a planted fault for each that shows its gate can fail. Offline, no network.
 Run: uv run --group dev python -m unittest tests.test_gates"""
-import ast, builtins, importlib, importlib.util, os, pathlib, re, shutil, subprocess, sys, tempfile, tomllib, types, unittest
+import ast, builtins, importlib, importlib.util, os, pathlib, re, shutil, subprocess, sys, tomllib, types, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")  # the import gate imports the provider SDKs: LiteLLM's prices from its own copy
@@ -15,6 +15,8 @@ def tool_module(name):
 
 
 budget, majors, promises = tool_module("budget"), tool_module("majors"), tool_module("promises")
+sys.path.insert(0, str(ROOT / "tests" / "acceptance"))
+import scratch  # noqa: E402 the suites' temp folders: imported, not loaded by path, so one handler serves every suite of a run
 
 STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata.version", "ipaddress", "json", "logging", "random", "re",
                "time", "urllib.parse", "weakref"}
@@ -372,6 +374,19 @@ def local_paths(root):
     return [name for name in names if name and (root / name).is_file() and LOCAL.search((root / name).read_text(errors="replace"))]
 
 
+TEMP_MAKERS = re.compile(r"\b(mkdtemp|mkdtempSync|mkstemp|TemporaryDirectory|NamedTemporaryFile|mktemp)\b")  # the gate's own line
+TEMP_HELPERS = {"tests/acceptance/scratch.py", "typescript/test/checks.js"}  # the two helpers
+
+
+def temp_makers(root):
+    """Every test or tool file, but the two helpers, that makes a temp file or folder its own way: a run ended by a signal
+    would leave it behind. A line ending "the gate's own line" names them to find them, and is passed."""
+    return sorted(str(path.relative_to(root)) for folder in ("tests", "tools", "typescript/test", "typescript/tools") if (root / folder).is_dir()
+                  for path in (root / folder).rglob("*") if path.suffix in (".py", ".js", ".sh") and path.is_file()
+                  and str(path.relative_to(root)) not in TEMP_HELPERS
+                  and any(TEMP_MAKERS.search(line) for line in path.read_text(errors="replace").split("\n") if not line.endswith("the gate's own line")))
+
+
 def licenses_differ(root):
     """Whether typescript/LICENSE, which npm packs (only the license beside its package.json), differs from LICENSE."""
     return (root / "typescript" / "LICENSE").read_bytes() != (root / "LICENSE").read_bytes()
@@ -383,6 +398,9 @@ class Gates(unittest.TestCase):
 
     def test_no_dependency(self):
         self.assertEqual(dependencies(ROOT), [])
+
+    def test_temp_folders_are_made_by_the_two_helpers_only(self):
+        self.assertEqual(temp_makers(ROOT), [])
 
     def test_the_build_backend_is_pinned(self):
         self.assertEqual(unpinned_build(ROOT), [])
@@ -426,7 +444,7 @@ class Broken(unittest.TestCase):
     """Each gate above, red on a copy of the tree with one fault planted."""
 
     def setUp(self):
-        self.root = pathlib.Path(tempfile.mkdtemp(prefix="reflexer-gates-"))
+        self.root = pathlib.Path(scratch.folder("gates"))
         self.addCleanup(shutil.rmtree, self.root)
         for name in ("reflexer", "tools", ".github", "typescript/src", "typescript/test"):
             shutil.copytree(ROOT / name, self.root / name)
@@ -440,6 +458,12 @@ class Broken(unittest.TestCase):
     def assert_typescript_turns_semgrep_red(self, text):
         self.plant("index.js", text, package="typescript/src")
         self.assertNotEqual(semgrep(self.root), 0, text)
+
+    def test_a_temp_folder_made_its_own_way_turns_it_red(self):
+        for maker in ("mkdtemp()", "mkstemp()", "NamedTemporaryFile(delete=False)"):  # the gate's own line
+            self.plant("made_up.py", f"import tempfile\nwork = tempfile.{maker}", package="tools")
+            self.assertEqual(temp_makers(self.root), ["tools/made_up.py"], maker)
+            (self.root / "tools" / "made_up.py").unlink()
 
     def test_a_dependency_turns_it_red(self):
         path = self.root / "pyproject.toml"

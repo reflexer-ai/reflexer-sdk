@@ -1,11 +1,73 @@
 // What the promise tests check, on the package as loaded from a folder: the source, or a copy with one fault planted.
 // Offline: every call ends at a mock `fetch`, which follows redirects as `fetch` does. Every value made up.
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
+
+const NAMESPACE = "reflexer-sdk-test-";
+// Every folder of the namespace, by either helper: its name, its pid, and the random part mkdtemp or Python's tempfile adds
+const FORM = /^reflexer-sdk-test-[a-z][a-z0-9-]*-([1-9][0-9]{0,9})-(?:[A-Za-z0-9]{6}|[a-z0-9_]{8})$/;
+const SIGNALS = /** @type {const} */ (["SIGTERM", "SIGHUP", "SIGINT"]);
+/** @type {Set<string>} */
+const MADE = new Set(); // the folders this process made
+
+/** True only when no process has this id: a process of another user is not gone. */
+function gone(/** @type {number} */ pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return /** @type {NodeJS.ErrnoException} */ (error).code === "ESRCH";
+  }
+}
+
+function removeMade() {
+  for (const path of MADE) rmSync(path, { recursive: true, force: true });
+}
+
+/** @param {NodeJS.Signals} signal */
+function onSignal(signal) {
+  removeMade();
+  process.removeListener(signal, onSignal);
+  if (process.listenerCount(signal) === 0) process.kill(process.pid, signal); // the default now: the run ends with this signal
+}
+
+/**
+ * A new folder `reflexer-sdk-test-<name>-<pid>-<random>` in `root` (the temp directory by default), <pid> this process.
+ * The code that asks for it removes it at a normal end or a failure; at any exit of the process (an uncaught exception
+ * included) a listener on `exit`, first of all, removes what is left. At SIGTERM, SIGHUP or SIGINT a listener, set with
+ * the first folder, removes the folders this process made, then lets the signal end the run. At SIGKILL, which no
+ * listener sees, the folder stays until the next run that asks for a folder: it first removes every folder of the
+ * namespace whose process is gone, only names of exactly this form, real folders of this user (commons testing/GUIDE.md,
+ * Resources). As tests/acceptance/scratch.py does for the Python suites.
+ * @param {string} name @param {string} [root]
+ */
+export function scratch(name, root = tmpdir()) {
+  assert.match(name, /^[a-z][a-z0-9-]*$/, "a folder's name is lower-case letters, digits and dashes");
+  for (const entry of readdirSync(root)) {
+    const pid = FORM.exec(entry)?.[1];
+    if (!pid) continue;
+    const held = lstatSync(join(root, entry), { throwIfNoEntry: false });
+    if (held?.isDirectory() && held.uid === process.getuid?.() && gone(Number(pid))) rmSync(join(root, entry), { recursive: true, force: true });
+  }
+  if (!process.listeners("exit").includes(removeMade)) { // before the folder is made
+    process.prependListener("exit", removeMade); // first: another listener that throws (the test runner's, its parent gone) stops the rest
+    for (const signal of SIGNALS) process.on(signal, onSignal);
+    // Its reader gone (a test runner ended by SIGHUP before its test process), a write to stdout fails: thrown, it ended
+    // the test process (exit code 7) before its SIGHUP listener ran. With EPIPE ignored, the SIGHUP listener runs; if none comes, the exit listener removes the folders.
+    process.stdout.on("error", (/** @type {NodeJS.ErrnoException} */ error) => {
+      if (error.code !== "EPIPE") throw error;
+    });
+  }
+  const path = mkdtempSync(join(root, `${NAMESPACE}${name}-${process.pid}-`));
+  MADE.add(path);
+  return path;
+}
 
 // Offline: a call to anywhere but this machine fails, so a provider SDK that ignores the `fetch` it is given reaches no one
 const realFetch = globalThis.fetch;
@@ -29,7 +91,6 @@ export function stalled(signal) {
 }
 export const CHAT = "https://api.openai.com/v1/chat/completions";
 export const REPLAY = '{"model": "made-up", "replay_response": {"id": "made-up"}}';
-const FAULTS = ".fault-"; // what starts each folder a fault is planted in, inside the package's own
 
 /** The package's modules, from `src` in `root`. */
 export async function load(root = PACKAGE) {
@@ -46,7 +107,7 @@ export async function load(root = PACKAGE) {
  * @param {string} file @param {string} from @param {string} to @param {(sdk: Awaited<ReturnType<typeof load>>) => Promise<void>} use
  */
 export async function planted(file, from, to, use) {
-  const root = await mkdtemp(join(PACKAGE, FAULTS));
+  const root = scratch("fault", PACKAGE);
   try {
     await cp(join(PACKAGE, "src"), join(root, "src"), { recursive: true });
     const text = await readFile(join(root, "src", file), "utf8");
@@ -54,7 +115,7 @@ export async function planted(file, from, to, use) {
     await writeFile(join(root, "src", file), text.replace(from, () => to));
     await use(await load(root));
   } finally {
-    assert.ok(root.startsWith(join(PACKAGE, FAULTS)), root); // only the folder made above
+    assert.ok(root.startsWith(join(PACKAGE, `${NAMESPACE}fault-`)), root); // only the folder made above
     await rm(root, { recursive: true });
   }
 }

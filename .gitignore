@@ -5,6 +5,5 @@ dist/
 build/
 typescript/node_modules/
 typescript/types/
-typescript/.fault-*/
+typescript/reflexer-sdk-test-*/
 typescript/*.tgz
-typescript/.docs-*/

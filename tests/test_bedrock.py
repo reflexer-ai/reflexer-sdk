@@ -2,12 +2,12 @@
 acceptance suite's stand-ins in this process (real sockets and TLS, names resolved to this machine only), and each check
 shown red under a planted fault; and what the lines read of another's package that no public name gives.
 Offline, every key, credential and answer made up. Run: python -m unittest tests.test_bedrock"""
-import asyncio, datetime, json, os, socket, sys, tempfile, shutil, threading, time, traceback, types, unittest
+import asyncio, datetime, json, os, socket, sys, shutil, threading, time, traceback, types, unittest
 from unittest import mock
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [os.path.join(ROOT, "tests", "acceptance"), ROOT]
-import harness, lines  # noqa: E402 the acceptance suite's stand-ins and lines
+import harness, lines, scratch  # noqa: E402 the acceptance suite's stand-ins, lines and temp folders
 from harness import bedrock, certs  # noqa: E402
 import reflexer, reflexer.transport  # noqa: E402
 import reflexer.aiobotocore, reflexer.anthropic_bedrock, reflexer.bedrock, reflexer.boto3, reflexer.litellm  # noqa: E402
@@ -26,7 +26,7 @@ TIMEZONE = "America/Sao_Paulo"  # CI runs in UTC, where a signing time read as l
 
 def setUpModule():
     SAVED.update(socket=(socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex), env=dict(os.environ))
-    folder = tempfile.mkdtemp(prefix="reflexer-bedrock-")
+    folder = scratch.folder("bedrock")
     SAVED["folder"], SAVED["certs"] = folder, certs.Certs(folder, harness.NAMES)
     for name in bedrock.AMBIENT:
         os.environ.pop(name, None)

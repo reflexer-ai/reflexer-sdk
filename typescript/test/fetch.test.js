@@ -407,6 +407,67 @@ describe("The client's own timeout at reflexer", () => {
     assert.deepEqual(hosts(seen), [check.REFLEXER]);
   });
 
+  /** The client's own `fetch` for a client class: reflexer takes the call and never answers; the provider answers, or stalls too. */
+  function stalledOwn(provider = "answers") {
+    const seen = /** @type {string[]} */ ([]);
+    const fetch = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
+      init.signal?.throwIfAborted(); // as a real fetch: a call whose signal is already cut is never sent
+      const url = new URL(input);
+      seen.push(url.host);
+      return url.host !== check.REFLEXER && provider === "answers" ? check.providers(url) : check.stalled(init.signal);
+    };
+    return { fetch, seen };
+  }
+  const ask = (/** @type {any} */ client, options = {}) => client.messages.create({ model: "m", max_tokens: 1, messages: [] }, options);
+
+  test("the Anthropic class: its own timeout during reflexer's leg sends the call to Anthropic, in the same attempt", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledOwn();
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, timeout: TIMEOUT, maxRetries: 0 });
+    const answer = await ask(client);
+    assert.equal(answer.id, "made-up");
+    assert.deepEqual(seen, [check.REFLEXER, "api.anthropic.com"]);
+  });
+
+  test("the Anthropic class: a streamed call goes to Anthropic too, its caller still waiting", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledOwn();
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, timeout: TIMEOUT, maxRetries: 0 });
+    await client.messages.create({ model: "m", max_tokens: 1, messages: [], stream: true });
+    assert.deepEqual(seen, [check.REFLEXER, "api.anthropic.com"]);
+  });
+
+  test("the Anthropic class: the call to Anthropic has the client's timeout again, up to twice the timeout in all", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledOwn("stalls");
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, timeout: TIMEOUT, maxRetries: 0 });
+    const began = performance.now();
+    const failure = await ask(client).catch((error) => error);
+    const took = performance.now() - began;
+    assert.equal(failure.constructor.name, "APIConnectionTimeoutError");
+    assert.deepEqual(seen, [check.REFLEXER, "api.anthropic.com"]);
+    assert.ok(took >= 2 * TIMEOUT - 20 && took < 4 * TIMEOUT, `took ${took}ms`);
+  });
+
+  test("the Anthropic class: a cancel of the client's during reflexer's leg cancels the call", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const { fetch, seen } = stalledOwn();
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, fetch, maxRetries: 0 });
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), TIMEOUT);
+    const failure = await ask(client, { signal: cancel.signal }).catch((error) => error);
+    assert.equal(failure.constructor.name, "APIUserAbortError");
+    assert.deepEqual(seen, [check.REFLEXER]);
+  });
+
+  test("the Anthropic class keeps the client's own middleware, and a copy holds ours once", () => {
+    const own = (/** @type {any} */ request, /** @type {any} */ next) => next(request);
+    const client = new sdk.anthropic.Anthropic({ apiKey: "made-up", reflexerKey: key, middleware: [own] });
+    assert.equal(client.middleware[0], own);
+    assert.equal(client.middleware.length, 2);
+    assert.deepEqual(client.withOptions({ timeout: 1 }).middleware, client.middleware);
+  });
+
   test("a `Request`'s own signal still cancels its call: no `signal` is added to its options", async () => {
     const own = async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
       const signal = "signal" in init ? init.signal : input.signal; // as node-fetch 3 takes it: a `signal` key, even undefined, wins

@@ -28,6 +28,10 @@ const STREAMED = /(:streamGenerateContent|\/invoke-with-response-stream|\/conver
 const KEPT = ["method", "signal", "dispatcher"]; // of a client's request options, what reflexer's request keeps
 export const HEADERS_TIMEOUT = 300_000; // ms reflexer's leg waits for its answer to start: undici's own default, provisional
 const WAYS = new WeakMap(); // each fetch made here, and its way, for an SDK's copy of a client
+const CUT = new WeakMap(); // each client's signal that ended during reflexer's leg, as a key
+
+/** Whether the client's own `signal` ended during reflexer's leg of a call: a middleware above the client's timer reads it. @param {AbortSignal | null | undefined} signal */
+export const cutAtReflexer = (signal) => !!signal && CUT.has(signal);
 
 /**
  * A `fetch` that sends a provider's calls through reflexer: give it as the provider SDK's `fetch` option.
@@ -46,7 +50,8 @@ function through(wire, way) {
     tested(new Headers(init.headers));
     checked(new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))); // a wrong value throws here, before anything is sent
     const streamed = STREAMED.test(String(input).split(/[?#]/)[0]) || /"stream":\s*true/.test(textOf(init.body) ?? ""); // after a timeout, its caller has ended it already
-    const began = init.signal?.aborted || streamed ? null : performance.now(); // the client's own signal, still live as reflexer's leg starts
+    const live = !init.signal?.aborted; // the client's own signal, still live as reflexer's leg starts
+    const began = live && !streamed ? performance.now() : null;
     try {
       const ours = toReflexer(reflexer, input, init);
       if (ours) {
@@ -55,6 +60,7 @@ function through(wire, way) {
         await answer.body?.cancel();
       }
     } catch (failure) {
+      if (live && init.signal?.aborted) CUT.set(init.signal, true);
       reflexer.failed(failure);
     }
     const signal = afresh(init.signal, began);

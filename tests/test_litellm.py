@@ -43,7 +43,7 @@ LOGGED_WAIT, LOGGED_POLL = 5.0, 0.01  # seconds a callback is waited on, at most
 
 def setUpModule():
     SAVED.update(socket=(socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex), env=dict(os.environ))
-    SAVED["folder"] = scratch.folder("reflexer-litellm-")
+    SAVED["folder"] = scratch.folder("litellm")
     SAVED["certs"] = certs.Certs(SAVED["folder"], harness.NAMES)
     for name in bedrock.AMBIENT:
         os.environ.pop(name, None)

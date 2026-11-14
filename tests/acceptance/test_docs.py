@@ -59,7 +59,7 @@ def blocks():
 class Docs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tmp = scratch.folder("docs-")
+        tmp = scratch.folder("docs")
         cls.addClassCleanup(shutil.rmtree, tmp)
         authority = certs.Certs(tmp, harness.NAMES)
         environment = mock.patch.dict(os.environ)  # the caller's, given back after

@@ -4,7 +4,7 @@
 // reads them: served, straight or raises, and `bedrock` to run it with a Bedrock API key and signed. A share of calls
 // (`sample`) is drawn at the middle of its range, as there.
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -124,7 +124,7 @@ async function blocks() {
  */
 async function run(t, code, way) {
   const kept = { ...process.env };
-  const folder = await mkdtemp(join(check.PACKAGE, ".docs-"));
+  const folder = check.scratch("docs", check.PACKAGE);
   t.after(() => rm(folder, { recursive: true })); // after a timeout too
   t.after(() => { // in place: the process's own environment object stays
     for (const name of Object.keys(process.env)) if (!(name in kept)) delete process.env[name];

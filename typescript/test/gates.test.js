@@ -158,9 +158,9 @@ describe("Gates", () => {
 
 describe("Broken", () => {
   let root = "";
-  const FAULTS = join(tmpdir(), "reflexer-gates-");
+  const FAULTS = join(tmpdir(), "reflexer-sdk-test-ts-gates-");
   before(() => {
-    root = scratch("reflexer-gates-");
+    root = scratch("ts-gates");
   });
   after(async () => {
     assert.ok(root.startsWith(FAULTS), root); // only the folder made above
@@ -258,36 +258,50 @@ describe("A run killed", () => {
   const APPEARS_WITHIN_MS = 60_000; // a run is given this long to make its folder, at most: Node's start, on a loaded machine
   const POLL_MS = 5; // Broken runs in a fraction of a second: its folder is looked for often
 
-  /** `node --test` on Broken, in the temp directory `tmp` and a process group of its own, sent SIGTERM as soon as its new
-   * reflexer-gates- folder is there: that folder, and how the run ended. */
-  async function killedOnceMade(/** @type {string} */ tmp, /** @type {Set<string>} */ seen) {
+  /** `node --test` on Broken, in the temp directory `tmp` and a process group of its own, sent `signal` as soon as its new
+   * reflexer-sdk-test-ts-gates- folder is there: that folder, and how the run ended. */
+  async function killedOnceMade(/** @type {string} */ tmp, /** @type {Set<string>} */ seen, /** @type {NodeJS.Signals} */ signal) {
     const env = { ...process.env, TMPDIR: tmp };
     delete env.NODE_TEST_CONTEXT; // set by the runner around this file: a run of its own drops it
     const run = spawn(process.execPath, ["--test", "--test-name-pattern=Broken", "test/gates.test.js"],
       { cwd: PACKAGE, env, detached: true, stdio: "ignore" });
     /** @type {Promise<[number | null, string | null]>} */
-    const ended = new Promise((resolve) => run.on("exit", (code, signal) => resolve([code, signal])));
+    const ended = new Promise((resolve) => run.on("exit", (code, end) => resolve([code, end])));
     let exited = false;
     ended.then(() => { exited = true; });
     const deadline = Date.now() + APPEARS_WITHIN_MS;
     let folder;
     while (!folder && !exited && Date.now() < deadline) {
-      folder = readdirSync(tmp).find((name) => name.startsWith("reflexer-gates-") && !seen.has(name));
+      folder = readdirSync(tmp).find((name) => name.startsWith("reflexer-sdk-test-ts-gates-") && !seen.has(name));
       if (!folder) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     }
-    if (!exited) process.kill(-(/** @type {number} */ (run.pid)), "SIGTERM");
-    const [code, signal] = await ended;
-    assert.ok(folder, `no folder within ${APPEARS_WITHIN_MS} ms; the run ended with ${code ?? signal}`);
-    return { folder, code, signal };
+    const sent = !exited;
+    if (sent) process.kill(-(/** @type {number} */ (run.pid)), signal);
+    const [code, end] = await ended;
+    assert.ok(folder && sent, `no folder within ${APPEARS_WITHIN_MS} ms, or the run ended before the signal: ${code ?? end}`);
+    assert.notEqual(code, 0, `a run sent ${signal} ends with a failure`);
+    return folder;
   }
 
-  test("leaves its folder to the next run, which removes it", async () => {
-    const tmp = scratch("scratch-killed-");
+  test("by SIGTERM or SIGHUP removes its folder", async () => {
+    const tmp = scratch("killed");
     try {
-      const first = await killedOnceMade(tmp, new Set());
-      assert.notEqual(first.code, 0, "a run sent SIGTERM ends with a failure");
-      await killedOnceMade(tmp, new Set([first.folder]));
-      assert.ok(!existsSync(join(tmp, first.folder)), "the folder of the run killed is still there after the next run started");
+      for (const signal of /** @type {const} */ (["SIGTERM", "SIGHUP"])) {
+        const folder = await killedOnceMade(tmp, new Set(), signal);
+        assert.ok(!existsSync(join(tmp, folder)), `the folder is still there after ${signal}`);
+      }
+    } finally {
+      await rm(tmp, { recursive: true });
+    }
+  });
+
+  test("by SIGKILL leaves its folder to the next run, which removes it", async () => {
+    const tmp = scratch("killed");
+    try {
+      const folder = await killedOnceMade(tmp, new Set(), "SIGKILL");
+      assert.ok(existsSync(join(tmp, folder)), "SIGKILL leaves the folder: no listener sees it");
+      await killedOnceMade(tmp, new Set([folder]), "SIGKILL");
+      assert.ok(!existsSync(join(tmp, folder)), "the folder of the run killed is still there after the next run started");
     } finally {
       await rm(tmp, { recursive: true });
     }

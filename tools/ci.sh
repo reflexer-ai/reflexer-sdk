@@ -9,9 +9,10 @@ NODES=${NODES:-20 22 24}
 JOBS=${*:-check python typescript}
 GROUPS_ALL="--group dev --group test --group frameworks --group bedrock"
 GROUPS_PY="--no-default-groups --group test --group frameworks --group bedrock"
-work=$(mktemp -d)
-trap 'rm -r "$work"' EXIT
+work=""
+trap '[ -z "$work" ] || rm -r "$work"' EXIT
 trap 'exit 1' INT TERM HUP  # dash runs no EXIT trap on a signal: this turns one into an exit, which runs it
+work=$(python3 tests/acceptance/scratch.py ci $$)  # named with this shell's pid: a run killed by SIGKILL leaves it to the next run to remove
 
 job_check() {
   uv sync --locked $GROUPS_ALL

@@ -26,7 +26,7 @@ TIMEZONE = "America/Sao_Paulo"  # CI runs in UTC, where a signing time read as l
 
 def setUpModule():
     SAVED.update(socket=(socket.getaddrinfo, socket.socket.connect, socket.socket.connect_ex), env=dict(os.environ))
-    folder = scratch.folder("reflexer-bedrock-")
+    folder = scratch.folder("bedrock")
     SAVED["folder"], SAVED["certs"] = folder, certs.Certs(folder, harness.NAMES)
     for name in bedrock.AMBIENT:
         os.environ.pop(name, None)

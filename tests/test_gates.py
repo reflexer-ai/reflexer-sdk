@@ -6,16 +6,17 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")  # the import gate imports the provider SDKs: LiteLLM's prices from its own copy
 
 
-def tool_module(name, folder="tools"):
-    """<folder>/<name>.py, loaded by its path: no module of the same name elsewhere on the path stands in for it."""
-    spec = importlib.util.spec_from_file_location(name, ROOT / folder / f"{name}.py")
+def tool_module(name):
+    """tools/<name>.py, loaded by its path: no module of the same name elsewhere on the path stands in for it."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 budget, majors, promises = tool_module("budget"), tool_module("majors"), tool_module("promises")
-scratch = tool_module("scratch", "tests/acceptance")  # the suites' temp folders
+sys.path.insert(0, str(ROOT / "tests" / "acceptance"))
+import scratch  # noqa: E402 the suites' temp folders: imported, not loaded by path, so one handler serves every suite of a run
 
 STDLIB_CORE = {"base64", "copy", "functools", "threading", "hashlib", "importlib.metadata.version", "ipaddress", "json", "logging", "random", "re",
                "time", "urllib.parse", "weakref"}
@@ -373,6 +374,18 @@ def local_paths(root):
     return [name for name in names if name and (root / name).is_file() and LOCAL.search((root / name).read_text(errors="replace"))]
 
 
+TEMP_MAKERS = re.compile(r"\b(mkdtemp|mkdtempSync|TemporaryDirectory|mktemp)\b")
+TEMP_HELPERS = {"tests/acceptance/scratch.py", "typescript/test/checks.js", "tests/test_gates.py"}  # the two helpers; this file names them
+
+
+def temp_makers(root):
+    """Every test or tool file, but the two helpers, that makes a temp folder its own way: a run ended by a signal would
+    leave it behind."""
+    return sorted(str(path.relative_to(root)) for folder in ("tests", "tools", "typescript/test") if (root / folder).is_dir()
+                  for path in (root / folder).rglob("*") if path.suffix in (".py", ".js", ".sh") and path.is_file()
+                  and str(path.relative_to(root)) not in TEMP_HELPERS and TEMP_MAKERS.search(path.read_text(errors="replace")))
+
+
 def licenses_differ(root):
     """Whether typescript/LICENSE, which npm packs (only the license beside its package.json), differs from LICENSE."""
     return (root / "typescript" / "LICENSE").read_bytes() != (root / "LICENSE").read_bytes()
@@ -384,6 +397,9 @@ class Gates(unittest.TestCase):
 
     def test_no_dependency(self):
         self.assertEqual(dependencies(ROOT), [])
+
+    def test_temp_folders_are_made_by_the_two_helpers_only(self):
+        self.assertEqual(temp_makers(ROOT), [])
 
     def test_the_build_backend_is_pinned(self):
         self.assertEqual(unpinned_build(ROOT), [])
@@ -427,7 +443,7 @@ class Broken(unittest.TestCase):
     """Each gate above, red on a copy of the tree with one fault planted."""
 
     def setUp(self):
-        self.root = pathlib.Path(scratch.folder("reflexer-gates-"))
+        self.root = pathlib.Path(scratch.folder("gates"))
         self.addCleanup(shutil.rmtree, self.root)
         for name in ("reflexer", "tools", ".github", "typescript/src", "typescript/test"):
             shutil.copytree(ROOT / name, self.root / name)
@@ -441,6 +457,10 @@ class Broken(unittest.TestCase):
     def assert_typescript_turns_semgrep_red(self, text):
         self.plant("index.js", text, package="typescript/src")
         self.assertNotEqual(semgrep(self.root), 0, text)
+
+    def test_a_temp_folder_made_its_own_way_turns_it_red(self):
+        self.plant("made_up.py", "import tempfile\nwork = tempfile.mkdtemp()", package="tools")
+        self.assertEqual(temp_makers(self.root), ["tools/made_up.py"])
 
     def test_a_dependency_turns_it_red(self):
         path = self.root / "pyproject.toml"

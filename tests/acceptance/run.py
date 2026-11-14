@@ -209,7 +209,7 @@ def main():
     if arguments.condition and arguments.condition not in faults.CONDITIONS:
         parser.error(f"no such condition: {arguments.condition}")
     harness.resolver.install()
-    tmp = scratch.folder("acceptance-")
+    tmp = scratch.folder("acceptance")
     try:
         authority = certs.Certs(tmp, harness.NAMES)
         os.environ["SSL_CERT_FILE"] = os.environ["AWS_CA_BUNDLE"] = authority.ca  # AWS_CA_BUNDLE: botocore's own trust

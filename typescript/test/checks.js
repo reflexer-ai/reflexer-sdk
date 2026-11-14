@@ -1,34 +1,57 @@
 // What the promise tests check, on the package as loaded from a folder: the source, or a copy with one fault planted.
 // Offline: every call ends at a mock `fetch`, which follows redirects as `fetch` does. Every value made up.
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
 
-/**
- * A new folder `<prefix><pid>-<random>` in the temp directory, its caller removing it. First removes the folders named so
- * with `prefix` whose process is gone: only those, never another name. A run killed by a signal runs no `after` or
- * `finally`, and its folder stays until the next run (commons testing/GUIDE.md, Resources). No signal is handled here.
- * @param {string} prefix
- */
-export function scratch(prefix) {
-  const root = tmpdir();
-  const alive = (/** @type {number} */ pid) => {
-    try {
-      return process.kill(pid, 0);
-    } catch (error) {
-      return /** @type {NodeJS.ErrnoException} */ (error).code === "EPERM"; // another user's process
-    }
-  };
-  for (const name of readdirSync(root)) {
-    const pid = name.startsWith(prefix) && /^([1-9][0-9]*)-[^/]+$/.exec(name.slice(prefix.length))?.[1];
-    if (pid && !alive(Number(pid))) rmSync(join(root, name), { recursive: true, force: true }); // a link: removed, not followed
+const NAMESPACE = "reflexer-sdk-test-";
+const SIGNALS = /** @type {const} */ (["SIGTERM", "SIGHUP", "SIGINT"]);
+/** @type {Map<string, number>} */
+const MADE = new Map(); // folder: the pid of the process that made it
+
+/** True only when no process has this id: an id that is not one, or a process of another user, is not gone. */
+function gone(/** @type {number} */ pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return /** @type {NodeJS.ErrnoException} */ (error).code === "ESRCH";
   }
-  return mkdtempSync(join(root, `${prefix}${process.pid}-`));
+}
+
+/** @param {NodeJS.Signals} signal */
+function onSignal(signal) {
+  for (const [path, pid] of MADE) if (pid === process.pid) rmSync(path, { recursive: true, force: true });
+  process.removeListener(signal, onSignal);
+  if (process.listenerCount(signal) === 0) process.kill(process.pid, signal); // the default now: the run ends with this signal
+}
+
+/**
+ * A new folder `reflexer-sdk-test-<name>-<pid>-<random>` in `root` (the temp directory by default), <pid> this process.
+ * The code that asks for it removes it at a normal end or a failure. At SIGTERM, SIGHUP or SIGINT a listener, set with the
+ * first folder, removes the folders this process made, then lets the signal end the run. At SIGKILL, which no listener
+ * sees, the folder stays until the next run that asks for a folder of the same name: it first removes those whose
+ * process is gone, only names of exactly this form, real folders of this user (commons testing/GUIDE.md, Resources).
+ * As tests/acceptance/scratch.py does for the Python suites.
+ * @param {string} name @param {string} [root]
+ */
+export function scratch(name, root = tmpdir()) {
+  const prefix = `${NAMESPACE}${name}-`;
+  for (const entry of readdirSync(root)) {
+    const pid = entry.startsWith(prefix) && /^([1-9][0-9]{0,9})-[A-Za-z0-9]{6}$/.exec(entry.slice(prefix.length))?.[1];
+    if (!pid) continue;
+    const held = lstatSync(join(root, entry), { throwIfNoEntry: false });
+    if (held?.isDirectory() && held.uid === process.getuid?.() && gone(Number(pid))) rmSync(join(root, entry), { recursive: true, force: true });
+  }
+  if (!process.listeners("SIGTERM").includes(onSignal)) for (const signal of SIGNALS) process.on(signal, onSignal); // before the folder is made
+  const path = mkdtempSync(join(root, `${prefix}${process.pid}-`));
+  MADE.set(path, process.pid);
+  return path;
 }
 
 // Offline: a call to anywhere but this machine fails, so a provider SDK that ignores the `fetch` it is given reaches no one
@@ -53,7 +76,6 @@ export function stalled(signal) {
 }
 export const CHAT = "https://api.openai.com/v1/chat/completions";
 export const REPLAY = '{"model": "made-up", "replay_response": {"id": "made-up"}}';
-const FAULTS = ".fault-"; // what starts each folder a fault is planted in, inside the package's own
 
 /** The package's modules, from `src` in `root`. */
 export async function load(root = PACKAGE) {
@@ -70,7 +92,7 @@ export async function load(root = PACKAGE) {
  * @param {string} file @param {string} from @param {string} to @param {(sdk: Awaited<ReturnType<typeof load>>) => Promise<void>} use
  */
 export async function planted(file, from, to, use) {
-  const root = await mkdtemp(join(PACKAGE, FAULTS));
+  const root = scratch("fault", PACKAGE);
   try {
     await cp(join(PACKAGE, "src"), join(root, "src"), { recursive: true });
     const text = await readFile(join(root, "src", file), "utf8");
@@ -78,7 +100,7 @@ export async function planted(file, from, to, use) {
     await writeFile(join(root, "src", file), text.replace(from, () => to));
     await use(await load(root));
   } finally {
-    assert.ok(root.startsWith(join(PACKAGE, FAULTS)), root); // only the folder made above
+    assert.ok(root.startsWith(join(PACKAGE, `${NAMESPACE}fault-`)), root); // only the folder made above
     await rm(root, { recursive: true });
   }
 }

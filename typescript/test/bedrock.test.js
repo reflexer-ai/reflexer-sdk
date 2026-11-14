@@ -978,7 +978,7 @@ describe("Broken", () => {
 
   test("a scene that never answers fails the frame check within its bound, never hangs it", { skip: noSocket, timeout: FRAMES_WITHIN_MS }, async () => {
     const { writeFileSync, rmSync } = await import("node:fs");
-    const here = check.scratch("frames-");
+    const here = check.scratch("frames");
     try {
       writeFileSync(`${here}/never.js`, "setInterval(() => {}, 1000);\n"); // made up: a scene stuck before its result
       await assert.rejects(framesAtThrows({ ...sdk, key: "made-up" }, `${here}/never.js`, NEVER_WITHIN_MS), /no result within/);

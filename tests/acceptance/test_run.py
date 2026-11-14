@@ -14,7 +14,7 @@ class Results(unittest.TestCase):
         def cut(result, file):
             file.write("{")
             raise KeyboardInterrupt("made up: the write is cut")
-        tmp = scratch.folder("acceptance-run-")
+        tmp = scratch.folder("run")
         self.addCleanup(shutil.rmtree, tmp)
         with mock.patch.object(run.json, "dump", cut):
             out = os.path.join(tmp, "0.json")
@@ -23,7 +23,7 @@ class Results(unittest.TestCase):
             self.assertFalse(os.path.exists(out))
 
     def test_a_result_written_reads_back(self):
-        tmp = scratch.folder("acceptance-run-")
+        tmp = scratch.folder("run")
         self.addCleanup(shutil.rmtree, tmp)
         out = os.path.join(tmp, "0.json")
         run.write_result({"status": "pass"}, out)

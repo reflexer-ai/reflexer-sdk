@@ -13,7 +13,6 @@ export const OURS = "reflexer-"; // what starts each header of ours: none leaves
 export const NAMESPACE = "reflexer-namespace"; // a header of ours a client may give reflexer, as the option or on a call
 export const ANSWER_HEADER = "reflexer-answer", STORE_HEADER = "reflexer-store", PASS_THROUGH_HEADER = "reflexer-pass-through", TIMEOUT_HEADER = "reflexer-timeout-ms";
 export const OPTION_HEADERS = [ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER]; // an option's, given by the client or on a call
-export const PASSED = [NAMESPACE, ...OPTION_HEADERS]; // the headers of ours a client may give reflexer; none leaves for a provider
 /**
  * A client's boolean option: its name in a message, its header, its default (nothing sent), and why it must be true or false.
  * @typedef {[string, string, boolean, string]} Switch
@@ -76,10 +75,9 @@ export class Reflexer {
     // `host` holds no user or password of the URL's: none goes to reflexer
     const upstream = `${address.protocol}//${address.host}${address.pathname.slice(0, call.index)}`; // its provider, a router, a runner
     /** @type {Record<string, string>} */
-    const ours = { "reflexer-key": this.key };
-    if (upstream !== wire.provider) ours["reflexer-upstream"] = upstream;
-    const theirs = Object.entries(headers).filter(([name]) =>
-      name !== "host" && (PASSED.includes(name) || !name.startsWith(OURS))); // no other header of a client's steers us
+    const ours = { "reflexer-key": this.key, "reflexer-upstream": upstream }; // the SDK's own: no header of a client's takes their place
+    const theirs = Object.entries(headers).filter(([name]) => !["host", SKIP, ...Object.keys(ours)].includes(name)); // every other header of ours too
+    if (upstream === wire.provider) delete ours["reflexer-upstream"];
     const to = `${this.base}${wire.reflexerPath}${address.pathname.slice(call.index)}${address.search}`;
     return [to, { ...this.given, ...Object.fromEntries(theirs), ...ours }]; // a call's own header wins over the client's option
   }

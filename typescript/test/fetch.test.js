@@ -91,11 +91,11 @@ describe("Headers", () => {
     assert.ok(![...own.seen[0].headers.keys()].some((name) => name.startsWith("reflexer-")));
   });
 
-  test("the skip header false sends the call to reflexer and leaves for no one, nor does another header of ours", async () => {
+  test("the skip header false sends the call to reflexer and leaves for no one; another header of ours leaves for reflexer alone", async () => {
     const { fetch, seen } = made(check.busy);
-    await fetch(check.CHAT, { method: "POST", body: "{}", headers: { "Reflexer-Skip": "False", "Reflexer-Made-Up": "1" } });
-    assert.deepEqual(hosts(seen), [check.REFLEXER, "api.openai.com"]);
-    for (const { headers } of seen) assert.ok(!headers.has("reflexer-skip") && !headers.has("reflexer-made-up"));
+    await fetch(check.CHAT, { method: "POST", body: "{}", headers: { "Reflexer-Skip": "False", "Reflexer-Made-Up": "1" } }); // Reflexer-Made-Up: a made-up header name, for the test only
+    assert.deepEqual(seen.map(({ url, headers }) => [url.host, headers.get("reflexer-made-up")]), [[check.REFLEXER, "1"], ["api.openai.com", null]]);
+    for (const { headers } of seen) assert.ok(!headers.has("reflexer-skip"));
   });
 
   test("a call's option headers reach reflexer alone, and a wrong one throws before anything is sent", async () => {

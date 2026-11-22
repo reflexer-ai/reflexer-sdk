@@ -96,11 +96,13 @@ class Route(unittest.TestCase):
                 self.reflexer.route(CHAT, {reflexer.SKIP: value})
             self.assertEqual(str(raised.exception), reflexer.NOT_A_SKIP)
 
-    def test_another_header_of_ours_is_dropped(self):
-        made = self.reflexer.route(CHAT, {"reflexer-made-up": "1", "reflexer-upstream": "https://made-up.example"})
-        self.assertIsNotNone(made)
-        self.assertNotIn("reflexer-made-up", made[1])
+    def test_every_header_of_ours_a_call_carries_goes_to_reflexer_but_those_the_sdk_sets_or_reads(self):
+        given = {"reflexer-made-up": "1", "reflexer-upstream": "https://made-up.example", "reflexer-key": "made-up", "reflexer-skip": "false"}
+        made = self.reflexer.route(CHAT, given)  # reflexer-made-up: a made-up header name, for the test only
+        self.assertEqual(made[1]["reflexer-made-up"], "1")
         self.assertNotIn("reflexer-upstream", made[1])
+        self.assertEqual(made[1]["reflexer-key"], KEY)
+        self.assertNotIn("reflexer-skip", made[1])
 
     def test_the_options_go_as_headers_only_when_they_differ_from_reflexers_default(self):
         self.assertEqual({name for name in self.reflexer.route(CHAT, {})[1] if name != "reflexer-key"}, set())

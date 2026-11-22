@@ -26,6 +26,8 @@ For each of these four options, the SDK sends nothing when you do not give it. F
 
 **`Reflexer-Skip: true`** (a header) · **`ReflexerSkip=True`** (boto3's argument) · **`reflexerSkip: true`** (the AWS SDK's option): set it on one call, and the SDK sends that call directly to your provider. With the value `false` (the header's) or `False`/`false` (the argument's, a boolean), the SDK does not skip reflexer. With any other value, the SDK raises an error and sends nothing. [Advanced](advanced.md#skip-reflexer-for-one-call).
 
+**Every other `Reflexer-` header** on a call: the SDK sends each header of the call whose name starts with `Reflexer-` to reflexer, as written, and none to your provider (the exception, Bedrock's signed calls: [Known limits](limits.md#amazon-bedrock)). The SDK sets some of these headers itself, `Reflexer-Key` among them: a header of the call with the same name does not reach reflexer.
+
 **`headersTimeout`** (TypeScript `fetch` functions and `bedrock.wrap`): milliseconds, optional, default 300000. The time the SDK waits for reflexer's answer to start. After this time, the SDK sends the call directly to your provider. [Advanced](advanced.md#how-long-reflexer-may-take).
 
 ## Python

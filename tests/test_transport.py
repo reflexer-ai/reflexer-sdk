@@ -708,9 +708,12 @@ class SharedArguments(unittest.TestCase):
         address = urllib.parse.urlsplit(self.url)
         with socket.create_connection((address.hostname, address.port)) as sock:
             sock.sendall(f"GET {address.path} HTTP/1.0\r\nHost: {address.netloc}\r\n\r\n".encode())
+            sock.settimeout(HUNG_UP_WITHIN)
             seen = b""
             while not seen.endswith(b"made"):
-                seen += sock.recv(64)
+                more = sock.recv(64)
+                self.assertTrue(more, "the stand-in closed before its first bytes")
+                seen += more
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))  # closed with a reset, at once
         self.go_on.set()  # the stand-in writes the rest of its body to the closed socket
         self.assertTrue(self.hung_up.wait(HUNG_UP_WITHIN), "the stand-in never saw the client hang up")

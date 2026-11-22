@@ -582,9 +582,7 @@ class SharedArguments(unittest.TestCase):
                     go_on.wait(10)
                     self.wfile.write(b"-up!")
                 except (BrokenPipeError, ConnectionResetError):
-                    if self.path != "/hold":
-                        raise
-                    hung_up.set()  # the client closed its socket: what a cancelled call does
+                    hung_up.set()  # the client closed its socket: what a cancelled call or a dropped body does
 
             def log_message(self, *_):
                 pass
@@ -704,6 +702,21 @@ class SharedArguments(unittest.TestCase):
         del answer
         gc.collect()
         self.assertTrue(shared and all(made.inner.is_closed for made in shared), "a dropped body kept a retired client open")
+
+    def test_a_client_hanging_up_inside_the_body_is_no_error_of_the_stand_in(self):
+        import socket, struct, urllib.parse
+        address = urllib.parse.urlsplit(self.url)
+        with socket.create_connection((address.hostname, address.port)) as sock:
+            sock.sendall(f"GET {address.path} HTTP/1.0\r\nHost: {address.netloc}\r\n\r\n".encode())
+            sock.settimeout(HUNG_UP_WITHIN)
+            seen = b""
+            while not seen.endswith(b"made"):
+                more = sock.recv(64)
+                self.assertTrue(more, "the stand-in closed before its first bytes")
+                seen += more
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))  # closed with a reset, at once
+        self.go_on.set()  # the stand-in writes the rest of its body to the closed socket
+        self.assertTrue(self.hung_up.wait(HUNG_UP_WITHIN), "the stand-in never saw the client hang up")
 
     def test_async_a_body_dropped_unclosed_lets_the_retired_client_close(self):
         import gc

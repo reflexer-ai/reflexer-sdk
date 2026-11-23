@@ -79,13 +79,13 @@ class Skip(unittest.TestCase):
         self.assertEqual([request.url.host for request in seen], ["api.openai.com"])
         self.assertNotIn("reflexer-skip", seen[0].headers)
 
-    def test_false_goes_to_reflexer_and_the_header_reaches_no_one(self):
+    def test_false_goes_to_reflexer_and_the_header_reaches_no_one_another_of_ours_reflexer_alone(self):
         client, seen, _ = wrapped(busy)
-        client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "False", "Reflexer-Made-Up": "1"})
-        self.assertEqual([request.url.host for request in seen], ["api.reflexer.ai", "api.openai.com"])
+        client.post(CHAT, content=b"{}", headers={"Reflexer-Skip": "False", "Reflexer-Made-Up": "1"})  # Reflexer-Made-Up: a made-up header name, for the test only
+        self.assertEqual([(request.url.host, request.headers.get("reflexer-made-up")) for request in seen],
+                         [("api.reflexer.ai", "1"), ("api.openai.com", None)])
         for request in seen:
             self.assertNotIn("reflexer-skip", request.headers)
-            self.assertNotIn("reflexer-made-up", request.headers)
 
     def test_a_calls_option_headers_reach_reflexer_alone_and_a_wrong_one_raises_before_anything_is_sent(self):
         given = {"Reflexer-Answer": "false", "Reflexer-Store": "False", "Reflexer-Pass-Through": "TRUE", "Reflexer-Timeout-Ms": "100"}

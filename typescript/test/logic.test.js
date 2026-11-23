@@ -75,10 +75,10 @@ describe("Route", () => {
     }
   });
 
-  test("another header of ours is dropped", () => {
-    const made = way().route(CHAT, { "reflexer-made-up": "1" });
-    assert.notEqual(made, null);
-    assert.ok(!Object.hasOwn(made?.[1] ?? {}, "reflexer-made-up"));
+  test("every header of ours a call carries goes to reflexer, but those the SDK sets or reads", () => {
+    const given = { "reflexer-made-up": "1", "reflexer-upstream": "https://made-up.example", "reflexer-key": "made-up", "reflexer-skip": "false" };
+    const [, headers] = way().route(CHAT, given) ?? []; // reflexer-made-up: a made-up header name, for the test only
+    assert.deepEqual(headers, { "reflexer-made-up": "1", "reflexer-key": KEY });
   });
 
   test("straight", () => {
@@ -107,7 +107,7 @@ describe("Route", () => {
     assert.equal(way.route("https://generativelanguage.googleapis.com/v1gamma/models/m:generateContent", {}), null);
   });
 
-  test("the query goes with the call, and the client's reflexer headers but the namespace stay behind", () => {
+  test("the query goes with the call, and the client's key and upstream headers stay behind", () => {
     const [url, headers] = new reflexer.Reflexer(KEY, reflexer.WIRES.gemini)
       .route("https://generativelanguage.googleapis.com/v1beta/models/m:streamGenerateContent?alt=sse",
         { "reflexer-namespace": "made-up", "reflexer-key": "theirs", "reflexer-upstream": "https://elsewhere.example", host: "x" }) ?? [];

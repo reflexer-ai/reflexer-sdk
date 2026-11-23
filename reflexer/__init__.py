@@ -17,7 +17,6 @@ OURS = "reflexer-"  # what starts each header of ours: none leaves for a provide
 NAMESPACE = "reflexer-namespace"  # a header of ours a client may give reflexer, as the option or on a call
 ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER = "reflexer-answer", "reflexer-store", "reflexer-pass-through", "reflexer-timeout-ms"
 OPTION_HEADERS = (ANSWER_HEADER, STORE_HEADER, PASS_THROUGH_HEADER, TIMEOUT_HEADER)  # an option's, given by the client or on a call
-PASSED = (NAMESPACE, *OPTION_HEADERS)  # the headers of ours a client may give reflexer; none leaves for a provider
 SWITCHES = {  # a client's boolean option: its header, its default (nothing sent), and why it must be true or false
     "answer":       (ANSWER_HEADER,       True,  "false asks reflexer not to answer: reflexer replies with an empty response"),
     "store":        (STORE_HEADER,        True,  "false asks reflexer to keep no copy of the call"),
@@ -62,11 +61,10 @@ class Reflexer:
             return None
         host = address.netloc.rpartition("@")[2]  # no user or password of the URL's goes to reflexer
         upstream = f"{address.scheme}://{host}{address.path[:call.start()]}"  # its provider, a router, a runner
-        ours = {"reflexer-key": self.key}
-        if upstream != provider:
-            ours["reflexer-upstream"] = upstream
-        theirs = {name: value for name, value in headers.items()
-                  if name != "host" and (name in PASSED or not name.startswith(OURS))}  # no other header of a client's steers us
+        ours = {"reflexer-key": self.key, "reflexer-upstream": upstream}  # the SDK's own: no header of a client's takes their place
+        theirs = {name: value for name, value in headers.items() if name not in ("host", SKIP, *ours)}  # every other header of ours too
+        if upstream == provider:
+            del ours["reflexer-upstream"]
         to = f"{self.base}{reflexer_path}{address.path[call.start():]}"
         if address.query:
             to += f"?{address.query}"
